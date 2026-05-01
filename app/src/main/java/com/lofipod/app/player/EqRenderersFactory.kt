@@ -27,10 +27,9 @@ class EqRenderersFactory(
     private val eq: EqAudioProcessor
 ) : DefaultRenderersFactory(context) {
 
-    init {
-        // Don't try audio offload — offload bypasses software audio processors.
-        setEnableAudioOffload(false)
-    }
+    // Audio offload is implicitly disabled: we override buildAudioSink to return
+    // our own DefaultAudioSink, and DefaultAudioSink.Builder doesn't enable offload
+    // unless explicitly configured. Offload would bypass software audio processors.
 
     override fun buildAudioSink(
         context: Context,
