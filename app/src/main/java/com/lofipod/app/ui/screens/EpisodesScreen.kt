@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.media3.exoplayer.offline.Download
 import coil.compose.AsyncImage
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.db.EpisodeStateEntity
@@ -49,6 +50,8 @@ fun EpisodesScreen(
         }
     }
 
+    val downloadsByGuid by app.downloadsApi.byId.collectAsState()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -79,6 +82,7 @@ fun EpisodesScreen(
                     podcastArt = pod.artworkUrl,
                     rating = rating,
                     isFavorite = fav,
+                    download = downloadsByGuid[ep.guid],
                     onPlay = { onPlay(ep, pod) },
                     onShare = { ctx.shareEnclosure(ep.audioUrl, ep.title) },
                     onToggleFav = {
@@ -89,6 +93,16 @@ fun EpisodesScreen(
                     onSetRating = { r ->
                         episodeStates[ep.guid] = r to fav
                         scope.launch { upsertState(app, ep, pod, newRating = r) }
+                    },
+                    onToggleDownload = {
+                        val d = downloadsByGuid[ep.guid]
+                        if (d == null || d.state == Download.STATE_FAILED) {
+                            // Persist a row so the Downloaded tab can resolve metadata later.
+                            scope.launch { upsertState(app, ep, pod) }
+                            app.downloadsApi.start(ep)
+                        } else {
+                            app.downloadsApi.remove(ep.guid)
+                        }
                     }
                 )
             }
@@ -102,10 +116,12 @@ private fun EpisodeRow(
     podcastArt: String?,
     rating: Int,
     isFavorite: Boolean,
+    download: Download?,
     onPlay: () -> Unit,
     onShare: () -> Unit,
     onToggleFav: () -> Unit,
-    onSetRating: (Int) -> Unit
+    onSetRating: (Int) -> Unit,
+    onToggleDownload: () -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -144,6 +160,7 @@ private fun EpisodeRow(
                     Text("Play")
                 }
                 Spacer(Modifier.width(8.dp))
+                DownloadButton(download = download, onClick = onToggleDownload)
                 IconButton(onClick = onShare) {
                     Icon(Icons.Filled.Share, contentDescription = "Share raw link")
                 }
@@ -156,6 +173,64 @@ private fun EpisodeRow(
                 }
                 Spacer(Modifier.weight(1f))
                 StarRow(rating, onSetRating)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadButton(download: Download?, onClick: () -> Unit) {
+    when (download?.state) {
+        null -> {
+            IconButton(onClick = onClick) {
+                Icon(Icons.Filled.Download, contentDescription = "Download")
+            }
+        }
+        Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_RESTARTING -> {
+            val pct = download.percentDownloaded
+            IconButton(onClick = onClick) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (pct.isFinite() && pct >= 0f) {
+                        CircularProgressIndicator(
+                            progress = { pct / 100f },
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Cancel download",
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+        Download.STATE_COMPLETED -> {
+            IconButton(onClick = onClick) {
+                Icon(
+                    Icons.Filled.DownloadDone,
+                    contentDescription = "Delete download",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        Download.STATE_FAILED -> {
+            IconButton(onClick = onClick) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = "Retry download",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        else -> {
+            IconButton(onClick = onClick) {
+                Icon(Icons.Filled.Download, contentDescription = "Download")
             }
         }
     }

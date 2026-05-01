@@ -4,6 +4,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.lofipod.app.LofiPodApp
@@ -40,7 +41,13 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // Cache-aware media source factory: downloaded episodes play locally,
+        // streamed episodes still hit HTTP (with opportunistic range caching).
+        val cacheFactory = (application as LofiPodApp).downloads.cacheDataSourceFactory
+        val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(cacheFactory)
+
         val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq))
+            .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)

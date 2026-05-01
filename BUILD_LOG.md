@@ -2,6 +2,22 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Offline downloads
+
+- New `DownloadHolder` constructs the Media3 download stack on app start: `StandaloneDatabaseProvider`, a `SimpleCache` under `filesDir/downloads`, a `DownloadManager` (max 2 concurrent), and a cache-aware `CacheDataSource.Factory`.
+- `LofiPodDownloadService` (Media3 `DownloadService` subclass) runs the actual downloads as a `dataSync` foreground service with progress notifications.
+- `Downloads` exposes a `StateFlow<Map<guid, Download>>` so any UI can render per-episode state.
+- `PlaybackService` now plugs the cache-aware factory into ExoPlayer via `DefaultMediaSourceFactory.setDataSourceFactory`, so downloaded episodes play locally and streamed episodes still hit HTTP.
+- Episode rows show a download button that morphs through idle / downloading-with-progress / completed / failed-retry states.
+- Favorites screen gets a third "Downloaded" tab listing completed downloads (resolved against the existing `EpisodeStateEntity` rows for title/artwork).
+- Manifest gets the `FOREGROUND_SERVICE_DATA_SYNC` permission and the new service entry.
+
+## Curated sources file — `sources.md`
+
+- Lists 8 verified RSS feeds (Damian Kyle, James White / AOM, Mike Winger / BibleThinker, Piper x3, Just Thinking, Bethany Bible Church).
+- Each URL was fetched and confirmed to return valid RSS 2.0 with audio `<enclosure>` items.
+- Only one display-name override (Damian Kyle's series, since the feed's own title doesn't mention him).
+
 ## Playback position persistence — `85981e9`
 
 - Room row created on first play of an episode (using `EpisodeStateDao.upsert`).

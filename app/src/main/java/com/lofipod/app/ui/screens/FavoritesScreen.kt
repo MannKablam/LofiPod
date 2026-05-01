@@ -14,10 +14,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.media3.exoplayer.offline.Download
 import coil.compose.AsyncImage
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.util.shareEnclosure
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,9 +31,22 @@ fun FavoritesScreen(
     val app = LocalContext.current.applicationContext as LofiPodApp
     val favs by app.db.episodeStateDao().observeFavorites().collectAsState(initial = emptyList())
     val rated by app.db.episodeStateDao().observeRated().collectAsState(initial = emptyList())
+    val downloads by app.downloadsApi.byId.collectAsState()
     val ctx = LocalContext.current
 
     var tab by remember { mutableStateOf(0) }
+
+    // Resolve completed downloads to EpisodeStateEntity rows for display.
+    val completed = remember(downloads) {
+        downloads.values.filter { it.state == Download.STATE_COMPLETED }.map { it.request.id }
+    }
+    var downloadedRows by remember { mutableStateOf<List<EpisodeStateEntity>>(emptyList()) }
+    LaunchedEffect(completed) {
+        withContext(Dispatchers.IO) {
+            val dao = app.db.episodeStateDao()
+            downloadedRows = completed.mapNotNull { dao.get(it) }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -48,8 +64,13 @@ fun FavoritesScreen(
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Favorites") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Rated") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Downloaded") })
             }
-            val list = if (tab == 0) favs else rated
+            val list = when (tab) {
+                0 -> favs
+                1 -> rated
+                else -> downloadedRows
+            }
             if (list.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Nothing here yet.")
