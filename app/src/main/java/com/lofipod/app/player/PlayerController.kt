@@ -9,10 +9,19 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
+import com.lofipod.app.LofiPodApp
+import com.lofipod.app.data.db.EpisodeStateDao
+import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.model.Episode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Single point of access to the [MediaController].
@@ -21,6 +30,10 @@ import kotlinx.coroutines.flow.asStateFlow
 class PlayerController(private val context: Context) {
 
     private var controller: MediaController? = null
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val dao: EpisodeStateDao
+        get() = (context.applicationContext as LofiPodApp).db.episodeStateDao()
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
@@ -41,6 +54,7 @@ class PlayerController(private val context: Context) {
         controller?.removeListener(listener)
         controller?.release()
         controller = null
+        scope.cancel()
     }
 
     private val listener = object : Player.Listener {
@@ -63,23 +77,63 @@ class PlayerController(private val context: Context) {
         )
     }
 
+    /**
+     * Play an episode, resuming from its saved position if any.
+     * Also persists the outgoing episode's position before switching.
+     */
     fun playEpisode(ep: Episode, podcastTitle: String, podcastArt: String?) {
-        val art = ep.episodeArtworkUrl ?: podcastArt
-        val item = MediaItem.Builder()
-            .setMediaId(ep.guid)
-            .setUri(ep.audioUrl)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(ep.title)
-                    .setArtist(podcastTitle)
-                    .setArtworkUri(art?.let { android.net.Uri.parse(it) })
-                    .build()
-            )
-            .build()
-        controller?.apply {
-            setMediaItem(item)
-            prepare()
-            play()
+        val c = controller ?: return
+        scope.launch {
+            // 1. Save outgoing item's position so we can resume it later.
+            val outgoingId = c.currentMediaItem?.mediaId
+            if (outgoingId != null && outgoingId != ep.guid) {
+                val pos = c.currentPosition
+                val dur = c.duration.takeIf { it > 0 } ?: 0L
+                withContext(Dispatchers.IO) {
+                    if (dao.get(outgoingId) != null) {
+                        dao.updatePosition(outgoingId, pos, dur, System.currentTimeMillis())
+                    }
+                }
+            }
+
+            // 2. Ensure a row exists for this episode + read its saved position.
+            val savedPos = withContext(Dispatchers.IO) {
+                val existing = dao.get(ep.guid)
+                if (existing == null) {
+                    dao.upsert(
+                        EpisodeStateEntity(
+                            guid = ep.guid,
+                            feedUrl = ep.feedUrl,
+                            title = ep.title,
+                            audioUrl = ep.audioUrl,
+                            artworkUrl = ep.episodeArtworkUrl ?: podcastArt
+                        )
+                    )
+                    0L
+                } else {
+                    // If the episode is essentially finished, restart from 0.
+                    val dur = existing.durationMs
+                    if (dur > 0 && existing.positionMs >= dur - 5_000) 0L
+                    else existing.positionMs
+                }
+            }
+
+            // 3. Build & queue the item with the resume position.
+            val art = ep.episodeArtworkUrl ?: podcastArt
+            val item = MediaItem.Builder()
+                .setMediaId(ep.guid)
+                .setUri(ep.audioUrl)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(ep.title)
+                        .setArtist(podcastTitle)
+                        .setArtworkUri(art?.let { android.net.Uri.parse(it) })
+                        .build()
+                )
+                .build()
+            c.setMediaItem(item, savedPos)
+            c.prepare()
+            c.play()
         }
     }
 
