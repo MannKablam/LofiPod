@@ -410,37 +410,31 @@ private fun NotesTab(episodeGuid: String?, controller: PlayerController) {
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                "${entries.size} note${if (entries.size == 1) "" else "s"}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f)
-            )
-            // "Pause while writing" toggle. Filter-chip style so the selected
-            // state reads at a glance and it sits compactly next to Add note.
-            // Persists via settings.pauseOnNote so the choice carries across
-            // every Player session and the standalone Notes screen.
-            FilterChip(
-                selected = pauseOnNote,
-                onClick = { scope.launch { settings.setPauseOnNote(!pauseOnNote) } },
-                label = { Text("Pause", style = MaterialTheme.typography.labelMedium) },
-                leadingIcon = if (pauseOnNote) {
-                    {
-                        Icon(
-                            Icons.Filled.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                } else null
+            // Switch-style "Pause while writing" toggle, mirroring the
+            // "Disable EQ for this episode" pattern in the Details tab so the
+            // controls feel like one family. Backed by settings.pauseOnNote.
+            Switch(
+                checked = pauseOnNote,
+                onCheckedChange = { v -> scope.launch { settings.setPauseOnNote(v) } }
             )
             Spacer(Modifier.width(8.dp))
+            Text(
+                "Pause",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
             FilledTonalButton(onClick = ::openAdd) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Add note")
             }
         }
+        Text(
+            "${entries.size} note${if (entries.size == 1) "" else "s"}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+        )
         if (entries.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
