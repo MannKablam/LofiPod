@@ -62,7 +62,7 @@ object RssParser {
                                         skip(parser)
                                     }
                                     "author" -> channelAuthor = readText(parser)
-                                    "summary" -> if (channelDesc == null) channelDesc = readText(parser)
+                                    "summary" -> if (channelDesc == null) channelDesc = readText(parser) else skip(parser)
                                     else -> skip(parser)
                                 }
                             } else skip(parser)

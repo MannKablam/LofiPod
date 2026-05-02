@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -72,7 +73,12 @@ class PodcastRepository(
 
     enum class FeedStatus { LOADING, OK, FAILED, TIMEOUT }
 
-    suspend fun fetchOne(src: SourceEntry): Podcast = withContext(Dispatchers.IO) {
+    /**
+     * Runs the blocking HTTP + parse on Dispatchers.IO via [runInterruptible], so coroutine
+     * cancellation (e.g. from [withTimeoutOrNull]) actually interrupts the worker thread —
+     * which OkHttp's [okhttp3.Call.execute] honors and aborts the call.
+     */
+    suspend fun fetchOne(src: SourceEntry): Podcast = runInterruptible(Dispatchers.IO) {
         val req = Request.Builder()
             .url(src.feedUrl)
             .header("User-Agent", "LofiPod/0.1")
