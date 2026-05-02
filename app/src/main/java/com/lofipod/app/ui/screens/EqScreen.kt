@@ -1,5 +1,3 @@
-@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-
 package com.lofipod.app.ui.screens
 
 import androidx.compose.foundation.background
@@ -20,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
 import com.lofipod.app.audio.EqPresets
@@ -148,19 +147,19 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
 
             Text("Presets", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            // Flat gets its own full-width row up top — it's the "reset"
-            // affordance and reads more clearly on its own. Multi-level
-            // presets sit below in a FlowRow that wraps to a second line
-            // on narrower screens.
+            // Flat sits alone up top as the "reset" affordance. The five
+            // named presets share a single Row below — keeps the whole
+            // preset block to two lines of vertical real estate so the
+            // graphic-EQ bands stay visible (or scrolling-distance close)
+            // when a preset is tapped.
             FlatButton(
                 isActive = activePreset == null,
                 onClick = ::applyFlat,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(6.dp))
-            FlowRow(
+            Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 PresetId.values().forEach { preset ->
@@ -169,7 +168,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                         currentLevel = if (activePreset == preset) activeLevel else 0,
                         anyOtherActive = activePreset != null && activePreset != preset,
                         onClick = { cyclePreset(preset) },
-                        modifier = Modifier.widthIn(min = 96.dp)
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -289,11 +288,18 @@ private fun PresetButton(
             else -> colors.onSurfaceVariant
         }
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // Allow up to 2 lines so compound names ("Boom-kill", "Harsh-kill")
+            // wrap rather than truncate at narrow weight-distributed widths.
+            // textAlign centers the second line under the first.
             Text(
                 preset.displayName,
                 color = labelColor,
                 style = MaterialTheme.typography.labelMedium,
-                maxLines = 1
+                fontSize = 11.sp,
+                lineHeight = 12.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                maxLines = 2,
+                modifier = Modifier.padding(horizontal = 2.dp)
             )
         }
     }
