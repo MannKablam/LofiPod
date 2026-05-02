@@ -26,18 +26,33 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
 
     init {
-        viewModelScope.launch { loadCanon() }
+        viewModelScope.launch { loadCanon(force = false) }
     }
 
+    /** User-triggered refresh from the overflow menu. Forces a network round trip. */
     fun refresh() {
-        viewModelScope.launch { loadCanon() }
+        viewModelScope.launch { loadCanon(force = true) }
     }
 
-    private suspend fun loadCanon() {
+    /**
+     * If [force] is false (the default for init / lifecycle revival), short-circuit
+     * to whatever the in-memory [PodcastRepository] cache has — no network hit and
+     * no "loading feeds" flicker on navigation back into Library, even if the VM
+     * was rebuilt by the framework. Refresh from the overflow menu sets force=true
+     * to actually re-pull.
+     */
+    private suspend fun loadCanon(force: Boolean) {
         val sources = Sources.PODCASTS
         if (sources.isEmpty()) {
             _state.value = LibraryUiState()
             return
+        }
+        if (!force) {
+            val cached = sources.mapNotNull { repo.cached(it.feedUrl) }
+            if (cached.size == sources.size) {
+                _state.value = LibraryUiState(podcasts = cached)
+                return
+            }
         }
         _state.value = LibraryUiState(
             loading = true,

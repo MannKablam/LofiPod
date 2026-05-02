@@ -1,5 +1,7 @@
 package com.lofipod.app.player
 
+import android.app.PendingIntent
+import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -8,6 +10,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.lofipod.app.ui.MainActivity
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.EqAudioProcessor
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +41,10 @@ class PlaybackService : MediaSessionService() {
         // Shared EQ instance — UI can grab it via app-level holder
         val sharedEq = EqAudioProcessor()
         private const val SAVE_INTERVAL_MS = 10_000L
+
+        /** Intent action used by the media-session tap target to ask MainActivity
+         *  to navigate straight to the Player screen instead of resuming on Library. */
+        const val ACTION_OPEN_PLAYER = "com.lofipod.app.OPEN_PLAYER"
     }
 
     override fun onCreate() {
@@ -88,7 +95,24 @@ class PlaybackService : MediaSessionService() {
             }
         })
 
-        mediaSession = MediaSession.Builder(this, player).build()
+        // Notification tap target: route through MainActivity with a custom
+        // action so the UI can route the user to the Player screen instead of
+        // dropping them on the Library. Without this, tapping the system media
+        // notification did literally nothing.
+        val sessionActivityIntent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_OPEN_PLAYER
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val sessionActivity = PendingIntent.getActivity(
+            this,
+            0,
+            sessionActivityIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        mediaSession = MediaSession.Builder(this, player)
+            .setSessionActivity(sessionActivity)
+            .build()
     }
 
     private fun startSaveTicker(player: Player) {
