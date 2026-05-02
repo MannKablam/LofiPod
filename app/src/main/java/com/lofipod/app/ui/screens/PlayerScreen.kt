@@ -25,6 +25,7 @@ import com.lofipod.app.player.PlayerController
 import com.lofipod.app.ui.theme.ThemedArtwork
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -44,6 +45,18 @@ fun PlayerScreen(
     val pendingReturn by controller.pendingReturn.collectAsState()
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
+
+    // Live favorite tier for the currently-playing episode. Observed so the
+    // top-bar heart icon stays in sync if the user changes the tier elsewhere
+    // (e.g. from the per-podcast list) while the Player is open.
+    val app = LocalContext.current.applicationContext as LofiPodApp
+    val scope = rememberCoroutineScope()
+    val currentTier by remember(state.currentEpisodeGuid) {
+        val guid = state.currentEpisodeGuid
+        if (guid == null) kotlinx.coroutines.flow.flowOf(0)
+        else app.db.episodeStateDao().observe(guid)
+            .map { it?.favoriteTier ?: 0 }
+    }.collectAsState(initial = 0)
 
     LaunchedEffect(state.isPlaying) {
         while (true) {
@@ -67,6 +80,22 @@ fun PlayerScreen(
                     }
                 },
                 actions = {
+                    // Heart-tier toggle for the currently-playing episode.
+                    // Single tap cycles 0 -> 1 (Excellent) -> 2 (Most-excellent)
+                    // -> 0, mirroring the per-row heart in the episode list.
+                    state.currentEpisodeGuid?.let { guid ->
+                        IconButton(onClick = {
+                            val next = (currentTier + 1) % 3
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    app.db.episodeStateDao().setFavoriteTier(guid, next)
+                                }
+                            }
+                        }) {
+                            PlayerHeartIcon(tier = currentTier)
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    }
                     IconButton(onClick = onOpenHistory) {
                         Icon(
                             Icons.Filled.History,
@@ -204,6 +233,40 @@ fun PlayerScreen(
                 episodeGuid = state.currentEpisodeGuid,
                 controller = controller,
                 modifier = Modifier.weight(1f).fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+/**
+ * Top-bar heart icon for the now-playing episode. Tier 0 = outline; tier 1 =
+ * filled; tier 2 = filled with a small second pip overlapping (matches the
+ * inline HeartTierButton used in the episode list so the visual language is
+ * consistent across screens).
+ */
+@Composable
+private fun PlayerHeartIcon(tier: Int) {
+    val tint = if (tier > 0) MaterialTheme.colorScheme.primary
+               else LocalContentColor.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            if (tier > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+            contentDescription = when (tier) {
+                2 -> "Most-excellent (tap to clear)"
+                1 -> "Excellent (tap to upgrade)"
+                else -> "Mark as Excellent"
+            },
+            tint = tint,
+            modifier = Modifier.size(26.dp)
+        )
+        if (tier == 2) {
+            Spacer(Modifier.width(2.dp))
+            Icon(
+                Icons.Filled.Favorite,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(14.dp)
             )
         }
     }
