@@ -3,6 +3,7 @@
 package com.lofipod.app.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -47,18 +48,35 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
 import com.lofipod.app.player.PlayerState
 import com.lofipod.app.ui.screens.*
 import com.lofipod.app.ui.theme.LofiPodTheme
 import com.lofipod.app.ui.theme.ThemedArtwork
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.net.URLDecoder
 import java.net.URLEncoder
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var playerController: PlayerController
+
+    /**
+     * One-shot navigation events from outside the Compose tree (system media
+     * notification taps, etc). Replay = 0 + buffer of 1 means a tap that fires
+     * before the NavController is ready still gets delivered when the
+     * collector starts up, but stale events don't replay on later collectors.
+     */
+    private val openPlayerEvents = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
 
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -78,11 +96,29 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LofiPodTheme {
-                AppNav(playerController)
+                AppNav(playerController, openPlayerEvents.asSharedFlow())
             }
         }
 
         playerController.connect { /* ready */ }
+
+        // Cold-launch path: activity was created by the notification tap.
+        handleLaunchIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Required so subsequent getIntent() calls reflect this one. Otherwise
+        // a second notification tap with the activity already alive would
+        // re-fire the cached original intent.
+        setIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == PlaybackService.ACTION_OPEN_PLAYER) {
+            openPlayerEvents.tryEmit(Unit)
+        }
     }
 
     override fun onDestroy() {
@@ -92,11 +128,25 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppNav(controller: PlayerController) {
+private fun AppNav(
+    controller: PlayerController,
+    openPlayerEvents: SharedFlow<Unit>
+) {
     val nav = rememberNavController()
     val playerState by controller.state.collectAsState()
     val backStackEntry by nav.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+
+    // Route to the Player whenever the system media notification (or any other
+    // out-of-Compose source) asks us to. launchSingleTop avoids stacking
+    // duplicate Player entries when the notification is tapped repeatedly.
+    LaunchedEffect(Unit) {
+        openPlayerEvents.collect {
+            if (nav.currentDestination?.route != "player") {
+                nav.navigate("player") { launchSingleTop = true }
+            }
+        }
+    }
 
     Scaffold(
         bottomBar = {

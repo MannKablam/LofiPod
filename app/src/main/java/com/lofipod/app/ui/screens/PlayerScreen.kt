@@ -69,10 +69,27 @@ fun PlayerScreen(
         }
     }
 
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Now playing") },
+                title = {
+                    // The top-bar title: when something's loaded in the player,
+                    // show the equalizer glyph (same icon used to mark the
+                    // active episode in the per-podcast list). When nothing is
+                    // playing, fall back to the explicit text label.
+                    if (state.currentEpisodeGuid != null) {
+                        Icon(
+                            Icons.Filled.GraphicEq,
+                            contentDescription = "Now playing",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    } else {
+                        Text("Now playing")
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -99,14 +116,6 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
-                    IconButton(onClick = onOpenHistory) {
-                        Icon(
-                            Icons.Filled.History,
-                            contentDescription = "Playback history",
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
                     state.currentEpisodeGuid?.let { guid ->
                         IconButton(onClick = { onOpenNotes(guid) }) {
                             Icon(
@@ -132,13 +141,32 @@ fun PlayerScreen(
                             modifier = Modifier.size(28.dp)
                         )
                     }
-                    Spacer(Modifier.width(4.dp))
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            Icons.Filled.Settings,
-                            contentDescription = "Settings",
-                            modifier = Modifier.size(28.dp)
-                        )
+                    // Less-frequent destinations live in the overflow menu so
+                    // the visible action row stays at four items + ⋮.
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(
+                                Icons.Filled.MoreVert,
+                                contentDescription = "More",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Playback history") },
+                                onClick = { menuExpanded = false; onOpenHistory() },
+                                leadingIcon = { Icon(Icons.Filled.History, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                onClick = { menuExpanded = false; onOpenSettings() },
+                                leadingIcon = { Icon(Icons.Filled.Settings, null) }
+                            )
+                        }
                     }
                 }
             )
