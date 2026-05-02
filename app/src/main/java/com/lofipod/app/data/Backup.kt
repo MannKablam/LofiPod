@@ -3,6 +3,7 @@ package com.lofipod.app.data
 import com.lofipod.app.data.db.AppDatabase
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateEntity
+import com.lofipod.app.data.db.PlaybackCheckpointEntity
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -15,11 +16,12 @@ import org.json.JSONObject
 object Backup {
 
     /** Bumped any time the export shape changes incompatibly. */
-    const val CURRENT_SCHEMA = 4
+    const val CURRENT_SCHEMA = 5
 
     fun export(
         episodes: List<EpisodeStateEntity>,
         noteEntries: List<EpisodeNoteEntryEntity>,
+        checkpoints: List<PlaybackCheckpointEntity>,
         appVersion: String
     ): String {
         val obj = JSONObject().apply {
@@ -53,6 +55,17 @@ object Backup {
                     })
                 }
             })
+            put("playbackCheckpoints", JSONArray().apply {
+                checkpoints.forEach { c ->
+                    put(JSONObject().apply {
+                        // id intentionally omitted — restored as a fresh autoincrement row
+                        put("guid", c.guid)
+                        put("positionMs", c.positionMs)
+                        put("recordedAt", c.recordedAt)
+                        put("reason", c.reason)
+                    })
+                }
+            })
         }
         return obj.toString(2)
     }
@@ -73,6 +86,7 @@ object Backup {
 
         val stateDao = db.episodeStateDao()
         val noteDao = db.episodeNoteEntryDao()
+        val checkpointDao = db.playbackCheckpointDao()
 
         var epRestored = 0
         obj.optJSONArray("episodeState")?.let { arr ->
@@ -132,10 +146,32 @@ object Backup {
                 }
             }
         }
-        return ImportResult(epRestored, notesRestored)
+        var checkpointsRestored = 0
+        obj.optJSONArray("playbackCheckpoints")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val c = arr.getJSONObject(i)
+                checkpointDao.insert(
+                    PlaybackCheckpointEntity(
+                        guid = c.getString("guid"),
+                        positionMs = c.getLong("positionMs"),
+                        recordedAt = c.getLong("recordedAt"),
+                        reason = c.getString("reason")
+                    )
+                )
+                checkpointsRestored++
+            }
+            // Honor the global cap after a bulk import.
+            checkpointDao.pruneToCount(200)
+        }
+
+        return ImportResult(epRestored, notesRestored, checkpointsRestored)
     }
 
-    data class ImportResult(val episodeCount: Int, val noteCount: Int)
+    data class ImportResult(
+        val episodeCount: Int,
+        val noteCount: Int,
+        val checkpointCount: Int = 0
+    )
 }
 
 private fun JSONObject.optStringOrNull(key: String): String? {

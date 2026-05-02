@@ -70,6 +70,30 @@ interface PodcastSourceDao {
 }
 
 @Dao
+interface PlaybackCheckpointDao {
+
+    @Insert
+    suspend fun insert(checkpoint: PlaybackCheckpointEntity): Long
+
+    @Query("SELECT * FROM playback_checkpoint ORDER BY recordedAt DESC")
+    suspend fun getAll(): List<PlaybackCheckpointEntity>
+
+    @Query("SELECT * FROM playback_checkpoint WHERE guid = :guid ORDER BY recordedAt DESC LIMIT :limit")
+    suspend fun recentForEpisode(guid: String, limit: Int = 50): List<PlaybackCheckpointEntity>
+
+    @Query("DELETE FROM playback_checkpoint WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    /** Keep only the most-recent [keepCount] rows globally. Called after each insert. */
+    @Query(
+        "DELETE FROM playback_checkpoint WHERE id NOT IN (" +
+            "SELECT id FROM playback_checkpoint ORDER BY recordedAt DESC LIMIT :keepCount" +
+            ")"
+    )
+    suspend fun pruneToCount(keepCount: Int)
+}
+
+@Dao
 interface EpisodeNoteEntryDao {
 
     @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt ASC")
@@ -104,15 +128,17 @@ interface EpisodeNoteEntryDao {
     entities = [
         EpisodeStateEntity::class,
         PodcastSourceEntity::class,
-        EpisodeNoteEntryEntity::class
+        EpisodeNoteEntryEntity::class,
+        PlaybackCheckpointEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun episodeStateDao(): EpisodeStateDao
     abstract fun podcastSourceDao(): PodcastSourceDao
     abstract fun episodeNoteEntryDao(): EpisodeNoteEntryDao
+    abstract fun playbackCheckpointDao(): PlaybackCheckpointDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -169,6 +195,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v4 → v5: add playback_checkpoint table for jump-back / session history. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS playback_checkpoint (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        guid TEXT NOT NULL,
+                        positionMs INTEGER NOT NULL,
+                        recordedAt INTEGER NOT NULL,
+                        reason TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -176,7 +219,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "lofipod.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build().also { instance = it }
             }
     }

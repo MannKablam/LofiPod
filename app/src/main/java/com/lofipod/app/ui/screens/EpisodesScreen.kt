@@ -251,7 +251,7 @@ private fun StarRow(rating: Int, onClick: (Int) -> Unit) {
         for (i in 1..5) {
             IconButton(
                 onClick = { onClick(if (rating == i) 0 else i) },
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(36.dp)
             ) {
                 Icon(
                     if (i <= rating) Icons.Filled.Star else Icons.Filled.StarBorder,

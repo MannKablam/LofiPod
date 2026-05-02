@@ -140,7 +140,8 @@ private fun AppNav(controller: PlayerController) {
                     onOpenNotes = { guid ->
                         val encoded = URLEncoder.encode(guid, "UTF-8")
                         nav.navigate("notes/$encoded")
-                    }
+                    },
+                    onOpenHistory = { nav.navigate("history") }
                 )
             }
 
@@ -168,6 +169,13 @@ private fun AppNav(controller: PlayerController) {
                 val guid = URLDecoder.decode(raw, "UTF-8")
                 NotesScreen(
                     episodeGuid = guid,
+                    controller = controller,
+                    onBack = { nav.popBackStack() }
+                )
+            }
+
+            composable("history") {
+                HistoryScreen(
                     controller = controller,
                     onBack = { nav.popBackStack() }
                 )

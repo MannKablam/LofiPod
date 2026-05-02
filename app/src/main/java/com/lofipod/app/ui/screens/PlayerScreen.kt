@@ -18,9 +18,11 @@ fun PlayerScreen(
     controller: PlayerController,
     onBack: () -> Unit,
     onOpenEq: () -> Unit,
-    onOpenNotes: (episodeGuid: String) -> Unit
+    onOpenNotes: (episodeGuid: String) -> Unit,
+    onOpenHistory: () -> Unit
 ) {
     val state by controller.state.collectAsState()
+    val pendingReturn by controller.pendingReturn.collectAsState()
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
 
@@ -43,6 +45,9 @@ fun PlayerScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenHistory) {
+                        Icon(Icons.Filled.History, contentDescription = "Playback history")
+                    }
                     state.currentEpisodeGuid?.let { guid ->
                         IconButton(onClick = { onOpenNotes(guid) }) {
                             Icon(Icons.Filled.EditNote, contentDescription = "Notes")
@@ -62,6 +67,15 @@ fun PlayerScreen(
                 .fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Show a one-tap "return to where you were before the jump" chip if relevant.
+            pendingReturn?.takeIf { it.guid == state.currentEpisodeGuid }?.let { pr ->
+                ReturnChip(
+                    label = "Return to ${formatTime(pr.positionMs)}",
+                    onJump = { controller.consumePendingReturn() },
+                    onDismiss = { controller.dismissPendingReturn() }
+                )
+                Spacer(Modifier.height(12.dp))
+            }
             AsyncImage(
                 model = state.currentArtworkUri,
                 contentDescription = null,
@@ -132,6 +146,30 @@ fun PlayerScreen(
             // Re-add to EQ screen if needed.
         }
     }
+}
+
+@Composable
+private fun ReturnChip(label: String, onJump: () -> Unit, onDismiss: () -> Unit) {
+    AssistChip(
+        onClick = onJump,
+        label = { Text(label) },
+        leadingIcon = {
+            Icon(
+                Icons.Filled.Undo,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+        },
+        trailingIcon = {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Dismiss",
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    )
 }
 
 private fun formatTime(ms: Long): String {

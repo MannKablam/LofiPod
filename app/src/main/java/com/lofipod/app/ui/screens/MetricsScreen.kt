@@ -69,8 +69,9 @@ fun MetricsScreen(onBack: () -> Unit) {
                 val json = withContext(Dispatchers.IO) {
                     val episodes = app.db.episodeStateDao().getAll()
                     val notes = app.db.episodeNoteEntryDao().getAll()
+                    val checkpoints = app.db.playbackCheckpointDao().getAll()
                     val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
-                    Backup.export(episodes, notes, pkg.versionName ?: "?")
+                    Backup.export(episodes, notes, checkpoints, pkg.versionName ?: "?")
                 }
                 withContext(Dispatchers.IO) {
                     ctx.contentResolver.openOutputStream(uri)?.use { out ->
@@ -175,7 +176,7 @@ fun MetricsScreen(onBack: () -> Unit) {
                             }
                             reload()
                             snackbarHostState.showSnackbar(
-                                "Restored ${result.episodeCount} episodes, ${result.noteCount} notes"
+                                "Restored ${result.episodeCount} episodes, ${result.noteCount} notes, ${result.checkpointCount} checkpoints"
                             )
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Import failed: ${e.message}")

@@ -13,6 +13,8 @@ import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateDao
 import com.lofipod.app.data.db.EpisodeStateEntity
+import com.lofipod.app.data.db.PlaybackCheckpointDao
+import com.lofipod.app.data.db.PlaybackCheckpointEntity
 import com.lofipod.app.data.model.Episode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,9 +37,18 @@ class PlayerController(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val dao: EpisodeStateDao
         get() = (context.applicationContext as LofiPodApp).db.episodeStateDao()
+    private val checkpointDao: PlaybackCheckpointDao
+        get() = (context.applicationContext as LofiPodApp).db.playbackCheckpointDao()
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
+
+    /**
+     * Set briefly after a jump (note or history) so the PlayerScreen can offer a
+     * "Return to <position>" chip. Cleared on next jump or [release].
+     */
+    private val _pendingReturn = MutableStateFlow<PendingReturn?>(null)
+    val pendingReturn: StateFlow<PendingReturn?> = _pendingReturn.asStateFlow()
 
     fun connect(onReady: () -> Unit) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -55,6 +66,7 @@ class PlayerController(private val context: Context) {
         controller?.removeListener(listener)
         controller?.release()
         controller = null
+        _pendingReturn.value = null
         scope.cancel()
     }
 
@@ -80,8 +92,14 @@ class PlayerController(private val context: Context) {
 
     /**
      * Play an episode, resuming from its saved position if any. If [forcedStartMs] is
-     * provided, that wins over the saved position (used for "jump to note position").
-     * Also persists the outgoing episode's position before switching.
+     * provided, that wins over the saved position (used for jump-to-position).
+     *
+     * Records two kinds of checkpoints:
+     *   - When switching from a different outgoing episode: a session_end checkpoint
+     *     for the outgoing position (skipped when [forcedStartMs] is set, since the
+     *     caller — typically [jumpToPosition] — already recorded a jump_from).
+     *   - When the new episode's existing state was last touched > [SESSION_GAP_MS]
+     *     ago: a session_end checkpoint at that previous position.
      */
     fun playEpisode(
         ep: Episode,
@@ -91,7 +109,7 @@ class PlayerController(private val context: Context) {
     ) {
         val c = controller ?: return
         scope.launch {
-            // 1. Save outgoing item's position so we can resume it later.
+            // 1. Outgoing item: persist position + (optionally) record session_end checkpoint.
             val outgoingId = c.currentMediaItem?.mediaId
             if (outgoingId != null && outgoingId != ep.guid) {
                 val pos = c.currentPosition
@@ -100,10 +118,21 @@ class PlayerController(private val context: Context) {
                     if (dao.get(outgoingId) != null) {
                         dao.updatePosition(outgoingId, pos, dur, System.currentTimeMillis(), 0L)
                     }
+                    if (forcedStartMs == null && pos > 0) {
+                        checkpointDao.insert(
+                            PlaybackCheckpointEntity(
+                                guid = outgoingId,
+                                positionMs = pos,
+                                recordedAt = System.currentTimeMillis(),
+                                reason = REASON_SESSION_END
+                            )
+                        )
+                        checkpointDao.pruneToCount(CHECKPOINT_CAP)
+                    }
                 }
             }
 
-            // 2. Ensure a row exists for this episode + read its saved position.
+            // 2. New item: ensure row exists, possibly snapshot a stale session, return start pos.
             val savedPos = withContext(Dispatchers.IO) {
                 val existing = dao.get(ep.guid)
                 if (existing == null) {
@@ -118,15 +147,25 @@ class PlayerController(private val context: Context) {
                     )
                     0L
                 } else {
+                    val gap = System.currentTimeMillis() - existing.lastPlayedMillis
+                    if (forcedStartMs == null && gap > SESSION_GAP_MS && existing.positionMs > 0) {
+                        checkpointDao.insert(
+                            PlaybackCheckpointEntity(
+                                guid = ep.guid,
+                                positionMs = existing.positionMs,
+                                recordedAt = existing.lastPlayedMillis,
+                                reason = REASON_SESSION_END
+                            )
+                        )
+                        checkpointDao.pruneToCount(CHECKPOINT_CAP)
+                    }
                     val dur = existing.durationMs
-                    if (dur > 0 && existing.positionMs >= dur - 5_000) 0L
-                    else existing.positionMs
+                    if (dur > 0 && existing.positionMs >= dur - 5_000) 0L else existing.positionMs
                 }
             }
 
             val startPos = forcedStartMs ?: savedPos
 
-            // 3. Build & queue the item with the start position.
             val art = ep.episodeArtworkUrl ?: podcastArt
             val item = MediaItem.Builder()
                 .setMediaId(ep.guid)
@@ -154,19 +193,40 @@ class PlayerController(private val context: Context) {
     fun pause() { controller?.pause() }
 
     /**
-     * Seek the player to the position recorded in [noteEntry]. If the note's episode
-     * isn't currently loaded, looks it up in Room and starts playback there.
+     * Jump to an arbitrary (episode, position). Records a jump_from checkpoint for the
+     * current position before moving. Updates [pendingReturn] so the UI can offer a
+     * one-tap return.
      */
-    fun jumpToNotePosition(noteEntry: EpisodeNoteEntryEntity) {
+    fun jumpToPosition(targetGuid: String, targetPositionMs: Long) {
         val c = controller ?: return
         val currentGuid = c.currentMediaItem?.mediaId
-        if (currentGuid == noteEntry.guid) {
-            c.seekTo(noteEntry.playbackPosMs)
+        val currentPos = if (currentGuid != null) c.currentPosition else 0L
+
+        if (currentGuid != null && currentPos > 0) {
+            scope.launch(Dispatchers.IO) {
+                checkpointDao.insert(
+                    PlaybackCheckpointEntity(
+                        guid = currentGuid,
+                        positionMs = currentPos,
+                        recordedAt = System.currentTimeMillis(),
+                        reason = REASON_JUMP_FROM
+                    )
+                )
+                checkpointDao.pruneToCount(CHECKPOINT_CAP)
+            }
+            _pendingReturn.value = PendingReturn(
+                guid = currentGuid,
+                positionMs = currentPos,
+                createdAt = System.currentTimeMillis()
+            )
+        }
+
+        if (currentGuid == targetGuid) {
+            c.seekTo(targetPositionMs)
             c.play()
         } else {
             scope.launch {
-                val state = withContext(Dispatchers.IO) { dao.get(noteEntry.guid) }
-                    ?: return@launch
+                val state = withContext(Dispatchers.IO) { dao.get(targetGuid) } ?: return@launch
                 val ep = Episode(
                     guid = state.guid,
                     feedUrl = state.feedUrl,
@@ -182,11 +242,30 @@ class PlayerController(private val context: Context) {
                     ep,
                     podcastTitle = "",
                     podcastArt = state.artworkUrl,
-                    forcedStartMs = noteEntry.playbackPosMs
+                    forcedStartMs = targetPositionMs
                 )
             }
         }
     }
+
+    /** Convenience for note-driven jumps. */
+    fun jumpToNotePosition(noteEntry: EpisodeNoteEntryEntity) {
+        jumpToPosition(noteEntry.guid, noteEntry.playbackPosMs)
+    }
+
+    /** Convenience for history-driven jumps. */
+    fun jumpToCheckpoint(cp: PlaybackCheckpointEntity) {
+        jumpToPosition(cp.guid, cp.positionMs)
+    }
+
+    /** Take the user back to where they were before the most recent jump. */
+    fun consumePendingReturn() {
+        val pr = _pendingReturn.value ?: return
+        _pendingReturn.value = null
+        jumpToPosition(pr.guid, pr.positionMs)
+    }
+
+    fun dismissPendingReturn() { _pendingReturn.value = null }
 
     fun seekRelative(deltaMs: Long) {
         val c = controller ?: return
@@ -203,6 +282,13 @@ class PlayerController(private val context: Context) {
 
     fun currentPositionMs(): Long = controller?.currentPosition ?: 0L
     fun durationMs(): Long = controller?.duration?.takeIf { it > 0 } ?: 0L
+
+    companion object {
+        const val SESSION_GAP_MS = 30L * 60 * 1000        // 30 min
+        const val CHECKPOINT_CAP = 200
+        const val REASON_JUMP_FROM = "jump_from"
+        const val REASON_SESSION_END = "session_end"
+    }
 }
 
 data class PlayerState(
@@ -213,4 +299,10 @@ data class PlayerState(
     val currentArtworkUri: String? = null,
     val currentEpisodeGuid: String? = null,
     val speed: Float = 1f
+)
+
+data class PendingReturn(
+    val guid: String,
+    val positionMs: Long,
+    val createdAt: Long
 )

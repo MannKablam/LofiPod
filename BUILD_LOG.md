@@ -2,6 +2,23 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Playback checkpoints: Return chip + global history
+
+- **Schema v5** (additive migration). New `playback_checkpoint` table: `id`, `guid`, `positionMs`, `recordedAt` (UTC ms), `reason`. Globally capped at 200 rows; oldest evicted on every insert.
+- **Triggers** (per design call):
+  - `jump_from`: any time the player jumps to a different position via `PlayerController.jumpToPosition` (notes browser jump, history jump, etc.). Captures the FROM position.
+  - `session_end`: when `playEpisode` switches to a different episode while one was loaded, OR when resuming an episode whose `lastPlayedMillis` is more than 30 min stale. Captures the previous `(positionMs, lastPlayedMillis)`.
+  - Manual scrubs do NOT record a checkpoint (would noise up the history).
+- **`PlayerController.pendingReturn`** StateFlow: set to the FROM position whenever `jumpToPosition` fires; cleared on next jump, on user action (`consumePendingReturn` or `dismissPendingReturn`), or on `release()`.
+- **PlayerScreen Return chip** (Material3 AssistChip with an Undo icon): visible only when `pendingReturn != null` and matches the currently-loaded episode. Tap = jump back. Trailing X = dismiss.
+- **History icon** in PlayerScreen top bar opens a new **`HistoryScreen`**. Full screen (not bottom sheet) so each row can show podcast title + episode title + UTC citation + reason ("Before a note jump" / "End of a listening session"). Tap card or play-circle = jump and pop back to player. Trash = delete the checkpoint.
+- **Backup format bumped to schema 5**: adds `playbackCheckpoints` array. Schema-4 imports get an empty checkpoints set. Import snackbar reports counts for episodes, notes, AND checkpoints.
+
+## Touch targets + emoji audit
+
+- Small IconButtons (`28 dp` containers I'd shipped on Notes / NotesBrowser cards) bumped to `40 dp` with appropriately sized icons (20–22 dp). StarRow on EpisodesScreen bumped from 28 → 36 dp (still compact enough to fit five in a row).
+- Audited all source files (`*.kt`, `*.xml`) for emoji glyphs — none present. Established as a standing rule.
+
 ## Notes: timestamped entries, jump-to-position, browser, search
 
 - **Schema v4** (additive migration). Replaces the unused single-row `episode_note` table with `episode_note_entry`: composite PK on `(guid, createdAt)`, plus `playbackPosMs` and `text`. Each note now records the wall-clock UTC moment it was logged AND the playback position at that moment. Multiple entries per episode accumulate like a journal.
