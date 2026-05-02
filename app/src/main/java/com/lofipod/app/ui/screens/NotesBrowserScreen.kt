@@ -189,6 +189,7 @@ fun NotesBrowserScreen(
                         BrowserNoteCard(
                             entry = entry,
                             episodeTitle = titlesByGuid[entry.guid],
+                            highlight = if (searchMode) query else "",
                             onJump = { controller.jumpToNotePosition(entry) },
                             onOpenInEpisode = { onOpenEpisodeNotes(entry.guid) }
                         )
@@ -211,6 +212,7 @@ fun NotesBrowserScreen(
 private fun BrowserNoteCard(
     entry: EpisodeNoteEntryEntity,
     episodeTitle: String?,
+    highlight: String,
     onJump: () -> Unit,
     onOpenInEpisode: () -> Unit
 ) {
@@ -244,7 +246,55 @@ private fun BrowserNoteCard(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            Text(entry.text, style = MaterialTheme.typography.bodyMedium, maxLines = 5)
+            // Highlight every case-insensitive occurrence of the search query
+            // in the note body. AnnotatedString lets us mix highlighted and
+            // plain runs without splitting into multiple Text nodes.
+            Text(
+                text = highlightedText(
+                    source = entry.text,
+                    needle = highlight,
+                    highlightBg = MaterialTheme.colorScheme.primary,
+                    highlightFg = MaterialTheme.colorScheme.onPrimary
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 5
+            )
+        }
+    }
+}
+
+/**
+ * Build an AnnotatedString that paints every case-insensitive occurrence of
+ * [needle] in [source] with [highlightBg] background + [highlightFg] foreground.
+ * Returns plain AnnotatedString of [source] when [needle] is blank.
+ */
+private fun highlightedText(
+    source: String,
+    needle: String,
+    highlightBg: androidx.compose.ui.graphics.Color,
+    highlightFg: androidx.compose.ui.graphics.Color
+): androidx.compose.ui.text.AnnotatedString {
+    if (needle.isBlank()) return androidx.compose.ui.text.AnnotatedString(source)
+    return androidx.compose.ui.text.buildAnnotatedString {
+        var cursor = 0
+        val lower = source.lowercase()
+        val target = needle.lowercase()
+        while (cursor < source.length) {
+            val hit = lower.indexOf(target, cursor)
+            if (hit < 0) {
+                append(source.substring(cursor))
+                break
+            }
+            if (hit > cursor) append(source.substring(cursor, hit))
+            withStyle(
+                androidx.compose.ui.text.SpanStyle(
+                    background = highlightBg,
+                    color = highlightFg
+                )
+            ) {
+                append(source.substring(hit, hit + needle.length))
+            }
+            cursor = hit + needle.length
         }
     }
 }

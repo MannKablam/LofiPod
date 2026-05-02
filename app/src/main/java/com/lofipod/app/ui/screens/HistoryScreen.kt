@@ -47,10 +47,18 @@ fun HistoryScreen(
             val states = app.db.episodeStateDao().getByGuids(guids).associateBy { it.guid }
             checkpoints.map { cp ->
                 val state = states[cp.guid]
+                val feedUrl = state?.feedUrl
+                // Try the canon's hardcoded displayName first, then fall back to
+                // the parsed Podcast.title from the in-memory feed cache. Most
+                // entries in Sources.PODCASTS have displayName = null and rely
+                // on the parsed title — without this fallback every history row
+                // showed up as "(unknown podcast)".
+                val podcastTitle = feedUrl?.let { url ->
+                    Sources.displayNameOf(url) ?: app.repo.cached(url)?.title
+                } ?: "(unknown podcast)"
                 HistoryRow(
                     checkpoint = cp,
-                    podcastTitle = state?.feedUrl?.let { Sources.displayNameOf(it) }
-                        ?: "(unknown podcast)",
+                    podcastTitle = podcastTitle,
                     episodeTitle = state?.title ?: "(unknown episode)"
                 )
             }

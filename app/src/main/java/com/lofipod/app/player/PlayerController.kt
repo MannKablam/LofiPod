@@ -27,6 +27,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -418,33 +419,67 @@ class PlayerController(private val context: Context) {
         }
     }
 
-    /** Pull the next entry (excluding [excluding]) and start playing it. */
+    /**
+     * Pull the next entry (excluding [excluding]) and start playing it.
+     *
+     * Lookup order:
+     *  1. The user's queue, lowest position first.
+     *  2. If queue is empty AND auto-play-next-in-feed is enabled in settings,
+     *     the next published episode in the just-finished episode's feed —
+     *     defined as the most-recent (highest pubDate) episode that isn't the
+     *     one we just finished and hasn't already been played to completion.
+     *
+     * Falls through silently when neither lookup yields anything.
+     */
     private suspend fun advanceToNextInQueue(excluding: String?) {
-        val next = withContext(Dispatchers.IO) {
-            // Always remove the just-finished entry from the queue first.
+        val app = context.applicationContext as LofiPodApp
+
+        val queueNext = withContext(Dispatchers.IO) {
             if (excluding != null) queueDao.remove(excluding)
             queueDao.nextAfter(excludingGuids = listOfNotNull(excluding))
-        } ?: return
+        }
 
-        // Prefer a fresh in-memory Episode if the feed is cached (gives us
-        // description + pubDate + per-episode artwork). Fall back to the queue
-        // snapshot when the feed isn't loaded.
-        val app = context.applicationContext as LofiPodApp
-        val cached = app.repo.cached(next.feedUrl)
-        val ep = cached?.episodes?.find { it.guid == next.guid } ?: Episode(
-            guid = next.guid,
-            feedUrl = next.feedUrl,
-            title = next.title,
-            description = null,
-            pubDateMillis = null,
-            audioUrl = next.audioUrl,
-            audioMimeType = null,
-            durationSeconds = null,
-            episodeArtworkUrl = next.artworkUrl
-        )
-        val podcastTitle = cached?.title ?: ""
-        val podcastArt = cached?.artworkUrl ?: next.artworkUrl
-        playEpisode(ep, podcastTitle, podcastArt)
+        if (queueNext != null) {
+            val cached = app.repo.cached(queueNext.feedUrl)
+            val ep = cached?.episodes?.find { it.guid == queueNext.guid } ?: Episode(
+                guid = queueNext.guid,
+                feedUrl = queueNext.feedUrl,
+                title = queueNext.title,
+                description = null,
+                pubDateMillis = null,
+                audioUrl = queueNext.audioUrl,
+                audioMimeType = null,
+                durationSeconds = null,
+                episodeArtworkUrl = queueNext.artworkUrl
+            )
+            playEpisode(ep, cached?.title ?: "", cached?.artworkUrl ?: queueNext.artworkUrl)
+            return
+        }
+
+        // Queue empty — fall back to the next episode in the same feed if the
+        // user has the setting on.
+        val enabled = com.lofipod.app.data.Settings(app).autoPlayNextInFeed.first()
+        if (!enabled || excluding == null) return
+
+        val finishedFeedUrl = withContext(Dispatchers.IO) { dao.get(excluding)?.feedUrl }
+            ?: return
+        val pod = app.repo.cached(finishedFeedUrl) ?: return
+
+        val playedGuids = withContext(Dispatchers.IO) {
+            // Anything previously played to completion gets skipped — keeps the
+            // auto-advance from looping the user back through episodes they
+            // already finished.
+            dao.getByGuids(pod.episodes.map { it.guid })
+                .filter { it.durationMs > 0 && it.positionMs >= it.durationMs - 5_000 }
+                .map { it.guid }
+                .toSet()
+        }
+        val candidate = pod.episodes
+            .filter { it.guid != excluding && it.guid !in playedGuids }
+            .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+            ?: return
+
+        playEpisode(candidate, pod.title, pod.artworkUrl)
     }
 
     companion object {
