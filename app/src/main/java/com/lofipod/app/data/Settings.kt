@@ -47,10 +47,20 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_PAUSE_ON_NOTE] = v }
     }
 
-    /** Selected color theme. Default Twilight. */
+    /**
+     * Selected visual direction. Default Cassette (the original look).
+     * Old color-only theme names from before the direction overhaul map to
+     * Cassette so existing installs keep working.
+     */
     val theme: Flow<LofiTheme> = context.dataStore.data.map {
-        val name = it[KEY_THEME] ?: LofiTheme.TWILIGHT.name
-        runCatching { LofiTheme.valueOf(name) }.getOrDefault(LofiTheme.TWILIGHT)
+        val raw = it[KEY_THEME] ?: LofiTheme.CASSETTE.name
+        runCatching { LofiTheme.valueOf(raw) }.getOrElse {
+            when (raw) {
+                "TWILIGHT", "FOREST", "CORAL" -> LofiTheme.CASSETTE
+                "GAMEBOY" -> LofiTheme.DMG
+                else -> LofiTheme.CASSETTE
+            }
+        }
     }
 
     suspend fun setTheme(t: LofiTheme) {
@@ -62,9 +72,18 @@ class Settings(private val context: Context) {
     }
 }
 
-enum class LofiTheme(val displayName: String) {
-    TWILIGHT("Lofi Twilight"),
-    FOREST("Forest Floor"),
-    CORAL("Coral Reef"),
-    GAMEBOY("Game Boy")
+/**
+ * Visual direction. Each is a complete palette + type + decorative-chrome lane.
+ * Cassette is Direction B (the original); D/E/F are the lo-fi family cousins from
+ * design/specs/Direction-{D,E,F}.md. The palette + display font + accent rule are
+ * what each direction actually wires into the Material theme; richer chrome
+ * (sprockets, reels, sprites) lives in per-direction composables.
+ */
+enum class LofiTheme(val displayName: String, val tagline: String) {
+    CASSETTE("Cassette",     "Twilight navy, amber tape — the original."),
+    REEL    ("Reel-to-Reel", "Cream faceplate, brass + oxblood, mono type."),
+    DMG     ("DMG Handheld", "Olive LCD, magenta chrome, pixel-only."),
+    TICKER  ("Ticker Tape",  "Newsroom paper, courier ink, spot red."),
+    DAYLIGHT("Daylight",     "High-contrast white + ink. Best in sunlight."),
+    LOWLIGHT("Lowlight",     "Near-black + warm amber. Best at night.")
 }

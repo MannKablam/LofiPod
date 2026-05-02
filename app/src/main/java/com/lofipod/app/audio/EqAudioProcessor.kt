@@ -39,6 +39,18 @@ class EqAudioProcessor : BaseAudioProcessor() {
     fun setGainDb(db: Float) { gainDb = db.coerceIn(-12f, 12f) }
     fun setEnabled(on: Boolean) { enabled = on }
 
+    /**
+     * True when the EQ chain would have no audible effect — every band is at 0 dB
+     * and no global gain is applied. Cheap O(bands) check we run per buffer; the
+     * volatile reads are fine since the audio thread re-checks each call.
+     */
+    private fun isPassthroughEffective(): Boolean {
+        if (gainDb != 0f) return false
+        val current = bands
+        for (b in current) if (b.gainDb != 0f) return false
+        return true
+    }
+
     fun currentBands(): List<EqBand> = bands
     fun currentGainDb(): Float = gainDb
 
@@ -84,8 +96,11 @@ class EqAudioProcessor : BaseAudioProcessor() {
         val out = replaceOutputBuffer(inputBuffer.remaining()).order(ByteOrder.nativeOrder())
         val src = inputBuffer.order(ByteOrder.nativeOrder())
 
-        if (!enabled || channelCount == 0) {
-            // Passthrough
+        // Fast-path: passthrough when EQ is disabled OR every band is at 0 dB and
+        // no gain boost is set. The default FLAT preset hits this path, so users
+        // who never touch the EQ pay zero per-sample cost. Choppy playback on
+        // downloaded files traced back to this loop running for nothing.
+        if (!enabled || channelCount == 0 || isPassthroughEffective()) {
             out.put(src)
             out.flip()
             return

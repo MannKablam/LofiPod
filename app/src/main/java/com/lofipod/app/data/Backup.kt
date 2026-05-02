@@ -15,8 +15,13 @@ import org.json.JSONObject
  */
 object Backup {
 
-    /** Bumped any time the export shape changes incompatibly. */
-    const val CURRENT_SCHEMA = 5
+    /**
+     * Bumped any time the export shape changes incompatibly. v6 swaps the per-
+     * episode rating + isFavorite pair for a single favoriteTier int. v6 backups
+     * are still readable on older builds (the new fields are simply ignored), and
+     * v6 readers fall back to converting any v5-shaped fields they find.
+     */
+    const val CURRENT_SCHEMA = 6
 
     fun export(
         episodes: List<EpisodeStateEntity>,
@@ -36,12 +41,13 @@ object Backup {
                         put("title", e.title)
                         put("audioUrl", e.audioUrl)
                         if (e.artworkUrl != null) put("artworkUrl", e.artworkUrl)
-                        put("rating", e.rating)
-                        put("isFavorite", e.isFavorite)
+                        put("favoriteTier", e.favoriteTier)
                         put("positionMs", e.positionMs)
                         put("durationMs", e.durationMs)
                         put("lastPlayedMillis", e.lastPlayedMillis)
                         put("cumulativeListenMs", e.cumulativeListenMs)
+                        if (e.eqDisabled) put("eqDisabled", true)
+                        if (e.archivedAt > 0) put("archivedAt", e.archivedAt)
                     })
                 }
             })
@@ -92,6 +98,20 @@ object Backup {
         obj.optJSONArray("episodeState")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val e = arr.getJSONObject(i)
+                // Tier comes from the new field if present; otherwise convert
+                // v5 rating + isFavorite using the same rule as the SQL migration:
+                // rating==5 → 2, rating>=4 OR isFavorite → 1, else 0.
+                val tier = if (e.has("favoriteTier")) {
+                    e.optInt("favoriteTier", 0)
+                } else {
+                    val r = e.optInt("rating", 0)
+                    val isFav = e.optBoolean("isFavorite", false)
+                    when {
+                        r >= 5 -> 2
+                        r >= 4 || isFav -> 1
+                        else -> 0
+                    }
+                }
                 stateDao.upsert(
                     EpisodeStateEntity(
                         guid = e.getString("guid"),
@@ -99,12 +119,13 @@ object Backup {
                         title = e.getString("title"),
                         audioUrl = e.getString("audioUrl"),
                         artworkUrl = e.optStringOrNull("artworkUrl"),
-                        rating = e.optInt("rating", 0),
-                        isFavorite = e.optBoolean("isFavorite", false),
+                        favoriteTier = tier,
                         positionMs = e.optLong("positionMs", 0L),
                         durationMs = e.optLong("durationMs", 0L),
                         lastPlayedMillis = e.optLong("lastPlayedMillis", 0L),
-                        cumulativeListenMs = e.optLong("cumulativeListenMs", 0L)
+                        cumulativeListenMs = e.optLong("cumulativeListenMs", 0L),
+                        eqDisabled = e.optBoolean("eqDisabled", false),
+                        archivedAt = e.optLong("archivedAt", 0L)
                     )
                 )
                 epRestored++

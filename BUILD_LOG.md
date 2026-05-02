@@ -2,6 +2,89 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## New-episodes badge on Library
+
+- New `feed_visit` table (DB v10): `feedUrl PK, lastVisitedAt`. Stamped to NOW when the user opens that feed's `EpisodesScreen` and again when an episode from that feed starts playing — both are signals that the user is current with the channel.
+- Library row shows a primary-tinted "N new" pill under the episode count when any episode's `pubDateMillis` is strictly after the feed's `lastVisitedAt`. Pill disappears as soon as the user opens the feed (or plays from it from anywhere).
+- First-visit handling: when Library finds a podcast with no `feed_visit` row, it seeds the row to NOW silently. Without this, a freshly-installed app would show every previously-released episode as "new", which would be loud and useless. The first time you actually see a badge is when something *truly new* arrives after install.
+
+## Archive flow + played-row gray-out + download progress polish
+
+**Archive (DB v9)**
+- New `episode_state.archivedAt` column (epoch ms; 0 = not archived). Auto-archive sweep runs every time `EpisodesScreen` opens: any episode that's been played to within 5 s of the end and last touched more than 3 days ago is marked archived in a single bulk update. Archived episodes also have their downloads cancelled in the same pass — keeps the download cache from filling up with content the user has clearly moved on from.
+- Per-row Archive / Unarchive button (archive box icon, primary-tinted when archived) on every episode row. Manual archive also auto-removes the download.
+- Top-bar action on `EpisodesScreen` toggles "show archived" (Archive ↔ Unarchive icon, with a count in the content description). Default is hidden — keeps the list focused on what's actually queued up to listen to.
+- **My Lists Excellent / Most-excellent tabs intentionally ignore archive state** — favorited content stays visible regardless, so archiving doesn't hide things you said you liked.
+- Backup format carries `archivedAt` (omits the field on rows where it's 0 to keep file size down). Imports default to 0 when missing.
+
+**Played-row gray-out**
+- Episode rows where `positionMs >= durationMs - 5_000` (and a known duration) now render with a softer surface (`surface` instead of `surfaceVariant`), 0.55-alpha title + meta + description, a small `CheckCircle` icon next to the title, and strike-through on the title text. The Play button label flips to "Replay". The "currently playing" tint always wins, so the active row stays prominent regardless of played state.
+
+**Download progress**
+- `DownloadButton` now renders a percent label (`12%`, `…`) next to the spinner during the active download states. On fast connections the spinner used to teleport from "Download" to "DownloadDone" without ever showing intermediate progress; the percent text gives the user something to read.
+- Tapping "Download" surfaces a "Download started" snackbar so the action is visibly acknowledged immediately, even on connections fast enough that the spinner state is brief.
+
+## Plain themes: Daylight + Lowlight
+
+Two new practical themes in addition to the four directional ones. Unlike the directional themes (which are stylized — pixel fonts, monospace, decorative palettes), these are about readability:
+
+- **Daylight** — pure white background, near-black text, crisp blue accent. Tuned for outdoor and direct-sunlight reading. System default sans for both display and body.
+- **Lowlight** — near-black charcoal background (not pure #000 — avoids OLED smear), warm off-white text, desaturated amber accent. Low-blue-light palette for nighttime use. Same default sans.
+
+Old DataStore values still migrate (`TWILIGHT/FOREST/CORAL` → Cassette, `GAMEBOY` → DMG); the new themes appear in the Settings picker alongside the directional ones.
+
+## Queue, My Lists, in-Player tabs, heart tiers, multi-level EQ, buffering fix
+
+A meaty round of player + library work, organized by area.
+
+**Player screen redesign**
+- Bottom of the Player is now a tabbed container: **Notes** (inline log with Add button + per-entry jump/delete) and **Details** (podcast title/author, episode title, duration, full description, per-episode EQ override switch). New tabs slot in by extending the `tabs` list in `BottomTabs`.
+- Artwork bumped to 260 dp with a 3 dp `outline`-tinted border so it visually anchors against the chassis on every theme. Transport buttons rebalanced (88 dp main, 64 dp side) so the whole page fits with the new tab strip.
+- The "Return to X:XX" resume chip auto-flips to "Listened to X:XX" once the user catches up to the saved position organically; auto-dismisses 5 s later.
+
+**Queue + auto-play next**
+- New `queue_entry` Room table (DB v6) with positions kept sortable via dense steps so insert-at-front and reorder are O(1). Surfaced on PlayerController: `enqueue`, `enqueueNext`, `removeFromQueue`, `clearQueue`, `reorderQueue`.
+- Episode rows in the per-podcast list have a new "Add to queue / Remove from queue" toggle (`PlaylistAdd` / `PlaylistAddCheck` icons).
+- ExoPlayer's `Player.STATE_ENDED` now removes the just-finished episode from the queue and plays the lowest-position remaining entry. Falls back to a queue-row snapshot when the feed isn't in the in-memory cache, so post-cold-start queue play still works.
+
+**My Lists consolidation**
+- `FavoritesScreen` deleted; replaced with `MyListsScreen` — same shape, but tabs are now **Queue · Most-excellent · Excellent · Downloaded**. Top-bar icon switched from `Star` to `FormatListBulleted` (the bullet-list glyph).
+- The Queue tab supports up/down reorder per row + remove. Tap a row to play immediately.
+
+**Heart tiers replace 5-star ratings (DB v7)**
+- Schema migration drops `rating` (0..5) and `isFavorite` (bool); replaces them with a single `favoriteTier` (0 = none, 1 = Excellent, 2 = Most-excellent). Backfill: rating == 5 → 2; rating >= 4 OR isFavorite → 1; else 0. Migration recreates the table since SQLite can't drop columns directly.
+- `EpisodeStateDao.observeFavorites/observeRated` collapsed into `observeAtTier(tier)` and `observeAllHearted()`.
+- UI: `StarRow` replaced everywhere with `HeartTierButton` — single icon that cycles 0 → 1 → 2 → 0; tier 2 shows a tiny second pip beside the main heart so the distinction is glanceable.
+- Metrics screen + backup file format updated. Backup schema bumped to v6 (writes `favoriteTier`); v5 imports auto-convert old `rating`/`isFavorite` to the new tier.
+
+**Multi-level EQ presets + Boom-kill**
+- New **Boom-kill** preset (2 levels): rolls off low-end mud for male-voice podcasts where bass overshadows vocal qualities. L1 gentle, L2 aggressive.
+- All non-Flat presets are now multi-level: Voice (2), Bass (3), Bright (2), Boom-kill (2). Tapping the same preset cycles `0 → 1 → … → max → 0`. Tapping a different preset switches and starts at level 1. Manual band edits drop you off the preset rail.
+- Preset buttons render the level visually: their background is split into N evenly-sized vertical slices, the leftmost active-level slices fill with `primary`, the rest sit on `surfaceVariant`. When a different preset is active, this preset's slices render dimmed (gray) so it reads "only one preset can be lit at a time" without needing a separate disabled state.
+
+**Audio: choppy-playback fix**
+- `EqAudioProcessor` had no fast-path: even with the FLAT preset (all bands at 0 dB) it ran a per-sample biquad chain in pure Kotlin on the audio thread — the cause of choppy playback even on downloaded files. Added an effective-passthrough check: when global gain is 0 dB AND every band is 0 dB, skip the processing loop entirely and copy the input buffer to the output. The default user pays zero per-sample cost.
+- Tuned `DefaultLoadControl` for podcast streaming: 60 s min / 180 s max buffer, 2 s start, 4 s after-rebuffer, `prioritizeTimeOverSizeThresholds` enabled. Defaults are tuned for video and were under-buffering for long-form audio.
+
+**Per-episode EQ override (DB v8)**
+- Added `episode_state.eqDisabled` boolean column. When set, EQ is forced off for that episode regardless of global enable. Toggle lives in the Player → Details tab.
+- `PlayerController.applyEqOverrideFor(guid)` re-evaluates and writes through to `PlaybackService.sharedEq.setEnabled` on item transitions and after the user toggles. Per-podcast EQ profiles (the larger half of the original ask) is the next step — currently EQ is global except for these per-episode overrides.
+
+**Notes export option**
+- Backup export now opens an "Include notes" choice dialog before the file picker. The exported filename gets a `-no-notes` suffix when notes are omitted, and the snackbar reports which mode was used.
+
+**Known follow-ups**
+- The Alpha and Omega Ministries (SermonAudio) feed caps at 100 items server-side regardless of the URL parameters we tried. Lifting that cap will require either using SermonAudio's REST API (api.sermonaudio.com) for older items or finding the documented pagination parameter — neither was confirmed in this round.
+
+## Theme directions: B/D/E/F selectable in Settings
+
+- **Theme model** rebuilt around the design-spec "directions" (`LofiPod Design/design theme specs/specs/`). The old four palette-only schemes (Twilight/Forest/Coral/Game Boy) collapsed into the **Cassette** direction (B, the original look) plus three new directions ported from the specs: **Reel-to-Reel** (D, cream + brass + oxblood, mono type), **DMG Handheld** (E, olive LCD + magenta accent, pixel display font), **Ticker Tape** (F, newsroom paper + courier + spot red).
+- New `LofiThemeSpec` (in `ui/theme/ThemeSpec.kt`) carries each direction's Material `ColorScheme`, display + body `FontFamily`, accent color, placeholder fill/ink, and a `Kind` enum (`Cassette` / `Reel` / `Dmg` / `Ticker`) for decorative-chrome dispatch. Exposed via `LocalLofiThemeSpec` CompositionLocal and a `lofiTheme` accessor for screens.
+- `LofiPodTheme` now wires the spec into Material via a per-direction `Typography` (display roles use the spec's display font, body keeps Default sans for legibility — pixel/mono at body sizes is unreadable).
+- **Settings → Theme** redrawn: each direction renders as a card with a 4-stripe palette swatch (background / surface / primary / secondary, pulled from its own `specFor`), name, tagline, and a check mark when active. Old preference keys (`TWILIGHT/FOREST/CORAL/GAMEBOY`) migrate to `CASSETTE`/`DMG` so existing installs keep working.
+- **Real artwork wins.** New `ThemedArtwork(artworkUrl, size)` is the single entry point for podcast/episode art across Library, Episodes, Player, Favorites, and the mini-player. Uses Coil `AsyncImage` whenever a URL exists; only falls back to a per-direction placeholder (twin tape spools / spoke-3 reel / 8×8 pixel cassette sprite / `[ EP ]` ticker stamp) when there is no artwork URL at all. The placeholders scale with the parent size, so the 280 dp Player hero looks the same as the 48 dp favorites row.
+- **Wordmark font** in the Library top-bar now reads from `lofiTheme.displayFont` instead of hard-coded `PressStart2P` — Cassette and DMG keep the pixel wordmark, Reel and Ticker switch to monospace.
+
 ## Tap-to-expand episode rows
 
 - Tapping anywhere on an episode card (outside the inner buttons, which consume their own taps) toggles `expanded`. When expanded, the title is no longer truncated and the full description is shown instead of the 3-line preview. Inner buttons (Play / Download / Share / Favorite / star row) continue to behave as before — playback only starts when you tap Play.

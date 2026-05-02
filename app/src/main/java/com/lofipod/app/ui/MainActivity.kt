@@ -47,11 +47,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import coil.compose.AsyncImage
 import com.lofipod.app.player.PlayerController
 import com.lofipod.app.player.PlayerState
 import com.lofipod.app.ui.screens.*
 import com.lofipod.app.ui.theme.LofiPodTheme
+import com.lofipod.app.ui.theme.ThemedArtwork
 import kotlinx.coroutines.delay
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -121,7 +121,7 @@ private fun AppNav(controller: PlayerController) {
                         val encoded = URLEncoder.encode(pod.feedUrl, "UTF-8")
                         nav.navigate("episodes/$encoded")
                     },
-                    onOpenFavorites = { nav.navigate("favorites") },
+                    onOpenMyLists = { nav.navigate("mylists") },
                     onOpenEq = { nav.navigate("eq") },
                     onOpenMetrics = { nav.navigate("metrics") },
                     onOpenNotes = { nav.navigate("notesBrowser") },
@@ -200,8 +200,9 @@ private fun AppNav(controller: PlayerController) {
                 )
             }
 
-            composable("favorites") {
-                FavoritesScreen(
+            composable("mylists") {
+                MyListsScreen(
+                    controller = controller,
                     onBack = { nav.popBackStack() },
                     onPlayEntity = { entity ->
                         playEntity(controller, entity)
@@ -247,11 +248,7 @@ private fun MiniPlayer(
     ) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AsyncImage(
-                    model = state.currentArtworkUri,
-                    contentDescription = null,
-                    modifier = Modifier.size(56.dp)
-                )
+                ThemedArtwork(artworkUrl = state.currentArtworkUri, size = 56.dp)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(

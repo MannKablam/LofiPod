@@ -3,6 +3,7 @@ package com.lofipod.app.player
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
@@ -46,8 +47,24 @@ class PlaybackService : MediaSessionService() {
         val cacheFactory = (application as LofiPodApp).downloads.cacheDataSourceFactory
         val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(cacheFactory)
 
+        // Audio-friendly buffer sizes. Defaults are tuned for video; podcasts can
+        // afford larger buffers (one episode is ~50–200 MB at 128 kbps for 1 hour
+        // of audio), and a longer max buffer means fewer rebuffers on flaky
+        // connections. setPrioritizeTimeOverSizeWhileLoading favors buffering more
+        // duration over hitting a byte cap, which is what we want for audio.
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 60_000,
+                /* maxBufferMs = */ 180_000,
+                /* bufferForPlaybackMs = */ 2_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 4_000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq))
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
