@@ -126,7 +126,8 @@ private fun AppNav(controller: PlayerController) {
                     onOpenMetrics = { nav.navigate("metrics") },
                     onOpenNotes = { nav.navigate("notesBrowser") },
                     onOpenSettings = { nav.navigate("settings") },
-                    onOpenNowPlaying = { nav.navigate("player") }
+                    onOpenNowPlaying = { nav.navigate("player") },
+                    onOpenHistory = { nav.navigate("history") }
                 )
             }
 
@@ -153,7 +154,9 @@ private fun AppNav(controller: PlayerController) {
                         val encoded = URLEncoder.encode(guid, "UTF-8")
                         nav.navigate("notes/$encoded")
                     },
-                    onOpenHistory = { nav.navigate("history") }
+                    onOpenHistory = { nav.navigate("history") },
+                    onOpenMyLists = { nav.navigate("mylists") },
+                    onOpenSettings = { nav.navigate("settings") }
                 )
             }
 
