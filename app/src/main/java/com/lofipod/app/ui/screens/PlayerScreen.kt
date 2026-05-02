@@ -126,14 +126,6 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
-                    IconButton(onClick = onOpenEq) {
-                        Icon(
-                            Icons.Filled.GraphicEq,
-                            contentDescription = "EQ",
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
                             Icons.AutoMirrored.Filled.FormatListBulleted,
@@ -141,8 +133,8 @@ fun PlayerScreen(
                             modifier = Modifier.size(28.dp)
                         )
                     }
-                    // Less-frequent destinations live in the overflow menu so
-                    // the visible action row stays at four items + ⋮.
+                    // Overflow sits between My lists and EQ so EQ holds the
+                    // far-right anchor position the user keeps it tied to.
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
@@ -167,6 +159,13 @@ fun PlayerScreen(
                                 leadingIcon = { Icon(Icons.Filled.Settings, null) }
                             )
                         }
+                    }
+                    IconButton(onClick = onOpenEq) {
+                        Icon(
+                            Icons.Filled.GraphicEq,
+                            contentDescription = "EQ",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
                 }
             )
