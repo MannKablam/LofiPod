@@ -2,6 +2,13 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Per-feed loading progress
+
+- `PodcastRepository.fetchFeeds` now takes an `onProgress(SourceEntry, FeedStatus, errorMessage)` callback fired as each feed transitions (LOADING → OK / FAILED / TIMEOUT).
+- `LibraryViewModel` seeds `feedProgress` with all feeds in LOADING state before fetch starts, then atomically updates each entry as the callback fires.
+- `LibraryScreen` loading state now shows `Loading feeds (n/total)` plus a row per feed with status icon (spinner / check / error / hourglass), display name, and inline error message on failure.
+- A single hung feed is now visible instead of presenting as a blank spinner.
+
 ## Standardize sources.md to iTunes-canonical feed URLs
 
 - Each feed now matches the `feedUrl` Apple Podcasts has registered (verified via the iTunes Lookup API).

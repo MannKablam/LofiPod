@@ -40,14 +40,28 @@ class PodcastRepository(
     /**
      * Fetch all feeds in parallel. Each feed has a 60s hard timeout; feeds that fail or
      * time out are logged and skipped. We keep going so one bad feed doesn't sink the list.
+     *
+     * [onProgress] is invoked from the IO thread each time a feed transitions state. The
+     * caller is responsible for marshalling to whatever thread its state holder requires —
+     * [kotlinx.coroutines.flow.MutableStateFlow.update] is fine as-is.
      */
-    suspend fun fetchFeeds(sources: List<SourceEntry>): List<Podcast> = coroutineScope {
+    suspend fun fetchFeeds(
+        sources: List<SourceEntry>,
+        onProgress: (SourceEntry, FeedStatus, errorMessage: String?) -> Unit = { _, _, _ -> }
+    ): List<Podcast> = coroutineScope {
         val results = sources.map { src ->
             async(Dispatchers.IO) {
                 try {
-                    withTimeoutOrNull(60_000) { fetchOne(src) }
+                    val pod = withTimeoutOrNull(60_000) { fetchOne(src) }
+                    if (pod != null) {
+                        onProgress(src, FeedStatus.OK, null)
+                    } else {
+                        onProgress(src, FeedStatus.TIMEOUT, "Timed out after 60s")
+                    }
+                    pod
                 } catch (e: Exception) {
                     System.err.println("Feed failed: ${src.feedUrl} -> ${e.message}")
+                    onProgress(src, FeedStatus.FAILED, e.message ?: e.javaClass.simpleName)
                     null
                 }
             }
@@ -55,6 +69,8 @@ class PodcastRepository(
         cache = results.associateBy { it.feedUrl }
         results
     }
+
+    enum class FeedStatus { LOADING, OK, FAILED, TIMEOUT }
 
     suspend fun fetchOne(src: SourceEntry): Podcast = withContext(Dispatchers.IO) {
         val req = Request.Builder()

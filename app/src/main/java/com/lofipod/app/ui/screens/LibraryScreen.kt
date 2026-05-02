@@ -9,7 +9,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -21,7 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.lofipod.app.data.PodcastRepository.FeedStatus
 import com.lofipod.app.data.model.Podcast
+import com.lofipod.app.ui.FeedLoadStatus
 import com.lofipod.app.ui.LibraryViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,8 +79,12 @@ fun LibraryScreen(
         ) {
             when {
                 state.loading -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                    if (state.feedProgress.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else {
+                        FeedProgressList(state.feedProgress)
                     }
                 }
                 state.error != null -> {
@@ -99,6 +108,88 @@ fun LibraryScreen(
             }
         }
     }
+}
+
+@Composable
+private fun FeedProgressList(entries: List<FeedLoadStatus>) {
+    val done = entries.count { it.status != FeedStatus.LOADING }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Text(
+            "Loading feeds  ($done / ${entries.size})",
+            style = MaterialTheme.typography.titleMedium
+        )
+        Spacer(Modifier.height(8.dp))
+        LinearProgressIndicator(
+            progress = { if (entries.isEmpty()) 0f else done.toFloat() / entries.size },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(12.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(entries) { fs ->
+                FeedProgressRow(fs)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeedProgressRow(fs: FeedLoadStatus) {
+    val label = fs.source.displayName ?: fs.source.feedUrl.shortLabel()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+            when (fs.status) {
+                FeedStatus.LOADING -> CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp
+                )
+                FeedStatus.OK -> Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = "Loaded",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                FeedStatus.FAILED -> Icon(
+                    Icons.Filled.ErrorOutline,
+                    contentDescription = "Failed",
+                    tint = MaterialTheme.colorScheme.error
+                )
+                FeedStatus.TIMEOUT -> Icon(
+                    Icons.Filled.HourglassEmpty,
+                    contentDescription = "Timed out",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+            if (fs.status == FeedStatus.FAILED || fs.status == FeedStatus.TIMEOUT) {
+                fs.errorMessage?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun String.shortLabel(): String = try {
+    val u = java.net.URI(this)
+    (u.host ?: this).removePrefix("www.").removePrefix("feed.").removePrefix("feeds.")
+} catch (_: Exception) {
+    this
 }
 
 @Composable
