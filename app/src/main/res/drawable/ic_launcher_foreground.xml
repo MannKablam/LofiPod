@@ -2,7 +2,7 @@
 <!--
   Pixel-art headphones. Each "pixel" is 6x6 viewport units (12x12 grid in the
   visible safe zone of the 108x108 adaptive-icon canvas). Stepped arc on top,
-  blocky ear cups with darker inner detail. Lofi palette: dusty pink headband,
+  blocky ear cups with darker inner detail. Lofi palette: warm amber headband,
   muted teal cups, deep dusky-purple highlights.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -11,12 +11,12 @@
 
     <!-- Headband: stepped arc made of axis-aligned rectangles -->
     <path
-        android:fillColor="#E8A4C4"
+        android:fillColor="#E6B469"
         android:pathData="M42,30 H66 V36 H42 Z M30,36 H42 V42 H30 Z M66,36 H78 V42 H66 Z M24,42 H30 V54 H24 Z M78,42 H84 V54 H78 Z" />
 
-    <!-- Headband subtle highlight (one row of lighter pink across the top) -->
+    <!-- Headband subtle highlight (one row of lighter amber across the top) -->
     <path
-        android:fillColor="#F2C8DC"
+        android:fillColor="#F2CD8E"
         android:pathData="M48,30 H60 V33 H48 Z" />
 
     <!-- Left ear cup: outer block -->
