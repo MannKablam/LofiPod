@@ -1,11 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pixel-art headphones. Each "pixel" is 6x6 viewport units (12x12 grid in the
+  visible safe zone of the 108x108 adaptive-icon canvas). Stepped arc on top,
+  blocky ear cups with darker inner detail. Lofi palette: dusty pink headband,
+  muted teal cups, deep dusky-purple highlights.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
+
+    <!-- Headband: stepped arc made of axis-aligned rectangles -->
     <path
-        android:fillColor="#D4A373"
-        android:pathData="M54,30c-13,0 -24,11 -24,24v8h6v-8c0,-10 8,-18 18,-18s18,8 18,18v8h6v-8c0,-13 -11,-24 -24,-24z" />
+        android:fillColor="#E8A4C4"
+        android:pathData="M42,30 H66 V36 H42 Z M30,36 H42 V42 H30 Z M66,36 H78 V42 H66 Z M24,42 H30 V54 H24 Z M78,42 H84 V54 H78 Z" />
+
+    <!-- Headband subtle highlight (one row of lighter pink across the top) -->
     <path
-        android:fillColor="#D4A373"
-        android:pathData="M30,62h10v18h-10z M68,62h10v18h-10z" />
+        android:fillColor="#F2C8DC"
+        android:pathData="M48,30 H60 V33 H48 Z" />
+
+    <!-- Left ear cup: outer block -->
+    <path
+        android:fillColor="#7BB4C4"
+        android:pathData="M18,54 H36 V78 H18 Z" />
+    <!-- Left ear cup: dark inner driver -->
+    <path
+        android:fillColor="#3B2D5C"
+        android:pathData="M24,60 H30 V72 H24 Z" />
+    <!-- Left ear cup: tiny highlight -->
+    <path
+        android:fillColor="#A8D2DD"
+        android:pathData="M21,57 H24 V60 H21 Z" />
+
+    <!-- Right ear cup: outer block -->
+    <path
+        android:fillColor="#7BB4C4"
+        android:pathData="M72,54 H90 V78 H72 Z" />
+    <!-- Right ear cup: dark inner driver -->
+    <path
+        android:fillColor="#3B2D5C"
+        android:pathData="M78,60 H84 V72 H78 Z" />
+    <!-- Right ear cup: tiny highlight -->
+    <path
+        android:fillColor="#A8D2DD"
+        android:pathData="M84,57 H87 V60 H84 Z" />
 </vector>

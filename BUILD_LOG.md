@@ -2,6 +2,12 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Lofi visual refresh
+
+- **Launcher icon** redrawn as chunky pixel-art headphones (stepped arc + blocky ear cups with dark inner drivers and small highlights). Still a single vector file — no PNG mipmaps needed.
+- **Color scheme** swapped from warm-sepia to cool-dusky lofi palette: deep navy background (`#1A1B2E`), dusky indigo surfaces, dusty pink primary (`#E8A4C4`), muted teal secondary (`#7BB4C4`), soft cream-lavender text. Light scheme tracks: lavender-cream backdrop, plum primary.
+- Status bar / nav bar / window background updated to match the new dark navy.
+
 ## Per-feed loading progress
 
 - `PodcastRepository.fetchFeeds` now takes an `onProgress(SourceEntry, FeedStatus, errorMessage)` callback fired as each feed transitions (LOADING → OK / FAILED / TIMEOUT).
