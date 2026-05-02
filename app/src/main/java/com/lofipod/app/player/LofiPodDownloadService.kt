@@ -3,9 +3,9 @@ package com.lofipod.app.player
 import android.app.Notification
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
+import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Scheduler
-import androidx.media3.ui.DownloadNotificationHelper
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.R
 
