@@ -36,6 +36,9 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     val theme by settings.theme.collectAsState(initial = LofiTheme.CASSETTE)
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
+    val autoPlayNextInFeed by settings.autoPlayNextInFeed.collectAsState(initial = true)
+    val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
+    val textScale by settings.textScale.collectAsState(initial = 1.0f)
 
     Scaffold(
         topBar = {
@@ -72,27 +75,37 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(20.dp))
+            SectionHeader("Playback")
+            SwitchRow(
+                checked = autoPlayNextInFeed,
+                title = "Auto-play next in feed",
+                subtitle = "When the queue is empty, advance to the next published " +
+                    "episode of the same podcast at the end of one.",
+                onCheckedChange = { v -> scope.launch { settings.setAutoPlayNextInFeed(v) } }
+            )
+            SwitchRow(
+                checked = showPlayedInList,
+                title = "Show played episodes",
+                subtitle = "Already-finished episodes stay visible (dimmed and " +
+                    "struck through) instead of disappearing from the per-podcast list.",
+                onCheckedChange = { v -> scope.launch { settings.setShowPlayedInList(v) } }
+            )
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("Notes")
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Switch(
-                    checked = pauseOnNote,
-                    onCheckedChange = { v -> scope.launch { settings.setPauseOnNote(v) } }
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Pause playback while writing a note", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Audio resumes once the note is saved or cancelled.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+            SwitchRow(
+                checked = pauseOnNote,
+                title = "Pause playback while writing a note",
+                subtitle = "Audio resumes once the note is saved or cancelled.",
+                onCheckedChange = { v -> scope.launch { settings.setPauseOnNote(v) } }
+            )
+
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Display")
+            TextScaleRow(
+                value = textScale,
+                onChange = { v -> scope.launch { settings.setTextScale(v) } }
+            )
 
             Spacer(Modifier.height(20.dp))
             SectionHeader("Audio")
@@ -109,7 +122,73 @@ fun SettingsScreen(onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("About")
+            Text(
+                "LofiPod — a personal-canon podcast app. Backups + restore live " +
+                    "in Metrics. Theme, queue auto-play, archive, and EQ-per-episode " +
+                    "preferences persist across reinstalls only when the new build " +
+                    "is signed with the same key as the previous one (see BUILD_LOG).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+    }
+}
+
+/** Two-line settings row with a leading [Switch]. Used for every boolean
+ *  toggle in this screen so they line up visually. */
+@Composable
+private fun SwitchRow(
+    checked: Boolean,
+    title: String,
+    subtitle: String,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Text-scale slider. Displays a live preview line in the chosen size so the
+ * user can see the effect of the slider before committing. Range matches
+ * Settings.textScale (0.85 .. 1.4).
+ */
+@Composable
+private fun TextScaleRow(value: Float, onChange: (Float) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text("Text size: ${"%.0f".format(value * 100)}%",
+            style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Used everywhere except the playback artwork. Bumping it up makes " +
+                "longer reading sessions easier on the eyes.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = 0.85f..1.4f,
+            steps = 10  // 11 stops between 0.85 and 1.4 (~5% increments)
+        )
     }
 }
 

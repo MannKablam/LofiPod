@@ -61,6 +61,8 @@ fun EpisodesScreen(
     val scope = rememberCoroutineScope()
     val playerState by controller.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val settings = remember { com.lofipod.app.data.Settings(app) }
+    val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
@@ -106,8 +108,15 @@ fun EpisodesScreen(
 
     val archivedCount = episodeStates.values.count { it.archivedAt > 0 }
     val visibleEpisodes = (pod?.episodes ?: emptyList()).filter { ep ->
-        if (showArchived) true
-        else (episodeStates[ep.guid]?.archivedAt ?: 0L) == 0L
+        val s = episodeStates[ep.guid]
+        val archived = (s?.archivedAt ?: 0L) > 0L
+        val played = s?.isPlayed == true
+        when {
+            showArchived -> true
+            archived -> false
+            !showPlayedInList && played -> false
+            else -> true
+        }
     }
 
     Scaffold(

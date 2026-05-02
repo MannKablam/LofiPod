@@ -11,9 +11,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Density
 import com.lofipod.app.data.LofiTheme
 import com.lofipod.app.data.Settings
 
@@ -49,6 +51,7 @@ fun LofiPodTheme(content: @Composable () -> Unit) {
     val ctx = LocalContext.current
     val settings = remember { Settings(ctx) }
     val selectedTheme by settings.theme.collectAsState(initial = LofiTheme.CASSETTE)
+    val textScale by settings.textScale.collectAsState(initial = 1.0f)
     val spec = specFor(selectedTheme)
 
     val view = LocalView.current
@@ -60,7 +63,18 @@ fun LofiPodTheme(content: @Composable () -> Unit) {
         }
     }
 
-    CompositionLocalProvider(LocalLofiThemeSpec provides spec) {
+    // Override the ambient density so every sp-defined text style scales by
+    // settings.textScale. Layout density (dp) stays untouched — only fontScale
+    // changes — so text grows/shrinks but icons and spacing stay put.
+    val baseDensity = LocalDensity.current
+    val scaledDensity = remember(baseDensity, textScale) {
+        Density(density = baseDensity.density, fontScale = baseDensity.fontScale * textScale)
+    }
+
+    CompositionLocalProvider(
+        LocalLofiThemeSpec provides spec,
+        LocalDensity provides scaledDensity
+    ) {
         MaterialTheme(
             colorScheme = spec.colors,
             typography = typographyFor(spec),

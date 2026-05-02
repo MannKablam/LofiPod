@@ -116,6 +116,12 @@ private val TickerScheme: ColorScheme = darkColorScheme(
 // White background, near-black text, saturated-but-not-screaming blue accent.
 // No decorative fonts — sans-serif everywhere for legibility on a phone screen
 // you can barely see in noon sun.
+//
+// surfaceTint = Transparent: Material 3 normally blends primary into surfaces at
+// elevation as a "tonal elevation" overlay, which on Daylight took the popup
+// menu / dialog backgrounds visibly darker (bluish slate over the near-white
+// surface). Killing the tint keeps elevated containers — including the
+// DropdownMenu popup — at the actual surface color so text reads clean.
 private val DaylightScheme: ColorScheme = darkColorScheme(
     primary            = Color(0xFF0E63C8),  // crisp blue accent
     onPrimary          = Color(0xFFFFFFFF),
@@ -125,6 +131,7 @@ private val DaylightScheme: ColorScheme = darkColorScheme(
     background         = Color(0xFFFFFFFF),
     surface            = Color(0xFFF5F5F7),
     surfaceVariant     = Color(0xFFE6E6EA),
+    surfaceTint        = Color.Transparent,
     onBackground       = Color(0xFF101114),
     onSurface          = Color(0xFF101114),
     onSurfaceVariant   = Color(0xFF44464C),
