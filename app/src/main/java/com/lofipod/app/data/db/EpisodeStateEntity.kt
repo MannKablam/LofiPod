@@ -17,5 +17,7 @@ data class EpisodeStateEntity(
     val isFavorite: Boolean = false,
     val positionMs: Long = 0L,       // last playback position
     val durationMs: Long = 0L,       // last known duration
-    val lastPlayedMillis: Long = 0L
+    val lastPlayedMillis: Long = 0L,
+    /** Total ms the user has actually played this episode (sum of ticker intervals). */
+    val cumulativeListenMs: Long = 0L
 )

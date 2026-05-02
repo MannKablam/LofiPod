@@ -91,7 +91,9 @@ class PlayerController(private val context: Context) {
                 val dur = c.duration.takeIf { it > 0 } ?: 0L
                 withContext(Dispatchers.IO) {
                     if (dao.get(outgoingId) != null) {
-                        dao.updatePosition(outgoingId, pos, dur, System.currentTimeMillis())
+                        // listenDelta = 0: the cumulative ticker handles real listening
+                        // time; this is just a final position snapshot.
+                        dao.updatePosition(outgoingId, pos, dur, System.currentTimeMillis(), 0L)
                     }
                 }
             }

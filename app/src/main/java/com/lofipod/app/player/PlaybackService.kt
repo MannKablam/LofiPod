@@ -66,7 +66,7 @@ class PlaybackService : MediaSessionService() {
                     startSaveTicker(player)
                 } else {
                     stopSaveTicker()
-                    saveCurrent(player)
+                    saveCurrent(player, listenDelta = 0L)
                 }
             }
         })
@@ -79,7 +79,9 @@ class PlaybackService : MediaSessionService() {
         saveTickerJob = scope.launch {
             while (isActive) {
                 delay(SAVE_INTERVAL_MS)
-                saveCurrent(player)
+                // The user has just listened for one tick interval — add it to the
+                // cumulative total along with the position update.
+                saveCurrent(player, listenDelta = SAVE_INTERVAL_MS)
             }
         }
     }
@@ -92,8 +94,10 @@ class PlaybackService : MediaSessionService() {
     /**
      * Snapshot the current player position on the main thread, then write to Room on IO.
      * Only updates rows that already exist — PlayerController creates the row on first play.
+     * [listenDelta] is added to cumulativeListenMs (use SAVE_INTERVAL_MS for the periodic
+     * tick, 0 for save-on-pause / save-on-destroy where no real time has elapsed).
      */
-    private fun saveCurrent(player: Player) {
+    private fun saveCurrent(player: Player, listenDelta: Long) {
         val id = player.currentMediaItem?.mediaId ?: return
         val pos = player.currentPosition
         val dur = player.duration.takeIf { it > 0 } ?: 0L
@@ -101,7 +105,7 @@ class PlaybackService : MediaSessionService() {
         scope.launch(Dispatchers.IO) {
             val dao = (application as LofiPodApp).db.episodeStateDao()
             if (dao.get(id) != null) {
-                dao.updatePosition(id, pos, dur, now)
+                dao.updatePosition(id, pos, dur, now, listenDelta)
             }
         }
     }
@@ -111,7 +115,7 @@ class PlaybackService : MediaSessionService() {
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         val player = mediaSession?.player
         if (player != null) {
-            saveCurrent(player)
+            saveCurrent(player, listenDelta = 0L)
             if (!player.playWhenReady || player.mediaItemCount == 0) {
                 stopSelf()
             }
@@ -119,7 +123,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        mediaSession?.player?.let { saveCurrent(it) }
+        mediaSession?.player?.let { saveCurrent(it, listenDelta = 0L) }
         stopSaveTicker()
         mediaSession?.run {
             player.release()
