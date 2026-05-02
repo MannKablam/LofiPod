@@ -152,6 +152,15 @@ private fun EpisodeRow(
                     )
                 }
             }
+            ep.description?.stripHtml()?.takeIf { it.isNotBlank() }?.let { desc ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    desc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3
+                )
+            }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilledTonalButton(onClick = onPlay) {
@@ -254,6 +263,18 @@ private fun StarRow(rating: Int, onClick: (Int) -> Unit) {
         }
     }
 }
+
+/** Best-effort plain-text view of an HTML-ish description. */
+private fun String.stripHtml(): String =
+    this.replace(Regex("<[^>]*>"), "")
+        .replace(Regex("&nbsp;"), " ")
+        .replace(Regex("&amp;"), "&")
+        .replace(Regex("&lt;"), "<")
+        .replace(Regex("&gt;"), ">")
+        .replace(Regex("&quot;"), "\"")
+        .replace(Regex("&#39;|&apos;"), "'")
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
 /** Read-modify-write for episode state. Runs on IO. */
 private suspend fun upsertState(

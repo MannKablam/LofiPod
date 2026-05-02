@@ -58,8 +58,14 @@ object RssParser {
                                 when (parser.name) {
                                     "image" -> {
                                         val href = parser.getAttributeValue(null, "href")
-                                        if (!href.isNullOrBlank()) channelArt = href
-                                        skip(parser)
+                                        if (!href.isNullOrBlank()) {
+                                            channelArt = href
+                                            skip(parser)
+                                        } else {
+                                            // Some feeds put the URL as text content instead of href.
+                                            val text = readText(parser)
+                                            if (text.isNotBlank()) channelArt = text
+                                        }
                                     }
                                     "author" -> channelAuthor = readText(parser)
                                     "summary" -> if (channelDesc == null) channelDesc = readText(parser) else skip(parser)
@@ -116,8 +122,13 @@ object RssParser {
                             "duration" -> duration = readText(parser)
                             "image" -> {
                                 val href = parser.getAttributeValue(null, "href")
-                                if (!href.isNullOrBlank()) epArt = href
-                                skip(parser)
+                                if (!href.isNullOrBlank()) {
+                                    epArt = href
+                                    skip(parser)
+                                } else {
+                                    val text = readText(parser)
+                                    if (text.isNotBlank()) epArt = text
+                                }
                             }
                             "summary" -> if (desc == null) desc = readText(parser) else skip(parser)
                             else -> skip(parser)

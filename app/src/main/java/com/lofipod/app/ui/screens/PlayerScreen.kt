@@ -87,37 +87,43 @@ fun PlayerScreen(
                 Spacer(Modifier.weight(1f))
                 Text(formatTime(durationMs), style = MaterialTheme.typography.bodySmall)
             }
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(28.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { controller.seekRelative(-15_000) }) {
-                    Icon(Icons.Filled.Replay, contentDescription = "Back 15s", modifier = Modifier.size(36.dp))
+                IconButton(
+                    onClick = { controller.seekRelative(-15_000) },
+                    modifier = Modifier.size(80.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Replay,
+                        contentDescription = "Back 15s",
+                        modifier = Modifier.size(72.dp)
+                    )
                 }
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.width(20.dp))
                 FilledIconButton(
                     onClick = { controller.togglePlay() },
-                    modifier = Modifier.size(72.dp)
+                    modifier = Modifier.size(108.dp)
                 ) {
                     Icon(
                         if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = "Play/Pause",
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(60.dp)
                     )
                 }
-                Spacer(Modifier.width(16.dp))
-                IconButton(onClick = { controller.seekRelative(30_000) }) {
-                    Icon(Icons.Filled.Forward30, contentDescription = "Forward 30s", modifier = Modifier.size(36.dp))
+                Spacer(Modifier.width(20.dp))
+                IconButton(
+                    onClick = { controller.seekRelative(30_000) },
+                    modifier = Modifier.size(80.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Forward30,
+                        contentDescription = "Forward 30s",
+                        modifier = Modifier.size(72.dp)
+                    )
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            // Speed
-            Text("Speed: ${"%.2fx".format(state.speed)}", style = MaterialTheme.typography.bodyMedium)
-            Slider(
-                value = state.speed,
-                onValueChange = { controller.setSpeed(it) },
-                valueRange = 0.5f..3.0f,
-                steps = 24,
-                modifier = Modifier.fillMaxWidth()
-            )
+            // Speed slider intentionally omitted — too easy to brush by accident.
+            // Re-add to EQ screen if needed.
         }
     }
 }
