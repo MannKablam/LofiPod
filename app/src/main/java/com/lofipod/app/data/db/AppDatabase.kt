@@ -30,6 +30,9 @@ interface EpisodeStateDao {
     @Query("SELECT * FROM episode_state")
     suspend fun getAll(): List<EpisodeStateEntity>
 
+    @Query("SELECT * FROM episode_state WHERE guid IN (:guids)")
+    suspend fun getByGuids(guids: List<String>): List<EpisodeStateEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: EpisodeStateEntity)
 
@@ -39,11 +42,6 @@ interface EpisodeStateDao {
     @Query("UPDATE episode_state SET isFavorite = :fav WHERE guid = :guid")
     suspend fun setFavorite(guid: String, fav: Boolean)
 
-    /**
-     * Updates last-known position, duration, and timestamp; bumps cumulativeListenMs
-     * by [listenDelta] (use the ticker interval when called from the periodic save,
-     * 0 for save-on-pause / save-on-destroy).
-     */
     @Query(
         "UPDATE episode_state SET positionMs = :pos, durationMs = :dur, " +
             "lastPlayedMillis = :now, cumulativeListenMs = cumulativeListenMs + :listenDelta " +
@@ -72,36 +70,49 @@ interface PodcastSourceDao {
 }
 
 @Dao
-interface EpisodeNoteDao {
+interface EpisodeNoteEntryDao {
 
-    @Query("SELECT * FROM episode_note WHERE guid = :guid LIMIT 1")
-    suspend fun get(guid: String): EpisodeNoteEntity?
+    @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt ASC")
+    fun observeForEpisode(guid: String): Flow<List<EpisodeNoteEntryEntity>>
 
-    @Query("SELECT * FROM episode_note WHERE guid = :guid LIMIT 1")
-    fun observe(guid: String): Flow<EpisodeNoteEntity?>
+    @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt ASC")
+    suspend fun getForEpisode(guid: String): List<EpisodeNoteEntryEntity>
 
-    @Query("SELECT * FROM episode_note ORDER BY updatedAt DESC")
-    suspend fun getAll(): List<EpisodeNoteEntity>
+    @Query("SELECT * FROM episode_note_entry ORDER BY createdAt DESC")
+    suspend fun getAll(): List<EpisodeNoteEntryEntity>
 
-    @Query("SELECT * FROM episode_note WHERE text LIKE '%' || :query || '%' ORDER BY updatedAt DESC")
-    suspend fun search(query: String): List<EpisodeNoteEntity>
+    @Query("SELECT * FROM episode_note_entry ORDER BY createdAt DESC LIMIT :limit OFFSET :offset")
+    suspend fun getMostRecent(limit: Int, offset: Int = 0): List<EpisodeNoteEntryEntity>
+
+    @Query("SELECT COUNT(*) FROM episode_note_entry WHERE createdAt >= :since")
+    suspend fun countSince(since: Long): Int
+
+    @Query(
+        "SELECT * FROM episode_note_entry WHERE text LIKE '%' || :query || '%' " +
+            "ORDER BY createdAt DESC LIMIT :limit"
+    )
+    suspend fun search(query: String, limit: Int = 200): List<EpisodeNoteEntryEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(note: EpisodeNoteEntity)
+    suspend fun upsert(entry: EpisodeNoteEntryEntity)
 
-    @Query("DELETE FROM episode_note WHERE guid = :guid")
-    suspend fun delete(guid: String)
+    @Query("DELETE FROM episode_note_entry WHERE guid = :guid AND createdAt = :createdAt")
+    suspend fun delete(guid: String, createdAt: Long)
 }
 
 @Database(
-    entities = [EpisodeStateEntity::class, PodcastSourceEntity::class, EpisodeNoteEntity::class],
-    version = 3,
+    entities = [
+        EpisodeStateEntity::class,
+        PodcastSourceEntity::class,
+        EpisodeNoteEntryEntity::class
+    ],
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun episodeStateDao(): EpisodeStateDao
     abstract fun podcastSourceDao(): PodcastSourceDao
-    abstract fun episodeNoteDao(): EpisodeNoteDao
+    abstract fun episodeNoteEntryDao(): EpisodeNoteEntryDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -137,6 +148,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 → v4: replace single-text episode_note (UI never shipped, so no real
+         * data to migrate) with multi-entry episode_note_entry.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS episode_note")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_note_entry (
+                        guid TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        playbackPosMs INTEGER NOT NULL,
+                        text TEXT NOT NULL,
+                        PRIMARY KEY (guid, createdAt)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -144,7 +176,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "lofipod.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build().also { instance = it }
             }
     }

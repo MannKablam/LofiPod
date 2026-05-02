@@ -114,7 +114,8 @@ private fun AppNav(controller: PlayerController) {
                     },
                     onOpenFavorites = { nav.navigate("favorites") },
                     onOpenEq = { nav.navigate("eq") },
-                    onOpenMetrics = { nav.navigate("metrics") }
+                    onOpenMetrics = { nav.navigate("metrics") },
+                    onOpenNotes = { nav.navigate("notesBrowser") }
                 )
             }
 
@@ -135,7 +136,11 @@ private fun AppNav(controller: PlayerController) {
                 PlayerScreen(
                     controller = controller,
                     onBack = { nav.popBackStack() },
-                    onOpenEq = { nav.navigate("eq") }
+                    onOpenEq = { nav.navigate("eq") },
+                    onOpenNotes = { guid ->
+                        val encoded = URLEncoder.encode(guid, "UTF-8")
+                        nav.navigate("notes/$encoded")
+                    }
                 )
             }
 
@@ -145,6 +150,27 @@ private fun AppNav(controller: PlayerController) {
 
             composable("metrics") {
                 MetricsScreen(onBack = { nav.popBackStack() })
+            }
+
+            composable("notesBrowser") {
+                NotesBrowserScreen(
+                    controller = controller,
+                    onOpenEpisodeNotes = { guid ->
+                        val encoded = URLEncoder.encode(guid, "UTF-8")
+                        nav.navigate("notes/$encoded")
+                    },
+                    onBack = { nav.popBackStack() }
+                )
+            }
+
+            composable("notes/{guid}") { back ->
+                val raw = back.arguments?.getString("guid") ?: return@composable
+                val guid = URLDecoder.decode(raw, "UTF-8")
+                NotesScreen(
+                    episodeGuid = guid,
+                    controller = controller,
+                    onBack = { nav.popBackStack() }
+                )
             }
 
             composable("favorites") {

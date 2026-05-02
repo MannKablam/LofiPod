@@ -2,6 +2,15 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Notes: timestamped entries, jump-to-position, browser, search
+
+- **Schema v4** (additive migration). Replaces the unused single-row `episode_note` table with `episode_note_entry`: composite PK on `(guid, createdAt)`, plus `playbackPosMs` and `text`. Each note now records the wall-clock UTC moment it was logged AND the playback position at that moment. Multiple entries per episode accumulate like a journal.
+- **`NotesScreen`** (per-episode): list of entries with citation header `2026-05-01 14:23 UTC · 00:14:23`, plus inline edit + delete. "Add" action top-right. Toggle at top: "Pause playback while writing a note" (default on, persisted in DataStore). On open: auto-pauses if playing; on save/cancel: resumes if it had been paused for the dialog.
+- **Jump-to-position** button on every note card. If the note's episode is currently loaded, just seeks to the captured position. Otherwise looks up the episode in Room, builds a MediaItem, and starts playback at that position (added `forcedStartMs` parameter to `PlayerController.playEpisode`).
+- **`NotesBrowserScreen`** (global): default view loads `max(25, count-within-2-weeks)` most-recent notes, paginates +50 as you scroll near the bottom. Search icon flips the top bar to a live search field that LIKE-queries note text across all episodes. Tapping a card opens that episode's NotesScreen; the play button on the card jumps directly to the position.
+- **Top-bar wiring**: Library gets a Notes browser button (left of Favorites). PlayerScreen gets a Notes button that takes you to the current episode's NotesScreen.
+- **Backup format bumped to schema 4**: `notes` legacy key replaced by `noteEntries` (multi-entry shape). Schema-3 backups containing a `notes` array still import — each legacy single-text becomes one entry with the original `updatedAt` as `createdAt` and `playbackPosMs` of 0.
+
 ## Backup/restore + cumulative listen tracking + notes table
 
 - **Schema v3** (additive migration): adds `cumulativeListenMs` to `episode_state` (default 0) and a new `episode_note` table (`guid`, `text`, `updatedAt`).

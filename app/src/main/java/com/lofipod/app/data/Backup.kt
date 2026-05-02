@@ -1,25 +1,25 @@
 package com.lofipod.app.data
 
 import com.lofipod.app.data.db.AppDatabase
-import com.lofipod.app.data.db.EpisodeNoteEntity
+import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateEntity
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * Single-file JSON backup of all user-generated state. Includes episode states
- * (favorites, ratings, positions, cumulative listening) and notes. Forward-compatible:
- * older backups missing newer fields default cleanly; the schemaVersion gate refuses
- * backups from a strictly newer schema.
+ * (favorites, ratings, positions, cumulative listening) and timestamped note entries.
+ * Forward-compatible: older backups missing newer fields default cleanly; the
+ * schemaVersion gate refuses backups from a strictly newer schema.
  */
 object Backup {
 
     /** Bumped any time the export shape changes incompatibly. */
-    const val CURRENT_SCHEMA = 3
+    const val CURRENT_SCHEMA = 4
 
     fun export(
         episodes: List<EpisodeStateEntity>,
-        notes: List<EpisodeNoteEntity>,
+        noteEntries: List<EpisodeNoteEntryEntity>,
         appVersion: String
     ): String {
         val obj = JSONObject().apply {
@@ -43,12 +43,13 @@ object Backup {
                     })
                 }
             })
-            put("notes", JSONArray().apply {
-                notes.forEach { n ->
+            put("noteEntries", JSONArray().apply {
+                noteEntries.forEach { n ->
                     put(JSONObject().apply {
                         put("guid", n.guid)
+                        put("createdAt", n.createdAt)
+                        put("playbackPosMs", n.playbackPosMs)
                         put("text", n.text)
-                        put("updatedAt", n.updatedAt)
                     })
                 }
             })
@@ -71,7 +72,7 @@ object Backup {
         }
 
         val stateDao = db.episodeStateDao()
-        val noteDao = db.episodeNoteDao()
+        val noteDao = db.episodeNoteEntryDao()
 
         var epRestored = 0
         obj.optJSONArray("episodeState")?.let { arr ->
@@ -97,17 +98,38 @@ object Backup {
         }
 
         var notesRestored = 0
-        obj.optJSONArray("notes")?.let { arr ->
+        // Schema 4+ shape — multi-entry notes.
+        obj.optJSONArray("noteEntries")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val n = arr.getJSONObject(i)
                 noteDao.upsert(
-                    EpisodeNoteEntity(
+                    EpisodeNoteEntryEntity(
                         guid = n.getString("guid"),
-                        text = n.getString("text"),
-                        updatedAt = n.optLong("updatedAt", System.currentTimeMillis())
+                        createdAt = n.getLong("createdAt"),
+                        playbackPosMs = n.optLong("playbackPosMs", 0L),
+                        text = n.getString("text")
                     )
                 )
                 notesRestored++
+            }
+        }
+        // Schema 3 legacy "notes" array (single-text-per-guid). UI never shipped against
+        // it, so in practice this is empty; we still translate any rows present so users
+        // who manually authored backups don't lose data.
+        if (schema <= 3) {
+            obj.optJSONArray("notes")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val n = arr.getJSONObject(i)
+                    noteDao.upsert(
+                        EpisodeNoteEntryEntity(
+                            guid = n.getString("guid"),
+                            createdAt = n.optLong("updatedAt", System.currentTimeMillis()),
+                            playbackPosMs = 0L,
+                            text = n.getString("text")
+                        )
+                    )
+                    notesRestored++
+                }
             }
         }
         return ImportResult(epRestored, notesRestored)

@@ -17,7 +17,8 @@ import kotlinx.coroutines.delay
 fun PlayerScreen(
     controller: PlayerController,
     onBack: () -> Unit,
-    onOpenEq: () -> Unit
+    onOpenEq: () -> Unit,
+    onOpenNotes: (episodeGuid: String) -> Unit
 ) {
     val state by controller.state.collectAsState()
     var positionMs by remember { mutableStateOf(0L) }
@@ -42,6 +43,11 @@ fun PlayerScreen(
                     }
                 },
                 actions = {
+                    state.currentEpisodeGuid?.let { guid ->
+                        IconButton(onClick = { onOpenNotes(guid) }) {
+                            Icon(Icons.Filled.EditNote, contentDescription = "Notes")
+                        }
+                    }
                     IconButton(onClick = onOpenEq) {
                         Icon(Icons.Filled.GraphicEq, contentDescription = "EQ")
                     }

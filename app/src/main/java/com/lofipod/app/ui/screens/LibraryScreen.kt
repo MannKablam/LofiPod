@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HourglassEmpty
@@ -31,7 +32,8 @@ fun LibraryScreen(
     onPodcastClick: (Podcast) -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenEq: () -> Unit,
-    onOpenMetrics: () -> Unit
+    onOpenMetrics: () -> Unit,
+    onOpenNotes: () -> Unit
 ) {
     val vm: LibraryViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -41,6 +43,9 @@ fun LibraryScreen(
             TopAppBar(
                 title = { Text("LofiPod") },
                 actions = {
+                    IconButton(onClick = onOpenNotes) {
+                        Icon(Icons.Filled.EditNote, contentDescription = "Notes")
+                    }
                     IconButton(onClick = onOpenFavorites) {
                         Icon(Icons.Filled.Star, contentDescription = "Favorites")
                     }

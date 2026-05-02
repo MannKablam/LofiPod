@@ -68,7 +68,7 @@ fun MetricsScreen(onBack: () -> Unit) {
             try {
                 val json = withContext(Dispatchers.IO) {
                     val episodes = app.db.episodeStateDao().getAll()
-                    val notes = app.db.episodeNoteDao().getAll()
+                    val notes = app.db.episodeNoteEntryDao().getAll()
                     val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
                     Backup.export(episodes, notes, pkg.versionName ?: "?")
                 }

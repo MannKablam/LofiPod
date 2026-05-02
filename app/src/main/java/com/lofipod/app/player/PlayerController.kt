@@ -10,6 +10,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateDao
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.model.Episode
@@ -78,10 +79,16 @@ class PlayerController(private val context: Context) {
     }
 
     /**
-     * Play an episode, resuming from its saved position if any.
+     * Play an episode, resuming from its saved position if any. If [forcedStartMs] is
+     * provided, that wins over the saved position (used for "jump to note position").
      * Also persists the outgoing episode's position before switching.
      */
-    fun playEpisode(ep: Episode, podcastTitle: String, podcastArt: String?) {
+    fun playEpisode(
+        ep: Episode,
+        podcastTitle: String,
+        podcastArt: String?,
+        forcedStartMs: Long? = null
+    ) {
         val c = controller ?: return
         scope.launch {
             // 1. Save outgoing item's position so we can resume it later.
@@ -91,8 +98,6 @@ class PlayerController(private val context: Context) {
                 val dur = c.duration.takeIf { it > 0 } ?: 0L
                 withContext(Dispatchers.IO) {
                     if (dao.get(outgoingId) != null) {
-                        // listenDelta = 0: the cumulative ticker handles real listening
-                        // time; this is just a final position snapshot.
                         dao.updatePosition(outgoingId, pos, dur, System.currentTimeMillis(), 0L)
                     }
                 }
@@ -113,14 +118,15 @@ class PlayerController(private val context: Context) {
                     )
                     0L
                 } else {
-                    // If the episode is essentially finished, restart from 0.
                     val dur = existing.durationMs
                     if (dur > 0 && existing.positionMs >= dur - 5_000) 0L
                     else existing.positionMs
                 }
             }
 
-            // 3. Build & queue the item with the resume position.
+            val startPos = forcedStartMs ?: savedPos
+
+            // 3. Build & queue the item with the start position.
             val art = ep.episodeArtworkUrl ?: podcastArt
             val item = MediaItem.Builder()
                 .setMediaId(ep.guid)
@@ -133,7 +139,7 @@ class PlayerController(private val context: Context) {
                         .build()
                 )
                 .build()
-            c.setMediaItem(item, savedPos)
+            c.setMediaItem(item, startPos)
             c.prepare()
             c.play()
         }
@@ -142,6 +148,44 @@ class PlayerController(private val context: Context) {
     fun togglePlay() {
         val c = controller ?: return
         if (c.isPlaying) c.pause() else c.play()
+    }
+
+    fun play() { controller?.play() }
+    fun pause() { controller?.pause() }
+
+    /**
+     * Seek the player to the position recorded in [noteEntry]. If the note's episode
+     * isn't currently loaded, looks it up in Room and starts playback there.
+     */
+    fun jumpToNotePosition(noteEntry: EpisodeNoteEntryEntity) {
+        val c = controller ?: return
+        val currentGuid = c.currentMediaItem?.mediaId
+        if (currentGuid == noteEntry.guid) {
+            c.seekTo(noteEntry.playbackPosMs)
+            c.play()
+        } else {
+            scope.launch {
+                val state = withContext(Dispatchers.IO) { dao.get(noteEntry.guid) }
+                    ?: return@launch
+                val ep = Episode(
+                    guid = state.guid,
+                    feedUrl = state.feedUrl,
+                    title = state.title,
+                    description = null,
+                    pubDateMillis = null,
+                    audioUrl = state.audioUrl,
+                    audioMimeType = null,
+                    durationSeconds = null,
+                    episodeArtworkUrl = state.artworkUrl
+                )
+                playEpisode(
+                    ep,
+                    podcastTitle = "",
+                    podcastArt = state.artworkUrl,
+                    forcedStartMs = noteEntry.playbackPosMs
+                )
+            }
+        }
     }
 
     fun seekRelative(deltaMs: Long) {
