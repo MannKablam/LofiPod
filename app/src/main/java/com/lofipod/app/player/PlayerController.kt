@@ -6,6 +6,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
@@ -64,6 +65,22 @@ class PlayerController(private val context: Context) {
                 pushState()
             }
             onReady()
+            // Belt-and-suspenders: when the activity is recreated against a
+            // still-running service (cold launch with audio playing), the
+            // MediaController syncs its state from the session over a few
+            // beats AFTER connect returns. The Player.Listener picks up most
+            // events but there's a window where we'd be stuck on an empty
+            // PlayerState — title null, artwork null, currentEpisodeGuid null —
+            // which is what was killing the now-playing icon and the Player
+            // header. Re-pushing state at 100/300/800 ms picks up whatever the
+            // events miss.
+            scope.launch {
+                for (delayMs in longArrayOf(100, 300, 800)) {
+                    kotlinx.coroutines.delay(delayMs)
+                    if (controller == null) return@launch
+                    pushState()
+                }
+            }
         }, MoreExecutors.directExecutor())
     }
 
@@ -93,6 +110,12 @@ class PlayerController(private val context: Context) {
             }
         }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
+        // The next two fire as the MediaController syncs its state from a
+        // running session — without them, reconnecting to a session that's
+        // already mid-playback (cold launch case) leaves PlayerState empty
+        // because no transition / state-change happens to wake the listener.
+        override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) = pushState()
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) = pushState()
     }
 
     /**
