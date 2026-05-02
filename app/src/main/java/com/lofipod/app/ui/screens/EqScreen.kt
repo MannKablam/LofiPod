@@ -14,11 +14,13 @@ import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
 import com.lofipod.app.audio.EqPresets
 import com.lofipod.app.player.PlaybackService
+import com.lofipod.app.player.PlayerController
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EqScreen(onBack: () -> Unit) {
+fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     val eq: EqAudioProcessor = PlaybackService.sharedEq
+    val playerState by controller.state.collectAsState()
 
     var bands by remember { mutableStateOf(eq.currentBands()) }
     var gainDb by remember { mutableStateOf(eq.currentGainDb()) }
@@ -30,7 +32,11 @@ fun EqScreen(onBack: () -> Unit) {
                 title = { Text("Audio") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            Icons.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
                 }
             )
@@ -51,6 +57,24 @@ fun EqScreen(onBack: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Text("Audio enhancement", style = MaterialTheme.typography.titleMedium)
             }
+            Spacer(Modifier.height(20.dp))
+
+            // ---- Playback speed ----
+            Text(
+                "Playback speed: ${"%.2fx".format(playerState.speed)}",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Slider(
+                value = playerState.speed,
+                onValueChange = { controller.setSpeed(it) },
+                valueRange = 0.5f..3.0f,
+                steps = 24
+            )
+            Text(
+                "Lives here so it's not bumped by accident on the player.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(20.dp))
 
             Text("Volume boost: ${"%+.1f".format(gainDb)} dB", style = MaterialTheme.typography.titleSmall)

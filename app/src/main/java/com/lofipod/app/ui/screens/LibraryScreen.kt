@@ -13,50 +13,117 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.lofipod.app.data.PodcastRepository.FeedStatus
 import com.lofipod.app.data.model.Podcast
+import com.lofipod.app.player.PlayerController
 import com.lofipod.app.ui.FeedLoadStatus
 import com.lofipod.app.ui.LibraryViewModel
+import com.lofipod.app.ui.theme.PressStart2P
 
 @Composable
 fun LibraryScreen(
+    controller: PlayerController,
     onPodcastClick: (Podcast) -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenEq: () -> Unit,
     onOpenMetrics: () -> Unit,
-    onOpenNotes: () -> Unit
+    onOpenNotes: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenNowPlaying: () -> Unit
 ) {
     val vm: LibraryViewModel = viewModel()
     val state by vm.state.collectAsState()
+    val playerState by controller.state.collectAsState()
+    var menuExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("LofiPod") },
+                title = {
+                    Text(
+                        "LofiPod",
+                        fontFamily = PressStart2P,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 14.sp
+                    )
+                },
                 actions = {
+                    if (playerState.currentEpisodeGuid != null) {
+                        IconButton(onClick = onOpenNowPlaying) {
+                            Icon(
+                                Icons.Filled.MusicNote,
+                                contentDescription = "Now playing",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    }
                     IconButton(onClick = onOpenNotes) {
-                        Icon(Icons.Filled.EditNote, contentDescription = "Notes")
+                        Icon(
+                            Icons.Filled.EditNote,
+                            contentDescription = "Notes",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
+                    Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenFavorites) {
-                        Icon(Icons.Filled.Star, contentDescription = "Favorites")
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = "Favorites",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
-                    IconButton(onClick = onOpenEq) {
-                        Icon(Icons.Filled.GraphicEq, contentDescription = "EQ")
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = "Settings",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
-                    IconButton(onClick = onOpenMetrics) {
-                        Icon(Icons.Filled.BarChart, contentDescription = "Metrics")
-                    }
-                    IconButton(onClick = { vm.refresh() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(
+                                Icons.Filled.MoreVert,
+                                contentDescription = "More",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Metrics") },
+                                onClick = { menuExpanded = false; onOpenMetrics() },
+                                leadingIcon = { Icon(Icons.Filled.BarChart, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("EQ & speed") },
+                                onClick = { menuExpanded = false; onOpenEq() },
+                                leadingIcon = { Icon(Icons.Filled.GraphicEq, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Refresh feeds") },
+                                onClick = { menuExpanded = false; vm.refresh() },
+                                leadingIcon = { Icon(Icons.Filled.Refresh, null) }
+                            )
+                        }
                     }
                 }
             )

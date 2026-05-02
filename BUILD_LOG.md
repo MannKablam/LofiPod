@@ -2,6 +2,23 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Visual overhaul: themes, pixel font, fatter mini-player, artwork fixes
+
+- **Artwork** now resolves for the three feeds it had been missing on:
+  - **ccmodesto**: host blocks non-browser User-Agents with HTTP 406. Set a Mozilla-style UA on the feed-fetch OkHttp client via interceptor — XML now reaches the parser. (PodcastRepository.BROWSER_UA)
+  - **Castos / Anchor**: artwork URLs are present in the parsed feed but Coil's default OkHttp UA was being rejected by the CDN. Configured a global Coil ImageLoader using the same browser UA so artwork downloads succeed.
+  - **Defensive fallback** in RssParser: if channel-level artwork is missing for any reason, fall back to the first episode's artwork.
+- **Press Start 2P** font (Google Fonts, OFL — license at `assets/PressStart2P-OFL.txt`) bundled and applied to the "LofiPod" wordmark in the Library top bar at 14 sp.
+- **Theme picker** with 4 schemes: Lofi Twilight (current default), Forest Floor (deep green + sage), Coral Reef (deep sea + coral), Game Boy (DMG green palette riff). Persisted in DataStore (`Settings.theme`). System status bar / nav bar follow the chosen background via Compose `SideEffect`.
+- **Settings screen** (new top-bar action on Library): theme picker + "Pause playback while writing a note" toggle + pointer to EQ for audio settings.
+- **Speed slider** restored on the EQ screen (was removed from PlayerScreen for accidental-touch reasons; now lives where it can't be brushed).
+- **Library top bar** restructured: Now-playing (visible when episode loaded) · Notes · Favorites · Settings · 3-dot overflow (Metrics, EQ & speed, Refresh feeds). All icons bumped to 28 dp with 4 dp spacing between actions.
+- **Now-playing on episode list**: rows tint to `primaryContainer` when their episode is the loaded one, with a small equalizer-icon badge next to the title. Play button on the row reflects state — "Play" / "Resume" / "Pause" with matching icon — and toggling it on the current episode pauses/resumes without leaving the screen.
+- **Mini-player redesigned** — roughly 2× the previous height. Now has artwork (56 dp), title, artist, position/duration timecode, a 3 dp progress bar, and skip-back / play-pause / skip-forward buttons. Container colored with `primaryContainer` so it visually separates from the surrounding episode/podcast cards (which use `surfaceVariant`).
+- **PlayerScreen** time text bumped from `bodySmall` to `bodyLarge`. Top-bar icons bumped to 28 dp.
+- **Back-arrow icons** bumped to 28 dp across Episodes / Notes / NotesBrowser / Metrics / Favorites / History / Settings / EQ.
+- **Activity survives config changes** (orientation, screen size, keyboard, ui mode) via `android:configChanges` on `MainActivity` — fixes mini-player flicker when the system would otherwise recreate.
+
 ## Playback checkpoints: Return chip + global history
 
 - **Schema v5** (additive migration). New `playback_checkpoint` table: `id`, `guid`, `positionMs`, `recordedAt` (UTC ms), `reason`. Globally capped at 200 rows; oldest evicted on every insert.

@@ -24,10 +24,21 @@ import java.util.concurrent.TimeUnit
 class PodcastRepository(
     private val context: Context
 ) {
+    /**
+     * Some podcast hosts (e.g. ccmodesto.com fronted by mod_security) reject
+     * non-browser-like User-Agents with HTTP 406. A Mozilla-style UA gets through
+     * everywhere we've tested without any other change.
+     */
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
+        .addInterceptor { chain ->
+            val req = chain.request().newBuilder()
+                .header("User-Agent", BROWSER_UA)
+                .build()
+            chain.proceed(req)
+        }
         .build()
 
     @Volatile private var cache: Map<String, Podcast> = emptyMap()
@@ -81,8 +92,7 @@ class PodcastRepository(
     suspend fun fetchOne(src: SourceEntry): Podcast = runInterruptible(Dispatchers.IO) {
         val req = Request.Builder()
             .url(src.feedUrl)
-            .header("User-Agent", "LofiPod/0.1")
-            .build()
+            .build()    // UA is set globally by the http interceptor
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("HTTP ${resp.code} for ${src.feedUrl}")
             val body = resp.body ?: error("Empty body")
@@ -93,4 +103,14 @@ class PodcastRepository(
     }
 
     fun cached(feedUrl: String): Podcast? = cache[feedUrl]
+
+    companion object {
+        /**
+         * Standard browser-ish UA. Some podcast hosts (mod_security-fronted ones)
+         * 406 anything that doesn't look like a browser. Shared with Coil so artwork
+         * URLs from the same hosts also load.
+         */
+        const val BROWSER_UA =
+            "Mozilla/5.0 (Linux; Android 14; LofiPod) AppleWebKit/537.36 (KHTML, like Gecko) Mobile"
+    }
 }

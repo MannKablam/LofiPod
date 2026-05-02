@@ -41,20 +41,38 @@ fun PlayerScreen(
                 title = { Text("Now playing") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Back")
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "Back",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
                 },
                 actions = {
                     IconButton(onClick = onOpenHistory) {
-                        Icon(Icons.Filled.History, contentDescription = "Playback history")
+                        Icon(
+                            Icons.Filled.History,
+                            contentDescription = "Playback history",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
+                    Spacer(Modifier.width(4.dp))
                     state.currentEpisodeGuid?.let { guid ->
                         IconButton(onClick = { onOpenNotes(guid) }) {
-                            Icon(Icons.Filled.EditNote, contentDescription = "Notes")
+                            Icon(
+                                Icons.Filled.EditNote,
+                                contentDescription = "Notes",
+                                modifier = Modifier.size(28.dp)
+                            )
                         }
+                        Spacer(Modifier.width(4.dp))
                     }
                     IconButton(onClick = onOpenEq) {
-                        Icon(Icons.Filled.GraphicEq, contentDescription = "EQ")
+                        Icon(
+                            Icons.Filled.GraphicEq,
+                            contentDescription = "EQ",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
                 }
             )
@@ -103,9 +121,9 @@ fun PlayerScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Row(Modifier.fillMaxWidth()) {
-                Text(formatTime(positionMs), style = MaterialTheme.typography.bodySmall)
+                Text(formatTime(positionMs), style = MaterialTheme.typography.bodyLarge)
                 Spacer(Modifier.weight(1f))
-                Text(formatTime(durationMs), style = MaterialTheme.typography.bodySmall)
+                Text(formatTime(durationMs), style = MaterialTheme.typography.bodyLarge)
             }
             Spacer(Modifier.height(28.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -23,6 +23,7 @@
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
             android:theme="@style/Theme.LofiPod">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

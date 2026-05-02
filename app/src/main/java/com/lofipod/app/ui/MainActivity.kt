@@ -10,26 +10,35 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -43,6 +52,7 @@ import com.lofipod.app.player.PlayerController
 import com.lofipod.app.player.PlayerState
 import com.lofipod.app.ui.screens.*
 import com.lofipod.app.ui.theme.LofiPodTheme
+import kotlinx.coroutines.delay
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -52,12 +62,11 @@ class MainActivity : ComponentActivity() {
 
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* Notification permission is best-effort; playback still works */ }
+    ) { /* notification permission is best-effort */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Ask for POST_NOTIFICATIONS on API 33+ so the media notification can show
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
@@ -91,12 +100,11 @@ private fun AppNav(controller: PlayerController) {
 
     Scaffold(
         bottomBar = {
-            // Show the mini-player on every screen except the full Player itself.
             if (currentRoute != "player" && playerState.currentEpisodeGuid != null) {
                 MiniPlayer(
+                    controller = controller,
                     state = playerState,
-                    onClick = { nav.navigate("player") },
-                    onPlayPause = { controller.togglePlay() }
+                    onClick = { nav.navigate("player") }
                 )
             }
         }
@@ -108,6 +116,7 @@ private fun AppNav(controller: PlayerController) {
         ) {
             composable("library") {
                 LibraryScreen(
+                    controller = controller,
                     onPodcastClick = { pod ->
                         val encoded = URLEncoder.encode(pod.feedUrl, "UTF-8")
                         nav.navigate("episodes/$encoded")
@@ -115,7 +124,9 @@ private fun AppNav(controller: PlayerController) {
                     onOpenFavorites = { nav.navigate("favorites") },
                     onOpenEq = { nav.navigate("eq") },
                     onOpenMetrics = { nav.navigate("metrics") },
-                    onOpenNotes = { nav.navigate("notesBrowser") }
+                    onOpenNotes = { nav.navigate("notesBrowser") },
+                    onOpenSettings = { nav.navigate("settings") },
+                    onOpenNowPlaying = { nav.navigate("player") }
                 )
             }
 
@@ -124,6 +135,7 @@ private fun AppNav(controller: PlayerController) {
                 val feedUrl = URLDecoder.decode(raw, "UTF-8")
                 EpisodesScreen(
                     feedUrl = feedUrl,
+                    controller = controller,
                     onBack = { nav.popBackStack() },
                     onPlay = { ep, pod ->
                         controller.playEpisode(ep, pod.title, pod.artworkUrl)
@@ -146,11 +158,18 @@ private fun AppNav(controller: PlayerController) {
             }
 
             composable("eq") {
-                EqScreen(onBack = { nav.popBackStack() })
+                EqScreen(
+                    controller = controller,
+                    onBack = { nav.popBackStack() }
+                )
             }
 
             composable("metrics") {
                 MetricsScreen(onBack = { nav.popBackStack() })
+            }
+
+            composable("settings") {
+                SettingsScreen(onBack = { nav.popBackStack() })
             }
 
             composable("notesBrowser") {
@@ -194,54 +213,111 @@ private fun AppNav(controller: PlayerController) {
     }
 }
 
+/**
+ * Persistent mini-player anchored to every screen except the full Player itself.
+ * Tinted with primaryContainer so it's clearly distinct from the surfaceVariant
+ * cards used elsewhere. Includes scrubber, position/duration text, and skip ±15/30
+ * buttons in addition to play/pause — tap anywhere outside a button to expand.
+ */
 @Composable
 private fun MiniPlayer(
+    controller: PlayerController,
     state: PlayerState,
-    onClick: () -> Unit,
-    onPlayPause: () -> Unit
+    onClick: () -> Unit
 ) {
+    var positionMs by remember { mutableStateOf(0L) }
+    var durationMs by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(state.isPlaying, state.currentEpisodeGuid) {
+        while (true) {
+            positionMs = controller.currentPositionMs()
+            durationMs = controller.durationMs()
+            delay(500)
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor   = MaterialTheme.colorScheme.onPrimaryContainer
+        )
     ) {
-        Row(
-            modifier = Modifier.padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AsyncImage(
-                model = state.currentArtworkUri,
-                contentDescription = null,
-                modifier = Modifier.size(44.dp)
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    state.currentTitle ?: "",
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AsyncImage(
+                    model = state.currentArtworkUri,
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp)
                 )
-                state.currentArtist?.let {
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
                     Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        state.currentTitle ?: "",
+                        style = MaterialTheme.typography.titleSmall,
                         maxLines = 1
+                    )
+                    state.currentArtist?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        "${formatMiniTime(positionMs)} / ${formatMiniTime(durationMs)}",
+                        style = MaterialTheme.typography.labelMedium
                     )
                 }
             }
-            IconButton(onClick = onPlayPause) {
-                Icon(
-                    if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = "Play/Pause"
-                )
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { if (durationMs > 0) positionMs.toFloat() / durationMs else 0f },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { controller.seekRelative(-15_000) }) {
+                    Icon(
+                        Icons.Filled.Replay,
+                        contentDescription = "Back 15s",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                IconButton(onClick = { controller.togglePlay() }) {
+                    Icon(
+                        if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = "Play/Pause",
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
+                IconButton(onClick = { controller.seekRelative(30_000) }) {
+                    Icon(
+                        Icons.Filled.Forward30,
+                        contentDescription = "Forward 30s",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
             }
         }
     }
 }
 
-/** Helper: play a saved EpisodeStateEntity (no Episode object available). */
+private fun formatMiniTime(ms: Long): String {
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
 private fun playEntity(
     controller: PlayerController,
     e: com.lofipod.app.data.db.EpisodeStateEntity

@@ -84,7 +84,12 @@ object RssParser {
             title = channelTitle.ifBlank { feedUrl },
             author = channelAuthor,
             description = channelDesc,
-            artworkUrl = channelArt,
+            // Defensive fallback: if channel-level art is missing/unparseable for any
+            // reason, use the first episode's per-episode artwork. Covers feeds with
+            // unusual XML quirks where our channel parser misses the URL.
+            artworkUrl = channelArt
+                ?: episodes.firstOrNull { !it.episodeArtworkUrl.isNullOrBlank() }
+                    ?.episodeArtworkUrl,
             episodes = episodes
         )
     }

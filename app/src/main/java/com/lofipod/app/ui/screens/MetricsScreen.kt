@@ -98,7 +98,11 @@ fun MetricsScreen(onBack: () -> Unit) {
                 title = { Text("Metrics") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            Icons.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
                 },
                 actions = {

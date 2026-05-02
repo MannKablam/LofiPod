@@ -17,6 +17,7 @@ import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.model.Episode
 import com.lofipod.app.data.model.Podcast
+import com.lofipod.app.player.PlayerController
 import com.lofipod.app.util.shareEnclosure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,6 +30,7 @@ import java.util.Locale
 @Composable
 fun EpisodesScreen(
     feedUrl: String,
+    controller: PlayerController,
     onBack: () -> Unit,
     onPlay: (Episode, Podcast) -> Unit
 ) {
@@ -36,6 +38,7 @@ fun EpisodesScreen(
     val pod = remember(feedUrl) { app.repo.cached(feedUrl) }
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val playerState by controller.state.collectAsState()
 
     // Map of guid -> (rating, isFavorite). Loaded once when entering the screen.
     val episodeStates = remember { mutableStateMapOf<String, Pair<Int, Boolean>>() }
@@ -58,7 +61,11 @@ fun EpisodesScreen(
                 title = { Text(pod?.title ?: "Loading…", maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            Icons.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
                 }
             )
@@ -77,13 +84,19 @@ fun EpisodesScreen(
         ) {
             items(pod.episodes, key = { it.guid }) { ep ->
                 val (rating, fav) = episodeStates[ep.guid] ?: (0 to false)
+                val isCurrent = playerState.currentEpisodeGuid == ep.guid
                 EpisodeRow(
                     ep = ep,
                     podcastArt = pod.artworkUrl,
                     rating = rating,
                     isFavorite = fav,
                     download = downloadsByGuid[ep.guid],
-                    onPlay = { onPlay(ep, pod) },
+                    isCurrent = isCurrent,
+                    isPlaying = isCurrent && playerState.isPlaying,
+                    onPlay = {
+                        if (isCurrent) controller.togglePlay()
+                        else onPlay(ep, pod)
+                    },
                     onShare = { ctx.shareEnclosure(ep.audioUrl, ep.title) },
                     onToggleFav = {
                         val newFav = !fav
@@ -117,6 +130,8 @@ private fun EpisodeRow(
     rating: Int,
     isFavorite: Boolean,
     download: Download?,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
     onPlay: () -> Unit,
     onShare: () -> Unit,
     onToggleFav: () -> Unit,
@@ -124,7 +139,12 @@ private fun EpisodeRow(
     onToggleDownload: () -> Unit
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        // Tint the row when this episode is loaded in the player so users can spot
+        // "what's currently playing" in the list at a glance.
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCurrent) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant
+        ),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp)) {
@@ -136,7 +156,23 @@ private fun EpisodeRow(
                 )
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(ep.title, style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isCurrent) {
+                            Icon(
+                                Icons.Filled.GraphicEq,
+                                contentDescription = "Now playing",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        Text(
+                            ep.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 2,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     Text(
                         buildString {
                             ep.pubDateMillis?.let {
@@ -164,9 +200,16 @@ private fun EpisodeRow(
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilledTonalButton(onClick = onPlay) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                    Icon(
+                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = null
+                    )
                     Spacer(Modifier.width(4.dp))
-                    Text("Play")
+                    Text(when {
+                        isPlaying -> "Pause"
+                        isCurrent -> "Resume"
+                        else -> "Play"
+                    })
                 }
                 Spacer(Modifier.width(8.dp))
                 DownloadButton(download = download, onClick = onToggleDownload)

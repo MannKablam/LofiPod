@@ -46,4 +46,25 @@ class Settings(private val context: Context) {
     suspend fun setPauseOnNote(v: Boolean) {
         context.dataStore.edit { it[KEY_PAUSE_ON_NOTE] = v }
     }
+
+    /** Selected color theme. Default Twilight. */
+    val theme: Flow<LofiTheme> = context.dataStore.data.map {
+        val name = it[KEY_THEME] ?: LofiTheme.TWILIGHT.name
+        runCatching { LofiTheme.valueOf(name) }.getOrDefault(LofiTheme.TWILIGHT)
+    }
+
+    suspend fun setTheme(t: LofiTheme) {
+        context.dataStore.edit { it[KEY_THEME] = t.name }
+    }
+
+    companion object {
+        private val KEY_THEME = androidx.datastore.preferences.core.stringPreferencesKey("theme")
+    }
+}
+
+enum class LofiTheme(val displayName: String) {
+    TWILIGHT("Lofi Twilight"),
+    FOREST("Forest Floor"),
+    CORAL("Coral Reef"),
+    GAMEBOY("Game Boy")
 }
