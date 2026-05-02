@@ -2,6 +2,14 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Library is now in-app, sources file is just an import
+
+- New Room table `podcast_source` (schema v2 with additive migration — favorites, ratings, and positions are preserved). Owns the user's podcast list independently of the original sources file.
+- Picking a sources file now **merges** entries into the in-app library (dedupe by feed URL) instead of replacing. Same file picked twice is a no-op.
+- `LibraryViewModel` reads from Room, not from the DataStore-stored URI. One-time bootstrap: existing users with a saved URI get an automatic import on first launch of this version, so nothing has to be re-picked.
+- Top bar gains an **Import** action so a new file can be loaded at any time, not just from the empty state.
+- Long-press a podcast → confirmation dialog → remove from library. Episode favorites/ratings are kept.
+
 ## Fix: hang on feeds that emit both `<description>` and `<itunes:summary>`
 
 - Sibling bug to the earlier parser hang. Channel-level `<itunes:summary>` was a no-op (no parser advance) when `<description>` had already populated `channelDesc` — infinite loop. ccmodesto.com, feeds.castos.com, and anchor.fm all emit both, in that order.

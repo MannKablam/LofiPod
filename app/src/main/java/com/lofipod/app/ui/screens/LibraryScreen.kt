@@ -1,10 +1,14 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class
+)
 
 package com.lofipod.app.ui.screens
 
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,6 +17,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -29,7 +34,6 @@ import com.lofipod.app.data.model.Podcast
 import com.lofipod.app.ui.FeedLoadStatus
 import com.lofipod.app.ui.LibraryViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     onPodcastClick: (Podcast) -> Unit,
@@ -44,7 +48,8 @@ fun LibraryScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            // Persist permission so we can re-read on next launch
+            // Persistable permission helps the one-time bootstrap on next launch (legacy
+            // path); not strictly needed once contents are stored in Room.
             runCatching {
                 ctx.contentResolver.takePersistableUriPermission(
                     uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -53,6 +58,8 @@ fun LibraryScreen(
             vm.onPickSourcesFile(uri)
         }
     }
+
+    var pendingRemove by remember { mutableStateOf<Podcast?>(null) }
 
     Scaffold(
         topBar = {
@@ -64,6 +71,9 @@ fun LibraryScreen(
                     }
                     IconButton(onClick = onOpenEq) {
                         Icon(Icons.Filled.GraphicEq, contentDescription = "EQ")
+                    }
+                    IconButton(onClick = { pickFile.launch(arrayOf("text/*", "*/*")) }) {
+                        Icon(Icons.Filled.LibraryAdd, contentDescription = "Import sources")
                     }
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
@@ -101,12 +111,33 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(state.podcasts) { pod ->
-                            PodcastRow(pod, onClick = { onPodcastClick(pod) })
+                            PodcastRow(
+                                pod = pod,
+                                onClick = { onPodcastClick(pod) },
+                                onLongClick = { pendingRemove = pod }
+                            )
                         }
                     }
                 }
             }
         }
+    }
+
+    pendingRemove?.let { pod ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("Remove podcast?") },
+            text = { Text("\"${pod.title}\" will be removed from your library. Favorites and ratings on its episodes are kept.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.removeSource(pod.feedUrl)
+                    pendingRemove = null
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemove = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -219,20 +250,28 @@ private fun EmptyState(onPick: () -> Unit) {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "Pick a .md or .txt file containing your podcast feed URLs to get started.",
+            "Import a .md or .txt file containing podcast feed URLs. Imports merge into your library — load multiple files to grow it. Long-press a podcast to remove it.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onPick) { Text("Pick sources file") }
+        Button(onClick = onPick) { Text("Import sources file") }
     }
 }
 
 @Composable
-private fun PodcastRow(pod: Podcast, onClick: () -> Unit) {
+private fun PodcastRow(
+    pod: Podcast,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Row(
