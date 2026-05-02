@@ -1,5 +1,6 @@
 package com.lofipod.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -138,6 +139,7 @@ private fun EpisodeRow(
     onSetRating: (Int) -> Unit,
     onToggleDownload: () -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Card(
         // Tint the row when this episode is loaded in the player so users can spot
         // "what's currently playing" in the list at a glance.
@@ -145,7 +147,11 @@ private fun EpisodeRow(
             containerColor = if (isCurrent) MaterialTheme.colorScheme.primaryContainer
             else MaterialTheme.colorScheme.surfaceVariant
         ),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            // Tap anywhere on the card (outside inner buttons, which consume their
+            // own taps) toggles expanded state — full description, no playback.
+            .clickable { expanded = !expanded }
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -169,7 +175,7 @@ private fun EpisodeRow(
                         Text(
                             ep.title,
                             style = MaterialTheme.typography.titleSmall,
-                            maxLines = 2,
+                            maxLines = if (expanded) Int.MAX_VALUE else 2,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -187,6 +193,12 @@ private fun EpisodeRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp)
+                )
             }
             ep.description?.stripHtml()?.takeIf { it.isNotBlank() }?.let { desc ->
                 Spacer(Modifier.height(6.dp))
@@ -194,7 +206,7 @@ private fun EpisodeRow(
                     desc,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3
+                    maxLines = if (expanded) Int.MAX_VALUE else 3
                 )
             }
             Spacer(Modifier.height(8.dp))

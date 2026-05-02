@@ -2,6 +2,11 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Tap-to-expand episode rows
+
+- Tapping anywhere on an episode card (outside the inner buttons, which consume their own taps) toggles `expanded`. When expanded, the title is no longer truncated and the full description is shown instead of the 3-line preview. Inner buttons (Play / Download / Share / Favorite / star row) continue to behave as before — playback only starts when you tap Play.
+- Right-side chevron flips between `ExpandMore` and `ExpandLess` as a visual affordance.
+
 ## Settings: Fonts attribution
 
 - Added a tiny "Fonts" section at the bottom of Settings crediting Press Start 2P (Cody Boisclair) under the SIL Open Font License 1.1, with a pointer to the bundled `assets/PressStart2P-OFL.txt`.
