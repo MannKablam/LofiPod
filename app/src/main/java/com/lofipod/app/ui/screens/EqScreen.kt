@@ -1,7 +1,11 @@
 package com.lofipod.app.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -9,10 +13,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
 import com.lofipod.app.audio.EqPresets
+import com.lofipod.app.audio.PresetId
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
 
@@ -25,6 +32,31 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     var bands by remember { mutableStateOf(eq.currentBands()) }
     var gainDb by remember { mutableStateOf(eq.currentGainDb()) }
     var enabled by remember { mutableStateOf(true) }
+
+    // Active preset + its current level. activeLevel == 0 means flat / no preset
+    // currently lit. Tapping a different preset switches and starts at level 1.
+    var activePreset by remember { mutableStateOf<PresetId?>(null) }
+    var activeLevel by remember { mutableStateOf(0) }
+
+    fun applyFlat() {
+        activePreset = null
+        activeLevel = 0
+        bands = EqPresets.FLAT
+        eq.setBands(bands)
+    }
+
+    fun cyclePreset(preset: PresetId) {
+        if (activePreset != preset) {
+            activePreset = preset
+            activeLevel = 1
+        } else {
+            activeLevel = (activeLevel + 1) % (preset.maxLevel + 1)
+            if (activeLevel == 0) activePreset = null
+        }
+        bands = if (activePreset == null) EqPresets.FLAT
+                else preset.levels[activeLevel - 1]
+        eq.setBands(bands)
+    }
 
     Scaffold(
         topBar = {
@@ -96,11 +128,24 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
 
             Text("Presets", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = { bands = EqPresets.FLAT; eq.setBands(bands) }, label = { Text("Flat") })
-                AssistChip(onClick = { bands = EqPresets.VOICE_BOOST; eq.setBands(bands) }, label = { Text("Voice") })
-                AssistChip(onClick = { bands = EqPresets.BASS_BOOST; eq.setBands(bands) }, label = { Text("Bass") })
-                AssistChip(onClick = { bands = EqPresets.BRIGHT; eq.setBands(bands) }, label = { Text("Bright") })
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FlatButton(
+                    isActive = activePreset == null,
+                    onClick = ::applyFlat,
+                    modifier = Modifier.weight(1f)
+                )
+                PresetId.values().forEach { preset ->
+                    PresetButton(
+                        preset = preset,
+                        currentLevel = if (activePreset == preset) activeLevel else 0,
+                        anyOtherActive = activePreset != null && activePreset != preset,
+                        onClick = { cyclePreset(preset) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
             Spacer(Modifier.height(24.dp))
 
@@ -112,8 +157,110 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                     newBands[idx] = band.copy(gainDb = newGain)
                     bands = newBands
                     eq.setBands(newBands)
+                    // Manual band edits drop us off the preset rail.
+                    activePreset = null
+                    activeLevel = 0
                 }
             }
+        }
+    }
+}
+
+/**
+ * A single-level "Flat" button, styled the same way as the multi-level preset
+ * buttons but without divisions — either fully filled (active) or hollow.
+ */
+@Composable
+private fun FlatButton(
+    isActive: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val fill = if (isActive) colors.primary else colors.surfaceVariant
+    val ink = if (isActive) colors.onPrimary else colors.onSurfaceVariant
+    Box(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(fill)
+            .border(1.dp, colors.outline.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("Flat", color = ink, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/**
+ * Multi-level preset button. Background is split into [maxLevel] vertical
+ * slices; the leftmost [currentLevel] slices light up. When another preset is
+ * active, this one's slices are drawn dimmed/grayed-out — making it visually
+ * obvious only one preset can be lit at a time.
+ */
+@Composable
+private fun PresetButton(
+    preset: PresetId,
+    currentLevel: Int,
+    anyOtherActive: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val isActive = currentLevel > 0
+    val fillColor = colors.primary
+    val emptyColor = colors.surfaceVariant
+    val grayedFill = colors.onSurface.copy(alpha = 0.20f)
+    val grayedEmpty = colors.onSurface.copy(alpha = 0.06f)
+
+    Box(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, colors.outline.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+    ) {
+        // Background slices first.
+        Row(modifier = Modifier.fillMaxSize()) {
+            for (i in 0 until preset.maxLevel) {
+                val lit = i < currentLevel
+                val sliceColor: Color = when {
+                    anyOtherActive && lit -> grayedFill
+                    anyOtherActive -> grayedEmpty
+                    lit -> fillColor
+                    else -> emptyColor
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(sliceColor)
+                )
+                if (i < preset.maxLevel - 1) {
+                    // Hairline separator between slices so divisions read clearly
+                    // even when adjacent slices are the same color.
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(colors.outline.copy(alpha = 0.3f))
+                    )
+                }
+            }
+        }
+        // Foreground label
+        val labelColor = when {
+            isActive -> colors.onPrimary
+            anyOtherActive -> colors.onSurface.copy(alpha = 0.5f)
+            else -> colors.onSurfaceVariant
+        }
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                preset.displayName,
+                color = labelColor,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
         }
     }
 }

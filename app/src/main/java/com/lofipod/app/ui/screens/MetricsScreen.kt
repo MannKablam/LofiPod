@@ -9,9 +9,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.rememberCoroutineScope
@@ -41,6 +41,8 @@ fun MetricsScreen(onBack: () -> Unit) {
     var rows by remember { mutableStateOf<List<PodcastMetrics>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var pendingExportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var exportIncludeNotes by remember { mutableStateOf(true) }
 
     suspend fun reload() {
         rows = withContext(Dispatchers.IO) {
@@ -50,8 +52,8 @@ fun MetricsScreen(onBack: () -> Unit) {
                     feedUrl = feedUrl,
                     title = Sources.displayNameOf(feedUrl) ?: feedUrl.shortHost(),
                     totalListenedMs = episodes.sumOf { it.cumulativeListenMs },
-                    favorites = episodes.filter { it.isFavorite }
-                        .sortedByDescending { it.lastPlayedMillis }
+                    hearted = episodes.filter { it.favoriteTier > 0 }
+                        .sortedByDescending { it.favoriteTier * 1_000_000_000L + it.lastPlayedMillis }
                 )
             }.sortedByDescending { it.totalListenedMs }
         }
@@ -68,7 +70,10 @@ fun MetricsScreen(onBack: () -> Unit) {
             try {
                 val json = withContext(Dispatchers.IO) {
                     val episodes = app.db.episodeStateDao().getAll()
-                    val notes = app.db.episodeNoteEntryDao().getAll()
+                    // Honor the user's "include notes" choice — when off we
+                    // export an empty notes list, keeping the same backup shape.
+                    val notes = if (exportIncludeNotes)
+                        app.db.episodeNoteEntryDao().getAll() else emptyList()
                     val checkpoints = app.db.playbackCheckpointDao().getAll()
                     val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
                     Backup.export(episodes, notes, checkpoints, pkg.versionName ?: "?")
@@ -78,7 +83,10 @@ fun MetricsScreen(onBack: () -> Unit) {
                         out.write(json.toByteArray(Charsets.UTF_8))
                     }
                 }
-                snackbarHostState.showSnackbar("Exported ${json.length / 1024} KB")
+                snackbarHostState.showSnackbar(
+                    if (exportIncludeNotes) "Exported ${json.length / 1024} KB"
+                    else "Exported ${json.length / 1024} KB (notes omitted)"
+                )
             } catch (e: Exception) {
                 snackbarHostState.showSnackbar("Export failed: ${e.message}")
             }
@@ -107,10 +115,9 @@ fun MetricsScreen(onBack: () -> Unit) {
                 },
                 actions = {
                     IconButton(onClick = {
-                        val stamp = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-                            timeZone = TimeZone.getTimeZone("UTC")
-                        }.format(Date())
-                        exportLauncher.launch("lofipod-backup-$stamp.json")
+                        // Open the include-notes choice first; the export
+                        // launcher fires from inside the dialog.
+                        pendingExportUri = android.net.Uri.EMPTY
                     }) {
                         Icon(Icons.Filled.FileDownload, contentDescription = "Export backup")
                     }
@@ -137,9 +144,9 @@ fun MetricsScreen(onBack: () -> Unit) {
             else -> {
                 Column(Modifier.padding(padding)) {
                     val totalH = rows.sumOf { it.totalListenedMs } / 1000.0 / 3600.0
-                    val totalFavs = rows.sumOf { it.favorites.size }
+                    val totalHearted = rows.sumOf { it.hearted.size }
                     Text(
-                        "%.2f h listened across all podcasts • %d favorites".format(totalH, totalFavs),
+                        "%.2f h listened across all podcasts • %d hearted".format(totalH, totalHearted),
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -153,6 +160,48 @@ fun MetricsScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (pendingExportUri != null) {
+        AlertDialog(
+            onDismissRequest = { pendingExportUri = null },
+            title = { Text("Export backup") },
+            text = {
+                Column {
+                    Text(
+                        "Choose what to include. Episode states, ratings, and " +
+                            "playback positions are always exported.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = exportIncludeNotes,
+                            onCheckedChange = { exportIncludeNotes = it }
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            if (exportIncludeNotes) "Include notes"
+                            else "Omit notes",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingExportUri = null
+                    val stamp = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                        timeZone = TimeZone.getTimeZone("UTC")
+                    }.format(Date())
+                    val suffix = if (exportIncludeNotes) "" else "-no-notes"
+                    exportLauncher.launch("lofipod-backup-$stamp$suffix.json")
+                }) { Text("Export") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingExportUri = null }) { Text("Cancel") }
+            }
+        )
     }
 
     pendingImportUri?.let { uri ->
@@ -206,20 +255,32 @@ private fun PodcastMetricsCard(row: PodcastMetrics) {
             Spacer(Modifier.height(2.dp))
             val hours = row.totalListenedMs / 1000.0 / 3600.0
             Text(
-                "%.2f h listened • %d favorites".format(hours, row.favorites.size),
+                "%.2f h listened • %d hearted".format(hours, row.hearted.size),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (row.favorites.isNotEmpty()) {
+            if (row.hearted.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                row.favorites.forEach { ep ->
+                row.hearted.forEach { ep ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // One filled heart for tier 1 (Excellent), two for tier 2
+                        // (Most-excellent). Cheap visual distinction without
+                        // dropping a second icon style on the screen.
                         Icon(
-                            Icons.Filled.Star,
+                            Icons.Filled.Favorite,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(14.dp)
                         )
+                        if (ep.favoriteTier >= 2) {
+                            Spacer(Modifier.width(2.dp))
+                            Icon(
+                                Icons.Filled.Favorite,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                         Spacer(Modifier.width(6.dp))
                         Text(
                             ep.title,
@@ -238,7 +299,7 @@ private data class PodcastMetrics(
     val feedUrl: String,
     val title: String,
     val totalListenedMs: Long,
-    val favorites: List<EpisodeStateEntity>
+    val hearted: List<EpisodeStateEntity>
 )
 
 private fun String.shortHost(): String = try {

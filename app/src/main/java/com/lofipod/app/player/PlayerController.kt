@@ -13,8 +13,11 @@ import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateDao
 import com.lofipod.app.data.db.EpisodeStateEntity
+import com.lofipod.app.data.db.FeedVisitEntity
 import com.lofipod.app.data.db.PlaybackCheckpointDao
 import com.lofipod.app.data.db.PlaybackCheckpointEntity
+import com.lofipod.app.data.db.QueueEntryDao
+import com.lofipod.app.data.db.QueueEntryEntity
 import com.lofipod.app.data.model.Episode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +42,8 @@ class PlayerController(private val context: Context) {
         get() = (context.applicationContext as LofiPodApp).db.episodeStateDao()
     private val checkpointDao: PlaybackCheckpointDao
         get() = (context.applicationContext as LofiPodApp).db.playbackCheckpointDao()
+    private val queueDao: QueueEntryDao
+        get() = (context.applicationContext as LofiPodApp).db.queueEntryDao()
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
@@ -72,9 +77,35 @@ class PlayerController(private val context: Context) {
 
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = pushState()
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = pushState()
-        override fun onPlaybackStateChanged(playbackState: Int) = pushState()
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            pushState()
+            // Apply per-episode EQ override on transitions. Looked up from the
+            // EpisodeStateEntity row each time so a toggle flips immediately on
+            // the next item, and re-asserts every time we come back to it.
+            mediaItem?.mediaId?.let { applyEqOverrideFor(it) }
+        }
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            pushState()
+            if (playbackState == Player.STATE_ENDED) {
+                // Remove the just-finished episode from the queue and auto-advance.
+                val finishedGuid = controller?.currentMediaItem?.mediaId
+                scope.launch { advanceToNextInQueue(finishedGuid) }
+            }
+        }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
+    }
+
+    /**
+     * Re-evaluate the global EQ enabled flag based on the current episode's
+     * eqDisabled override. Called on item transitions and after the user toggles
+     * the override from the Player UI.
+     */
+    fun applyEqOverrideFor(guid: String) {
+        scope.launch {
+            val disabled = withContext(Dispatchers.IO) { dao.get(guid)?.eqDisabled ?: false }
+            // setEnabled is volatile-safe; no need to bounce back to main.
+            PlaybackService.sharedEq.setEnabled(!disabled)
+        }
     }
 
     private fun pushState() {
@@ -181,6 +212,16 @@ class PlayerController(private val context: Context) {
             c.setMediaItem(item, startPos)
             c.prepare()
             c.play()
+
+            // Mark this feed as "seen" — kills the new-episodes badge in Library
+            // for this feed. Playing is the strongest signal that the user is
+            // current with the channel.
+            withContext(Dispatchers.IO) {
+                val app = context.applicationContext as LofiPodApp
+                app.db.feedVisitDao().upsert(
+                    FeedVisitEntity(ep.feedUrl, System.currentTimeMillis())
+                )
+            }
         }
     }
 
@@ -283,11 +324,114 @@ class PlayerController(private val context: Context) {
     fun currentPositionMs(): Long = controller?.currentPosition ?: 0L
     fun durationMs(): Long = controller?.duration?.takeIf { it > 0 } ?: 0L
 
+    // ---------- Queue ----------
+
+    /**
+     * Append [ep] to the end of the queue. If nothing is currently loaded in the
+     * player, optionally start playback immediately.
+     */
+    fun enqueue(ep: Episode, podcastTitle: String, podcastArt: String?, playIfIdle: Boolean = false) {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val maxPos = queueDao.maxPosition() ?: 0L
+                queueDao.upsert(
+                    QueueEntryEntity(
+                        guid = ep.guid,
+                        feedUrl = ep.feedUrl,
+                        title = ep.title,
+                        audioUrl = ep.audioUrl,
+                        artworkUrl = ep.episodeArtworkUrl ?: podcastArt,
+                        position = maxPos + STEP,
+                        addedAt = System.currentTimeMillis()
+                    )
+                )
+            }
+            if (playIfIdle && controller?.currentMediaItem == null) {
+                playEpisode(ep, podcastTitle, podcastArt)
+            }
+        }
+    }
+
+    /** Insert [ep] at the very front of the queue (next up). */
+    fun enqueueNext(ep: Episode, podcastTitle: String, podcastArt: String?) {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val all = queueDao.getAll()
+                val minPos = all.minOfOrNull { it.position } ?: 0L
+                queueDao.upsert(
+                    QueueEntryEntity(
+                        guid = ep.guid,
+                        feedUrl = ep.feedUrl,
+                        title = ep.title,
+                        audioUrl = ep.audioUrl,
+                        artworkUrl = ep.episodeArtworkUrl ?: podcastArt,
+                        position = minPos - STEP,
+                        addedAt = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
+    }
+
+    fun removeFromQueue(guid: String) {
+        scope.launch(Dispatchers.IO) { queueDao.remove(guid) }
+    }
+
+    fun clearQueue() {
+        scope.launch(Dispatchers.IO) { queueDao.clear() }
+    }
+
+    /**
+     * Reorder the queue to match [orderedGuids]. Positions are rewritten dense from
+     * STEP, 2*STEP, … so subsequent enqueueNext / enqueue stay well-behaved.
+     */
+    fun reorderQueue(orderedGuids: List<String>) {
+        scope.launch(Dispatchers.IO) {
+            val existing = queueDao.getAll().associateBy { it.guid }
+            val rewritten = orderedGuids.mapIndexedNotNull { i, guid ->
+                existing[guid]?.copy(position = (i + 1) * STEP)
+            }
+            queueDao.upsertAll(rewritten)
+        }
+    }
+
+    /** Pull the next entry (excluding [excluding]) and start playing it. */
+    private suspend fun advanceToNextInQueue(excluding: String?) {
+        val next = withContext(Dispatchers.IO) {
+            // Always remove the just-finished entry from the queue first.
+            if (excluding != null) queueDao.remove(excluding)
+            queueDao.nextAfter(excludingGuids = listOfNotNull(excluding))
+        } ?: return
+
+        // Prefer a fresh in-memory Episode if the feed is cached (gives us
+        // description + pubDate + per-episode artwork). Fall back to the queue
+        // snapshot when the feed isn't loaded.
+        val app = context.applicationContext as LofiPodApp
+        val cached = app.repo.cached(next.feedUrl)
+        val ep = cached?.episodes?.find { it.guid == next.guid } ?: Episode(
+            guid = next.guid,
+            feedUrl = next.feedUrl,
+            title = next.title,
+            description = null,
+            pubDateMillis = null,
+            audioUrl = next.audioUrl,
+            audioMimeType = null,
+            durationSeconds = null,
+            episodeArtworkUrl = next.artworkUrl
+        )
+        val podcastTitle = cached?.title ?: ""
+        val podcastArt = cached?.artworkUrl ?: next.artworkUrl
+        playEpisode(ep, podcastTitle, podcastArt)
+    }
+
     companion object {
         const val SESSION_GAP_MS = 30L * 60 * 1000        // 30 min
         const val CHECKPOINT_CAP = 200
         const val REASON_JUMP_FROM = "jump_from"
         const val REASON_SESSION_END = "session_end"
+        // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
+        // sortable for many operations before we'd need to re-densify.
+        private const val STEP = 1024L
     }
 }
 

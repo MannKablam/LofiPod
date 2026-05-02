@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EditNote
@@ -17,7 +18,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,20 +25,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
+import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.PodcastRepository.FeedStatus
+import com.lofipod.app.data.db.FeedVisitEntity
 import com.lofipod.app.data.model.Podcast
 import com.lofipod.app.player.PlayerController
 import com.lofipod.app.ui.FeedLoadStatus
 import com.lofipod.app.ui.LibraryViewModel
-import com.lofipod.app.ui.theme.PressStart2P
+import com.lofipod.app.ui.theme.ThemedArtwork
+import com.lofipod.app.ui.theme.lofiTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun LibraryScreen(
     controller: PlayerController,
     onPodcastClick: (Podcast) -> Unit,
-    onOpenFavorites: () -> Unit,
+    onOpenMyLists: () -> Unit,
     onOpenEq: () -> Unit,
     onOpenMetrics: () -> Unit,
     onOpenNotes: () -> Unit,
@@ -50,13 +55,38 @@ fun LibraryScreen(
     val playerState by controller.state.collectAsState()
     var menuExpanded by remember { mutableStateOf(false) }
 
+    // Per-feed last-visited timestamps. Drives the "new episodes" badge.
+    val app = LocalContext.current.applicationContext as LofiPodApp
+    val feedVisits by app.db.feedVisitDao().observeAll()
+        .collectAsState(initial = emptyList<FeedVisitEntity>())
+    val visitsByFeed = remember(feedVisits) {
+        feedVisits.associate { it.feedUrl to it.lastVisitedAt }
+    }
+
+    // First-visit seeding: a podcast we've never seen a visit for gets a row
+    // stamped to NOW so we don't lump every previously-released episode into
+    // the "new" count. Subsequent loads find the row and use it for the diff.
+    LaunchedEffect(state.podcasts.map { it.feedUrl }, visitsByFeed.keys) {
+        if (state.podcasts.isEmpty()) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        val toSeed = state.podcasts
+            .map { it.feedUrl }
+            .filter { it !in visitsByFeed }
+        if (toSeed.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                val dao = app.db.feedVisitDao()
+                for (url in toSeed) dao.seedIfMissing(url, now)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
                         "LofiPod",
-                        fontFamily = PressStart2P,
+                        fontFamily = lofiTheme.displayFont,
                         fontWeight = FontWeight.Normal,
                         fontSize = 14.sp
                     )
@@ -81,10 +111,10 @@ fun LibraryScreen(
                         )
                     }
                     Spacer(Modifier.width(4.dp))
-                    IconButton(onClick = onOpenFavorites) {
+                    IconButton(onClick = onOpenMyLists) {
                         Icon(
-                            Icons.Filled.Star,
-                            contentDescription = "Favorites",
+                            Icons.AutoMirrored.Filled.FormatListBulleted,
+                            contentDescription = "My lists",
                             modifier = Modifier.size(28.dp)
                         )
                     }
@@ -158,7 +188,13 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(state.podcasts) { pod ->
-                            PodcastRow(pod = pod, onClick = { onPodcastClick(pod) })
+                            val lastSeen = visitsByFeed[pod.feedUrl]
+                            val newCount = newEpisodesSince(pod, lastSeen)
+                            PodcastRow(
+                                pod = pod,
+                                newEpisodeCount = newCount,
+                                onClick = { onPodcastClick(pod) }
+                            )
                         }
                     }
                 }
@@ -242,6 +278,37 @@ private fun FeedProgressRow(fs: FeedLoadStatus) {
     }
 }
 
+/**
+ * "N new" pill in the row, styled in primary so it pops against the surface
+ * card. Uses a [Surface] rather than Material's [Badge] so the count reads as
+ * normal text alongside the episode count rather than a notification dot.
+ */
+@Composable
+private fun NewEpisodesBadge(count: Int) {
+    Surface(
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Text(
+            "$count new",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+/**
+ * Count of episodes whose pubDate is strictly after the last-visited timestamp.
+ * Returns 0 when [lastVisitedAt] is null (no visit row yet — the LaunchedEffect
+ * in [LibraryScreen] seeds one to NOW so this is a transient state on first
+ * Library load and never a "show all episodes as new" surprise).
+ */
+private fun newEpisodesSince(pod: Podcast, lastVisitedAt: Long?): Int {
+    val cutoff = lastVisitedAt ?: return 0
+    return pod.episodes.count { ep -> (ep.pubDateMillis ?: 0L) > cutoff }
+}
+
 private fun String.shortLabel(): String = try {
     val u = java.net.URI(this)
     (u.host ?: this).removePrefix("www.").removePrefix("feed.").removePrefix("feeds.")
@@ -263,7 +330,11 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun PodcastRow(pod: Podcast, onClick: () -> Unit) {
+private fun PodcastRow(
+    pod: Podcast,
+    newEpisodeCount: Int,
+    onClick: () -> Unit
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -274,11 +345,7 @@ private fun PodcastRow(pod: Podcast, onClick: () -> Unit) {
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AsyncImage(
-                model = pod.artworkUrl,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp)
-            )
+            ThemedArtwork(artworkUrl = pod.artworkUrl, size = 64.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -291,6 +358,10 @@ private fun PodcastRow(pod: Podcast, onClick: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (newEpisodeCount > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    NewEpisodesBadge(count = newEpisodeCount)
+                }
             }
         }
     }
