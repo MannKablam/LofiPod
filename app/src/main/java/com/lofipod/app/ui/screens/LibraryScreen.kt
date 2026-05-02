@@ -1,31 +1,23 @@
-@file:OptIn(
-    androidx.compose.material3.ExperimentalMaterial3Api::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class
-)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.lofipod.app.ui.screens
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HourglassEmpty
-import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
@@ -38,28 +30,11 @@ import com.lofipod.app.ui.LibraryViewModel
 fun LibraryScreen(
     onPodcastClick: (Podcast) -> Unit,
     onOpenFavorites: () -> Unit,
-    onOpenEq: () -> Unit
+    onOpenEq: () -> Unit,
+    onOpenMetrics: () -> Unit
 ) {
     val vm: LibraryViewModel = viewModel()
     val state by vm.state.collectAsState()
-    val ctx = LocalContext.current
-
-    val pickFile = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            // Persistable permission helps the one-time bootstrap on next launch (legacy
-            // path); not strictly needed once contents are stored in Room.
-            runCatching {
-                ctx.contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
-            vm.onPickSourcesFile(uri)
-        }
-    }
-
-    var pendingRemove by remember { mutableStateOf<Podcast?>(null) }
 
     Scaffold(
         topBar = {
@@ -72,8 +47,8 @@ fun LibraryScreen(
                     IconButton(onClick = onOpenEq) {
                         Icon(Icons.Filled.GraphicEq, contentDescription = "EQ")
                     }
-                    IconButton(onClick = { pickFile.launch(arrayOf("text/*", "*/*")) }) {
-                        Icon(Icons.Filled.LibraryAdd, contentDescription = "Import sources")
+                    IconButton(onClick = onOpenMetrics) {
+                        Icon(Icons.Filled.BarChart, contentDescription = "Metrics")
                     }
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
@@ -98,12 +73,12 @@ fun LibraryScreen(
                     }
                 }
                 state.error != null -> {
-                    ErrorState(state.error!!) {
-                        pickFile.launch(arrayOf("text/*", "*/*"))
-                    }
+                    ErrorState(state.error!!) { vm.refresh() }
                 }
                 state.podcasts.isEmpty() -> {
-                    EmptyState { pickFile.launch(arrayOf("text/*", "*/*")) }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No podcasts in the canon.")
+                    }
                 }
                 else -> {
                     LazyColumn(
@@ -111,33 +86,12 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(state.podcasts) { pod ->
-                            PodcastRow(
-                                pod = pod,
-                                onClick = { onPodcastClick(pod) },
-                                onLongClick = { pendingRemove = pod }
-                            )
+                            PodcastRow(pod = pod, onClick = { onPodcastClick(pod) })
                         }
                     }
                 }
             }
         }
-    }
-
-    pendingRemove?.let { pod ->
-        AlertDialog(
-            onDismissRequest = { pendingRemove = null },
-            title = { Text("Remove podcast?") },
-            text = { Text("\"${pod.title}\" will be removed from your library. Favorites and ratings on its episodes are kept.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.removeSource(pod.feedUrl)
-                    pendingRemove = null
-                }) { Text("Remove") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingRemove = null }) { Text("Cancel") }
-            }
-        )
     }
 }
 
@@ -224,7 +178,7 @@ private fun String.shortLabel(): String = try {
 }
 
 @Composable
-private fun ErrorState(error: String, onPick: () -> Unit) {
+private fun ErrorState(error: String, onRetry: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
@@ -232,46 +186,16 @@ private fun ErrorState(error: String, onPick: () -> Unit) {
     ) {
         Text(error, color = MaterialTheme.colorScheme.error)
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onPick) { Text("Pick sources file") }
+        Button(onClick = onRetry) { Text("Retry") }
     }
 }
 
 @Composable
-private fun EmptyState(onPick: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            "Welcome to LofiPod",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "Import a .md or .txt file containing podcast feed URLs. Imports merge into your library — load multiple files to grow it. Long-press a podcast to remove it.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(24.dp))
-        Button(onClick = onPick) { Text("Import sources file") }
-    }
-}
-
-@Composable
-private fun PodcastRow(
-    pod: Podcast,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit
-) {
+private fun PodcastRow(pod: Podcast, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            ),
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Row(

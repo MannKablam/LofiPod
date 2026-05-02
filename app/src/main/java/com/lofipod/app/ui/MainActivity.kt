@@ -113,7 +113,8 @@ private fun AppNav(controller: PlayerController) {
                         nav.navigate("episodes/$encoded")
                     },
                     onOpenFavorites = { nav.navigate("favorites") },
-                    onOpenEq = { nav.navigate("eq") }
+                    onOpenEq = { nav.navigate("eq") },
+                    onOpenMetrics = { nav.navigate("metrics") }
                 )
             }
 
@@ -140,6 +141,10 @@ private fun AppNav(controller: PlayerController) {
 
             composable("eq") {
                 EqScreen(onBack = { nav.popBackStack() })
+            }
+
+            composable("metrics") {
+                MetricsScreen(onBack = { nav.popBackStack() })
             }
 
             composable("favorites") {

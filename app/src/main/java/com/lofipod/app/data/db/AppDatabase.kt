@@ -27,6 +27,9 @@ interface EpisodeStateDao {
     @Query("SELECT * FROM episode_state WHERE rating > 0 ORDER BY rating DESC, lastPlayedMillis DESC")
     fun observeRated(): Flow<List<EpisodeStateEntity>>
 
+    @Query("SELECT * FROM episode_state")
+    suspend fun getAll(): List<EpisodeStateEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: EpisodeStateEntity)
 
