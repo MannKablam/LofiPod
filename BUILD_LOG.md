@@ -2,6 +2,12 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Harsh-kill EQ preset + scroll-to-bands on preset tap
+
+- New **Harsh-kill** preset (3 levels) — cuts both sub-bass rumble *and* upper-mid harshness in one shot. L2 is the user-tuned target curve (`-12, -9, -5, -3, -6, -2, -2, -2, -5, -3` from 31 Hz to 16 kHz); L1 is gentler, L3 leans harder into the cuts (clipped at the −12 dB headroom).
+- Tapping any preset (including Flat) now animates the EQ scroll position so the Graphic EQ band sliders come into view. Previously the bands sat below the fold on most phone heights, so the user got no visual confirmation that the preset actually moved them. The "Graphic EQ" header captures its y-offset via `onGloballyPositioned`; the preset cycle launches an `animateScrollTo`.
+- Preset row converted from `Row(weight = 1f)` to `FlowRow(min width = 96 dp)` so the now-six buttons (Flat + 5 named presets) wrap to a second line on narrow screens instead of clipping labels like "Harsh-kill" / "Boom-kill".
+
 ## New-episodes badge on Library
 
 - New `feed_visit` table (DB v10): `feedUrl PK, lastVisitedAt`. Stamped to NOW when the user opens that feed's `EpisodesScreen` and again when an episode from that feed starts playing — both are signals that the user is current with the channel.

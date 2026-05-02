@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.lofipod.app.ui.screens
 
 import androidx.compose.foundation.background
@@ -15,6 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
@@ -22,6 +26,7 @@ import com.lofipod.app.audio.EqPresets
 import com.lofipod.app.audio.PresetId
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,11 +43,25 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     var activePreset by remember { mutableStateOf<PresetId?>(null) }
     var activeLevel by remember { mutableStateOf(0) }
 
+    // Scroll plumbing: capture the y-offset of the Graphic EQ header so any
+    // preset tap can scroll it into view. Without this, the band sliders sit
+    // below the fold and the user has no visual confirmation that the preset
+    // actually moved them.
+    val scrollState = rememberScrollState()
+    val scrollScope = rememberCoroutineScope()
+    var graphicEqY by remember { mutableStateOf(0) }
+
+    fun scrollToBands() {
+        if (graphicEqY == 0) return
+        scrollScope.launch { scrollState.animateScrollTo(graphicEqY) }
+    }
+
     fun applyFlat() {
         activePreset = null
         activeLevel = 0
         bands = EqPresets.FLAT
         eq.setBands(bands)
+        scrollToBands()
     }
 
     fun cyclePreset(preset: PresetId) {
@@ -56,6 +75,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
         bands = if (activePreset == null) EqPresets.FLAT
                 else preset.levels[activeLevel - 1]
         eq.setBands(bands)
+        scrollToBands()
     }
 
     Scaffold(
@@ -79,7 +99,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 .padding(padding)
                 .padding(16.dp)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = enabled, onCheckedChange = {
@@ -128,28 +148,42 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
 
             Text("Presets", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Row(
+            // Flat gets its own full-width row up top — it's the "reset"
+            // affordance and reads more clearly on its own. Multi-level
+            // presets sit below in a FlowRow that wraps to a second line
+            // on narrower screens.
+            FlatButton(
+                isActive = activePreset == null,
+                onClick = ::applyFlat,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(6.dp))
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                FlatButton(
-                    isActive = activePreset == null,
-                    onClick = ::applyFlat,
-                    modifier = Modifier.weight(1f)
-                )
                 PresetId.values().forEach { preset ->
                     PresetButton(
                         preset = preset,
                         currentLevel = if (activePreset == preset) activeLevel else 0,
                         anyOtherActive = activePreset != null && activePreset != preset,
                         onClick = { cyclePreset(preset) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.widthIn(min = 96.dp)
                     )
                 }
             }
             Spacer(Modifier.height(24.dp))
 
-            Text("Graphic EQ", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Graphic EQ",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.onGloballyPositioned { coords ->
+                    // Capture the section's y-offset within the scrolled Column
+                    // so preset taps can animate the bands into view.
+                    graphicEqY = coords.positionInParent().y.toInt()
+                }
+            )
             Spacer(Modifier.height(8.dp))
             bands.forEachIndexed { idx, band ->
                 BandRow(band) { newGain ->

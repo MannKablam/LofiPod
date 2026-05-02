@@ -82,6 +82,32 @@ object EqPresets {
         EqBand(2000f, 4f), EqBand(4000f, 7f),
         EqBand(8000f, 8f), EqBand(16000f, 7f)
     )
+
+    /**
+     * Cuts the worst rumble (sub-bass) AND the harshest upper-mid / sibilant
+     * region in one preset — useful for compressed talk-radio sources where
+     * the low-end booms and the 5–10 kHz region is fatiguing. L2 is the
+     * user-tuned target curve; L1 is roughly half-strength for less invasive
+     * shaping; L3 leans further into the cuts, clipped at -12 dB headroom.
+     */
+    val HARSH_KILL_L1 = listOf(
+        EqBand(31f, -6f), EqBand(62f, -4f), EqBand(125f, -2f),
+        EqBand(250f, -1f), EqBand(500f, -3f), EqBand(1000f, -1f),
+        EqBand(2000f, -1f), EqBand(4000f, -1f),
+        EqBand(8000f, -2f), EqBand(16000f, -1f)
+    )
+    val HARSH_KILL_L2 = listOf(
+        EqBand(31f, -12f), EqBand(62f, -9f), EqBand(125f, -5f),
+        EqBand(250f, -3f), EqBand(500f, -6f), EqBand(1000f, -2f),
+        EqBand(2000f, -2f), EqBand(4000f, -2f),
+        EqBand(8000f, -5f), EqBand(16000f, -3f)
+    )
+    val HARSH_KILL_L3 = listOf(
+        EqBand(31f, -12f), EqBand(62f, -12f), EqBand(125f, -7f),
+        EqBand(250f, -4f), EqBand(500f, -8f), EqBand(1000f, -3f),
+        EqBand(2000f, -3f), EqBand(4000f, -3f),
+        EqBand(8000f, -7f), EqBand(16000f, -4f)
+    )
 }
 
 /**
@@ -92,6 +118,9 @@ object EqPresets {
  */
 enum class PresetId(val displayName: String, val levels: List<List<EqBand>>) {
     BOOM_KILL("Boom-kill", listOf(EqPresets.BOOM_KILL_L1, EqPresets.BOOM_KILL_L2)),
+    HARSH_KILL("Harsh-kill", listOf(
+        EqPresets.HARSH_KILL_L1, EqPresets.HARSH_KILL_L2, EqPresets.HARSH_KILL_L3
+    )),
     VOICE("Voice", listOf(EqPresets.VOICE_L1, EqPresets.VOICE_L2)),
     BASS("Bass", listOf(EqPresets.BASS_L1, EqPresets.BASS_L2, EqPresets.BASS_L3)),
     BRIGHT("Bright", listOf(EqPresets.BRIGHT_L1, EqPresets.BRIGHT_L2));
