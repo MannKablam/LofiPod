@@ -7,7 +7,11 @@ import com.lofipod.app.parser.RssParser
 import com.lofipod.app.parser.SourceEntry
 import com.lofipod.app.parser.SourcesFileParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -33,17 +37,21 @@ class PodcastRepository(
         } ?: emptyList()
     }
 
-    /** Fetch all feeds. Failed feeds are skipped (logged via stderr). */
-    suspend fun fetchFeeds(sources: List<SourceEntry>): List<Podcast> = withContext(Dispatchers.IO) {
-        val results = mutableListOf<Podcast>()
-        for (src in sources) {
-            try {
-                val pod = fetchOne(src)
-                results += pod
-            } catch (e: Exception) {
-                System.err.println("Feed failed: ${src.feedUrl} -> ${e.message}")
+    /**
+     * Fetch all feeds in parallel. Each feed has a 60s hard timeout; feeds that fail or
+     * time out are logged and skipped. We keep going so one bad feed doesn't sink the list.
+     */
+    suspend fun fetchFeeds(sources: List<SourceEntry>): List<Podcast> = coroutineScope {
+        val results = sources.map { src ->
+            async(Dispatchers.IO) {
+                try {
+                    withTimeoutOrNull(60_000) { fetchOne(src) }
+                } catch (e: Exception) {
+                    System.err.println("Feed failed: ${src.feedUrl} -> ${e.message}")
+                    null
+                }
             }
-        }
+        }.awaitAll().filterNotNull()
         cache = results.associateBy { it.feedUrl }
         results
     }

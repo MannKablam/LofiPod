@@ -46,8 +46,8 @@ object RssParser {
                     }
                     val ns = parser.namespace
                     when (parser.name) {
-                        "title" -> if (ns.isEmpty()) channelTitle = readText(parser)
-                        "description" -> if (ns.isEmpty()) channelDesc = readText(parser)
+                        "title" -> if (ns.isEmpty()) channelTitle = readText(parser) else skip(parser)
+                        "description" -> if (ns.isEmpty()) channelDesc = readText(parser) else skip(parser)
                         "author" -> channelAuthor = readText(parser)
                         "image" -> if (ns.isEmpty()) channelArt = readChannelImage(parser)
                             else skip(parser)
