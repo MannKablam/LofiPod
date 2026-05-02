@@ -39,7 +39,6 @@ fun PlayerScreen(
     controller: PlayerController,
     onBack: () -> Unit,
     onOpenEq: () -> Unit,
-    onOpenNotes: (episodeGuid: String) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenMyLists: () -> Unit,
     onOpenSettings: () -> Unit
@@ -116,16 +115,6 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
-                    state.currentEpisodeGuid?.let { guid ->
-                        IconButton(onClick = { onOpenNotes(guid) }) {
-                            Icon(
-                                Icons.Filled.EditNote,
-                                contentDescription = "Notes (full)",
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                        Spacer(Modifier.width(4.dp))
-                    }
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
                             Icons.AutoMirrored.Filled.FormatListBulleted,
@@ -133,8 +122,17 @@ fun PlayerScreen(
                             modifier = Modifier.size(28.dp)
                         )
                     }
-                    // Overflow sits between My lists and EQ so EQ holds the
-                    // far-right anchor position the user keeps it tied to.
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onOpenEq) {
+                        Icon(
+                            Icons.Filled.GraphicEq,
+                            contentDescription = "EQ",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    // Overflow on the far right — Notes is gone from the top
+                    // bar entirely (the in-Player Notes tab covers it), and
+                    // History + Settings remain inside the menu.
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
@@ -159,13 +157,6 @@ fun PlayerScreen(
                                 leadingIcon = { Icon(Icons.Filled.Settings, null) }
                             )
                         }
-                    }
-                    IconButton(onClick = onOpenEq) {
-                        Icon(
-                            Icons.Filled.GraphicEq,
-                            contentDescription = "EQ",
-                            modifier = Modifier.size(28.dp)
-                        )
                     }
                 }
             )

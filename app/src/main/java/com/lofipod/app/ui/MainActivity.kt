@@ -200,10 +200,6 @@ private fun AppNav(
                     controller = controller,
                     onBack = { nav.popBackStack() },
                     onOpenEq = { nav.navigate("eq") },
-                    onOpenNotes = { guid ->
-                        val encoded = URLEncoder.encode(guid, "UTF-8")
-                        nav.navigate("notes/$encoded")
-                    },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
                     onOpenSettings = { nav.navigate("settings") }
