@@ -181,7 +181,18 @@ fun EpisodesScreen(
                     onCycleHeart = {
                         val next = (s.favoriteTier + 1) % 3
                         episodeStates[ep.guid] = s.copy(favoriteTier = next)
-                        scope.launch { upsertState(app, ep, pod, newTier = next) }
+                        scope.launch {
+                            upsertState(app, ep, pod, newTier = next)
+                            // Promotion to tier 2 drops a checkpoint into the
+                            // global history so the moment of anointment is
+                            // recoverable later. Snackbar gives the user a
+                            // beat of feedback that something else happened
+                            // beyond just the heart filling in.
+                            if (next == 2) {
+                                controller.recordMostExcellentPromotion(ep.guid)
+                                snackbarHostState.showSnackbar("Promoted to most-excellent")
+                            }
+                        }
                     },
                     onToggleDownload = {
                         val d = downloadsByGuid[ep.guid]

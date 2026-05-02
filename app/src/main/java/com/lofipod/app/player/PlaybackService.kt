@@ -74,7 +74,11 @@ class PlaybackService : MediaSessionService() {
             .setLoadControl(loadControl)
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                    // CONTENT_TYPE_MUSIC (not SPEECH) so Android keeps full A2DP
+                    // music routing/codec selection on Bluetooth — SPEECH can trip
+                    // voice-oriented post-processing on some HALs and produce subtle
+                    // BT-only choppiness even though podcasts are nominally voice.
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .setUsage(C.USAGE_MEDIA)
                     .build(),
                 /* handleAudioFocus = */ true

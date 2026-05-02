@@ -2,6 +2,16 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Bluetooth audio + most-excellent-as-checkpoint + Player/Settings/Library polish
+
+Bundle of small refinements; nothing destructive.
+
+- **Bluetooth-friendly audio attributes**: `PlaybackService` now flags media as `CONTENT_TYPE_MUSIC` instead of `CONTENT_TYPE_SPEECH`. Some Android device HALs apply voice-oriented post-processing or codec selection for SPEECH content over A2DP, which can produce subtle BT-only choppiness. Podcasts are nominally voice but sound more like music to the BT stack — `MUSIC` keeps full A2DP routing on every HAL we've seen.
+- **"Promoted to most-excellent" checkpoint**: cycling an episode's heart up to tier 2 (most-excellent) now drops a `PlaybackCheckpointEntity` with `reason = "promoted_to_most_excellent"`. Position is the live player position when the promoted episode is the one currently playing; otherwise the saved position from `episode_state` (or 0 if the row doesn't exist yet — fine, history-tap then plays from the start). New constant on `PlayerController` + new `recordMostExcellentPromotion(guid)` method, wired into both heart-cycle call sites (`PlayerScreen` top-bar heart, `EpisodesScreen` row heart). `HistoryScreen.reasonLabel` learns "Promoted to most-excellent". A snackbar in both screens confirms the promotion so the user knows something extra happened beyond the heart filling in.
+- **Player speed chip**: new `AssistChip` under the transport row that shows the current playback speed and opens a popover with the common speeds (0.75 / 1.0 / 1.25 / 1.5 / 1.75 / 2.0). Active speed marked with a check. Full continuous slider still lives in EQ for unusual speeds — this covers the 90% case without leaving the player.
+- **Settings text-scale slider**: now uses local drag state and only commits on release (`onValueChangeFinished`), so the whole-app fontScale doesn't thrash on every drag tick. Also wires up the live preview line the doc-comment had been promising — a sample sentence rendered at the previewed scale, directly under the slider.
+- **Library top bar declutter**: History moved out of the top bar and into the overflow menu (it's still one tap from the Player). Library top-bar actions are now Now-playing, Notes, My-lists, Settings, Overflow — five icons instead of six.
+
 ## Stable signing key for sideload updates
 
 > **TODO — circle back ~2026-05-16** (≈ 2 weeks from 2026-05-02). The gradle

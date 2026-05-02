@@ -191,6 +191,7 @@ private fun HistoryCard(
 private fun reasonLabel(reason: String): String = when (reason) {
     "jump_from" -> "Before a note jump"
     "session_end" -> "End of a listening session"
+    "promoted_to_most_excellent" -> "Promoted to most-excellent"
     else -> reason
 }
 

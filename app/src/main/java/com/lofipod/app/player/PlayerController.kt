@@ -482,11 +482,40 @@ class PlayerController(private val context: Context) {
         playEpisode(candidate, pod.title, pod.artworkUrl)
     }
 
+    /**
+     * Record a "promoted to most-excellent" checkpoint for [guid]. Position is
+     * the live player position when the promoted episode is the one currently
+     * loaded; otherwise the saved position from episode_state (0 if no row
+     * exists yet — a tap on the history row will then play from the start,
+     * which is fine for promotions made before the episode is ever played).
+     *
+     * Fired by the heart-cycle UI whenever an episode transitions into tier 2
+     * so the global history captures the moment each standout was anointed.
+     */
+    fun recordMostExcellentPromotion(guid: String) {
+        val livePos = controller?.let { c ->
+            if (c.currentMediaItem?.mediaId == guid) c.currentPosition else null
+        }
+        scope.launch(Dispatchers.IO) {
+            val pos = livePos ?: (dao.get(guid)?.positionMs ?: 0L)
+            checkpointDao.insert(
+                PlaybackCheckpointEntity(
+                    guid = guid,
+                    positionMs = pos,
+                    recordedAt = System.currentTimeMillis(),
+                    reason = REASON_PROMOTED_TO_MOST_EXCELLENT
+                )
+            )
+            checkpointDao.pruneToCount(CHECKPOINT_CAP)
+        }
+    }
+
     companion object {
         const val SESSION_GAP_MS = 30L * 60 * 1000        // 30 min
         const val CHECKPOINT_CAP = 200
         const val REASON_JUMP_FROM = "jump_from"
         const val REASON_SESSION_END = "session_end"
+        const val REASON_PROMOTED_TO_MOST_EXCELLENT = "promoted_to_most_excellent"
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
         private const val STEP = 1024L

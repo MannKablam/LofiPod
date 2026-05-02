@@ -69,8 +69,10 @@ fun PlayerScreen(
     }
 
     var menuExpanded by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -102,12 +104,19 @@ fun PlayerScreen(
                     // Heart-tier toggle for the currently-playing episode.
                     // Single tap cycles 0 -> 1 (Excellent) -> 2 (Most-excellent)
                     // -> 0, mirroring the per-row heart in the episode list.
+                    // Hitting tier 2 also drops a "promoted to most-excellent"
+                    // checkpoint so the moment of anointment is recoverable
+                    // from the global Playback History.
                     state.currentEpisodeGuid?.let { guid ->
                         IconButton(onClick = {
                             val next = (currentTier + 1) % 3
                             scope.launch {
                                 withContext(Dispatchers.IO) {
                                     app.db.episodeStateDao().setFavoriteTier(guid, next)
+                                }
+                                if (next == 2) {
+                                    controller.recordMostExcellentPromotion(guid)
+                                    snackbarHostState.showSnackbar("Promoted to most-excellent")
                                 }
                             }
                         }) {
@@ -263,6 +272,14 @@ fun PlayerScreen(
                         )
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                // Inline speed picker — common values only. The full
+                // continuous slider still lives in EQ; this is for the 90% case
+                // of "I want to bump it to 1.25x without leaving the player."
+                SpeedChip(
+                    speed = state.speed,
+                    onPick = { controller.setSpeed(it) }
+                )
             }
 
             // Bottom: tabbed container that fills the remaining space.
@@ -304,6 +321,58 @@ private fun PlayerHeartIcon(tier: Int) {
                 tint = tint,
                 modifier = Modifier.size(14.dp)
             )
+        }
+    }
+}
+
+/**
+ * Compact speed picker chip. Tapping the chip opens a dropdown of the most
+ * common speeds. Active speed is highlighted; "1.0x" is always present so the
+ * reset case is one tap. The full 0.5..3.0 continuous slider still lives in EQ
+ * for users who want unusual speeds.
+ */
+@Composable
+private fun SpeedChip(
+    speed: Float,
+    onPick: (Float) -> Unit
+) {
+    var open by remember { mutableStateOf(false) }
+    val choices = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+    Box {
+        AssistChip(
+            onClick = { open = true },
+            label = { Text("Speed: ${"%.2fx".format(speed)}") },
+            leadingIcon = {
+                Icon(
+                    Icons.Filled.Speed,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        )
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false }
+        ) {
+            choices.forEach { v ->
+                val active = kotlin.math.abs(v - speed) < 0.01f
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "%.2fx".format(v),
+                            color = if (active) MaterialTheme.colorScheme.primary
+                                    else LocalContentColor.current
+                        )
+                    },
+                    onClick = {
+                        onPick(v)
+                        open = false
+                    },
+                    leadingIcon = if (active) {
+                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                    } else null
+                )
+            }
         }
     }
 }
