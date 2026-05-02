@@ -2,6 +2,48 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Stable signing key for sideload updates
+
+> **TODO — circle back ~2026-05-16** (≈ 2 weeks from 2026-05-02). The gradle
+> wiring + generator script are in place but the keystore itself hasn't been
+> generated yet (no `keytool` on this Git Bash shell). When back at the
+> desktop, run the steps under "One-time setup" below and commit the
+> resulting `app/lofipod-dev.jks`. Until then, builds fall back to AGP's
+> default debug signing — so the "uninstall to update" pain is still present
+> but the project still builds cleanly.
+
+Adds a repo-tracked signing config so re-installing a new build over an
+existing install **preserves your data** instead of forcing an uninstall.
+
+**Why this fixes "have to uninstall to update"**: Android's package manager
+refuses to update an installed APK with a different signing certificate.
+Without an explicit `signingConfig`, every machine signs builds with its own
+auto-generated `~/.android/debug.keystore`, so every new APK was a "different
+app" from Android's perspective. (Room migrations + DataStore both already
+preserve data across version updates — uninstalling is what wipes it.)
+
+**One-time setup** (do this once, then forget it exists):
+
+```bash
+cd app
+bash generate-keystore.sh
+git add lofipod-dev.jks
+git commit -m "Add stable sideload signing key"
+```
+
+`keytool` ships with the JDK Android Studio bundles — easiest place to run
+the script is Android Studio's built-in **Terminal** tab.
+
+**One last forced uninstall**: the currently-installed APK on your device is
+signed with the old per-machine debug keystore. The first build with the
+new repo-tracked keystore will get rejected as a different signer. Uninstall
+once after generating the keystore; from then on every `Run` / sideload
+just updates in place and your DB / preferences / downloads are preserved.
+
+`versionCode` bumped 1 → 2 and `versionName` 0.1.0 → 0.2.0. Future builds
+should bump `versionCode` each time so the package manager recognizes them
+as real updates.
+
 ## Harsh-kill EQ preset + scroll-to-bands on preset tap
 
 - New **Harsh-kill** preset (3 levels) — cuts both sub-bass rumble *and* upper-mid harshness in one shot. L2 is the user-tuned target curve (`-12, -9, -5, -3, -6, -2, -2, -2, -5, -3` from 31 Hz to 16 kHz); L1 is gentler, L3 leans harder into the cuts (clipped at the −12 dB headroom).
