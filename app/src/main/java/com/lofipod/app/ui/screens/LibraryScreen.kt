@@ -48,7 +48,8 @@ fun LibraryScreen(
     onOpenMetrics: () -> Unit,
     onOpenNotes: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenNowPlaying: () -> Unit
+    onOpenNowPlaying: () -> Unit,
+    onOpenHistory: () -> Unit
 ) {
     val vm: LibraryViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -119,6 +120,14 @@ fun LibraryScreen(
                         )
                     }
                     Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onOpenHistory) {
+                        Icon(
+                            Icons.Filled.History,
+                            contentDescription = "Playback history",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenSettings) {
                         Icon(
                             Icons.Filled.Settings,
@@ -128,9 +137,15 @@ fun LibraryScreen(
                     }
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
+                            // Tinted with onSurfaceVariant so it doesn't render
+                            // as harsh near-black on light themes (Daylight in
+                            // particular). Still readable on dark themes —
+                            // onSurfaceVariant is the standard "secondary
+                            // foreground" slot in every Material color scheme.
                             Icon(
                                 Icons.Filled.MoreVert,
                                 contentDescription = "More",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(28.dp)
                             )
                         }

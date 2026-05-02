@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,7 +40,9 @@ fun PlayerScreen(
     onBack: () -> Unit,
     onOpenEq: () -> Unit,
     onOpenNotes: (episodeGuid: String) -> Unit,
-    onOpenHistory: () -> Unit
+    onOpenHistory: () -> Unit,
+    onOpenMyLists: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
@@ -118,6 +121,22 @@ fun PlayerScreen(
                         Icon(
                             Icons.Filled.GraphicEq,
                             contentDescription = "EQ",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onOpenMyLists) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.FormatListBulleted,
+                            contentDescription = "My lists",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = "Settings",
                             modifier = Modifier.size(28.dp)
                         )
                     }
