@@ -416,6 +416,25 @@ private fun NotesTab(episodeGuid: String?, controller: PlayerController) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
+            // "Pause while writing" toggle. Filter-chip style so the selected
+            // state reads at a glance and it sits compactly next to Add note.
+            // Persists via settings.pauseOnNote so the choice carries across
+            // every Player session and the standalone Notes screen.
+            FilterChip(
+                selected = pauseOnNote,
+                onClick = { scope.launch { settings.setPauseOnNote(!pauseOnNote) } },
+                label = { Text("Pause", style = MaterialTheme.typography.labelMedium) },
+                leadingIcon = if (pauseOnNote) {
+                    {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                } else null
+            )
+            Spacer(Modifier.width(8.dp))
             FilledTonalButton(onClick = ::openAdd) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
