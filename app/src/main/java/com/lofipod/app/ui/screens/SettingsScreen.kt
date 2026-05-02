@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.LofiTheme
 import com.lofipod.app.data.Settings
@@ -166,14 +167,21 @@ private fun SwitchRow(
 }
 
 /**
- * Text-scale slider. Displays a live preview line in the chosen size so the
- * user can see the effect of the slider before committing. Range matches
- * Settings.textScale (0.85 .. 1.4).
+ * Text-scale slider. Local preview while dragging — only commits to settings
+ * on release so the whole-app fontScale doesn't thrash on every drag tick.
+ * The sample line under the slider renders at the previewed scale so the
+ * user sees the effect of the slider directly under their thumb instead of
+ * having to look around the screen for what changed.
+ *
+ * Range matches Settings.textScale (0.85 .. 1.4).
  */
 @Composable
 private fun TextScaleRow(value: Float, onChange: (Float) -> Unit) {
+    // Local drag state — initialized from the persisted value and re-synced
+    // any time it changes externally (e.g. backup restore, second device).
+    var preview by remember(value) { mutableStateOf(value) }
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text("Text size: ${"%.0f".format(value * 100)}%",
+        Text("Text size: ${"%.0f".format(preview * 100)}%",
             style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(4.dp))
         Text(
@@ -184,10 +192,22 @@ private fun TextScaleRow(value: Float, onChange: (Float) -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         Slider(
-            value = value,
-            onValueChange = onChange,
+            value = preview,
+            onValueChange = { preview = it },
+            onValueChangeFinished = { onChange(preview) },
             valueRange = 0.85f..1.4f,
             steps = 10  // 11 stops between 0.85 and 1.4 (~5% increments)
+        )
+        Spacer(Modifier.height(4.dp))
+        // Live preview line. fontSize derives from bodyLarge (16sp default)
+        // scaled by the previewed multiplier so the user can see the effect
+        // of the slider directly while dragging, without committing to the
+        // whole-app rescale.
+        val baseSp = 16f
+        Text(
+            "The quick brown fox jumps over the lazy dog.",
+            style = MaterialTheme.typography.bodyLarge,
+            fontSize = (baseSp * preview).sp
         )
     }
 }

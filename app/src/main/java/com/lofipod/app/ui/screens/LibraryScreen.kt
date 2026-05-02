@@ -121,14 +121,6 @@ fun LibraryScreen(
                         )
                     }
                     Spacer(Modifier.width(4.dp))
-                    IconButton(onClick = onOpenHistory) {
-                        Icon(
-                            Icons.Filled.History,
-                            contentDescription = "Playback history",
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenSettings) {
                         Icon(
                             Icons.Filled.Settings,
@@ -154,6 +146,11 @@ fun LibraryScreen(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("Playback history") },
+                                onClick = { menuExpanded = false; onOpenHistory() },
+                                leadingIcon = { Icon(Icons.Filled.History, null) }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Metrics") },
                                 onClick = { menuExpanded = false; onOpenMetrics() },
