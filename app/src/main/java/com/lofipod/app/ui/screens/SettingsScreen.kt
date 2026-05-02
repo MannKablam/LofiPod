@@ -103,6 +103,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Fonts")
+            Text(
+                "Press Start 2P by Cody \"CodeMan38\" Boisclair, used under the SIL Open Font License 1.1. Full license text bundled at assets/PressStart2P-OFL.txt.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

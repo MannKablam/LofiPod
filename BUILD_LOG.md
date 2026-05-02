@@ -2,6 +2,10 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Settings: Fonts attribution
+
+- Added a tiny "Fonts" section at the bottom of Settings crediting Press Start 2P (Cody Boisclair) under the SIL Open Font License 1.1, with a pointer to the bundled `assets/PressStart2P-OFL.txt`.
+
 ## Visual overhaul: themes, pixel font, fatter mini-player, artwork fixes
 
 - **Artwork** now resolves for the three feeds it had been missing on:
