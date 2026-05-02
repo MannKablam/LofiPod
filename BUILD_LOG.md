@@ -2,6 +2,12 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Standardize sources.md to iTunes-canonical feed URLs
+
+- Each feed now matches the `feedUrl` Apple Podcasts has registered (verified via the iTunes Lookup API).
+- Added an `# iTunes ID: <collectionId>` comment above each URL so the canonical can be re-resolved later.
+- 7 of 8 URLs were already pointing at the iTunes-canonical destination — only Bethany Bible Church changed (host swap from `bethanybiblechurch.org` → `www.bethanyto.org`, same UUID path, same content).
+
 ## Fix: feed loading hangs forever on namespaced channel tags
 
 - `RssParser` channel-level handlers for `<title>` and `<description>` were no-ops when the tag had a non-empty namespace (e.g. `<itunes:title>`), and crucially didn't advance the parser. One such tag in any feed → infinite loop in the parse loop → spinner never resolved.
