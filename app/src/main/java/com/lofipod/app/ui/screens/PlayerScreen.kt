@@ -275,7 +275,6 @@ fun PlayerScreen(
     }
 }
 
-@Composable
 /**
  * Top-bar heart icon for the now-playing episode. Tier 0 = outline; tier 1 =
  * filled; tier 2 = filled with a small second pip overlapping (matches the
