@@ -13,12 +13,14 @@ import androidx.media3.session.MediaSessionService
 import com.lofipod.app.ui.MainActivity
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.EqAudioProcessor
+import com.lofipod.app.audio.SilenceSkippingProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -40,6 +42,10 @@ class PlaybackService : MediaSessionService() {
     companion object {
         // Shared EQ instance — UI can grab it via app-level holder
         val sharedEq = EqAudioProcessor()
+        // Shared silence-skipping processor — runtime-tunable level via
+        // setLevel(0..3), defaults off. Lives next to sharedEq so the EQ
+        // screen can mutate both via PlaybackService.<X>.
+        val sharedSkipSilence = SilenceSkippingProcessor()
         private const val SAVE_INTERVAL_MS = 10_000L
 
         /** Intent action used by the media-session tap target to ask MainActivity
@@ -69,7 +75,7 @@ class PlaybackService : MediaSessionService() {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq))
+        val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq, sharedSkipSilence))
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -98,6 +104,17 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         })
+
+        // Rehydrate the persisted skip-silence level into the shared
+        // processor. One-shot read on service creation — the EQ screen also
+        // writes through to sharedSkipSilence directly when the user changes
+        // it, so we don't need an ongoing flow collector here.
+        scope.launch {
+            val saved = com.lofipod.app.data.Settings(this@PlaybackService)
+                .skipSilenceLevel
+                .first()
+            sharedSkipSilence.setLevel(saved)
+        }
 
         // Notification tap target: route through MainActivity with a custom
         // action so the UI can route the user to the Player screen instead of

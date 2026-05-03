@@ -46,6 +46,8 @@ class PlayerController(private val context: Context) {
         get() = (context.applicationContext as LofiPodApp).db.playbackCheckpointDao()
     private val queueDao: QueueEntryDao
         get() = (context.applicationContext as LofiPodApp).db.queueEntryDao()
+    private val podcastStateDao: com.lofipod.app.data.db.PodcastStateDao
+        get() = (context.applicationContext as LofiPodApp).db.podcastStateDao()
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
@@ -235,6 +237,15 @@ class PlayerController(private val context: Context) {
                 .build()
             c.setMediaItem(item, startPos)
             c.prepare()
+            // Apply per-podcast default speed (if any) before play() so the
+            // user doesn't briefly hear 1.0x audio. Falls back to 1.0f when
+            // there's no override row — the explicit fallback matters when
+            // switching feeds: an outgoing feed's 1.5x shouldn't bleed into
+            // an incoming feed that had no preference set.
+            val speedOverride = withContext(Dispatchers.IO) {
+                podcastStateDao.get(ep.feedUrl)?.defaultSpeed
+            }
+            c.setPlaybackSpeed(speedOverride ?: 1.0f)
             c.play()
 
             // Mark this feed as "seen" — kills the new-episodes badge in Library

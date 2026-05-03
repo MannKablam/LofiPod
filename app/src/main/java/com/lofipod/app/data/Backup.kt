@@ -4,29 +4,33 @@ import com.lofipod.app.data.db.AppDatabase
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.db.PlaybackCheckpointEntity
+import com.lofipod.app.data.db.PodcastStateEntity
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * Single-file JSON backup of all user-generated state. Includes episode states
- * (favorites, ratings, positions, cumulative listening) and timestamped note entries.
+ * (favorites, positions, cumulative listening), timestamped note entries,
+ * playback checkpoints, and per-podcast preferences.
+ *
  * Forward-compatible: older backups missing newer fields default cleanly; the
  * schemaVersion gate refuses backups from a strictly newer schema.
  */
 object Backup {
 
     /**
-     * Bumped any time the export shape changes incompatibly. v6 swaps the per-
-     * episode rating + isFavorite pair for a single favoriteTier int. v6 backups
-     * are still readable on older builds (the new fields are simply ignored), and
-     * v6 readers fall back to converting any v5-shaped fields they find.
+     * Bumped any time the export shape changes incompatibly.
+     * - v6 swapped per-episode rating + isFavorite for favoriteTier.
+     * - v7 adds podcastState[] (per-podcast prefs, currently default speed).
+     *   v7 backups are still readable on v6 builds — the array is ignored.
      */
-    const val CURRENT_SCHEMA = 6
+    const val CURRENT_SCHEMA = 7
 
     fun export(
         episodes: List<EpisodeStateEntity>,
         noteEntries: List<EpisodeNoteEntryEntity>,
         checkpoints: List<PlaybackCheckpointEntity>,
+        podcastStates: List<PodcastStateEntity>,
         appVersion: String
     ): String {
         val obj = JSONObject().apply {
@@ -72,6 +76,14 @@ object Backup {
                     })
                 }
             })
+            put("podcastState", JSONArray().apply {
+                podcastStates.forEach { p ->
+                    put(JSONObject().apply {
+                        put("feedUrl", p.feedUrl)
+                        if (p.defaultSpeed != null) put("defaultSpeed", p.defaultSpeed.toDouble())
+                    })
+                }
+            })
         }
         return obj.toString(2)
     }
@@ -93,6 +105,7 @@ object Backup {
         val stateDao = db.episodeStateDao()
         val noteDao = db.episodeNoteEntryDao()
         val checkpointDao = db.playbackCheckpointDao()
+        val podcastStateDao = db.podcastStateDao()
 
         var epRestored = 0
         obj.optJSONArray("episodeState")?.let { arr ->
@@ -185,13 +198,31 @@ object Backup {
             checkpointDao.pruneToCount(200)
         }
 
-        return ImportResult(epRestored, notesRestored, checkpointsRestored)
+        var podcastStatesRestored = 0
+        obj.optJSONArray("podcastState")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val p = arr.getJSONObject(i)
+                val speed = if (p.has("defaultSpeed") && !p.isNull("defaultSpeed")) {
+                    p.getDouble("defaultSpeed").toFloat()
+                } else null
+                podcastStateDao.upsert(
+                    PodcastStateEntity(
+                        feedUrl = p.getString("feedUrl"),
+                        defaultSpeed = speed,
+                    )
+                )
+                podcastStatesRestored++
+            }
+        }
+
+        return ImportResult(epRestored, notesRestored, checkpointsRestored, podcastStatesRestored)
     }
 
     data class ImportResult(
         val episodeCount: Int,
         val noteCount: Int,
-        val checkpointCount: Int = 0
+        val checkpointCount: Int = 0,
+        val podcastStateCount: Int = 0,
     )
 }
 

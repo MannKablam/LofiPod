@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -101,6 +102,51 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Skip-silence aggressiveness: 0 = off (passthrough), 1..3 = stages from
+     * gentle to aggressive (matches SilenceSkippingProcessor's `level`).
+     * Default 0 — silence skipping is opt-in. Persists across restarts;
+     * PlaybackService rehydrates the processor on onCreate.
+     */
+    val skipSilenceLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_SKIP_SILENCE_LEVEL] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setSkipSilenceLevel(level: Int) {
+        context.dataStore.edit { it[KEY_SKIP_SILENCE_LEVEL] = level.coerceIn(0, 3) }
+    }
+
+    // ---- Auto-backup ----
+
+    /** Tree URI (SAF) the user picked as the backup folder; null = unset. */
+    val backupTreeUri: Flow<String?> =
+        context.dataStore.data.map { it[KEY_BACKUP_TREE_URI] }
+
+    suspend fun setBackupTreeUri(uri: String?) {
+        context.dataStore.edit {
+            if (uri == null) it.remove(KEY_BACKUP_TREE_URI)
+            else it[KEY_BACKUP_TREE_URI] = uri
+        }
+    }
+
+    /**
+     * Auto-backup interval in hours; 0 = disabled. Default 0. The auto-backup
+     * worker reschedules itself when this changes.
+     */
+    val backupIntervalHours: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_BACKUP_INTERVAL_HOURS] ?: 0).coerceAtLeast(0) }
+
+    suspend fun setBackupIntervalHours(hours: Int) {
+        context.dataStore.edit { it[KEY_BACKUP_INTERVAL_HOURS] = hours.coerceAtLeast(0) }
+    }
+
+    /** Epoch ms of the last successful backup write; 0 = never. */
+    val backupLastSuccessAt: Flow<Long> =
+        context.dataStore.data.map { it[KEY_BACKUP_LAST_SUCCESS] ?: 0L }
+
+    suspend fun setBackupLastSuccessAt(ts: Long) {
+        context.dataStore.edit { it[KEY_BACKUP_LAST_SUCCESS] = ts }
+    }
+
+    /**
      * Selected visual direction. Default Cassette (the original look).
      * Old color-only theme names from before the direction overhaul map to
      * Cassette so existing installs keep working.
@@ -130,6 +176,14 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("show_played_in_list")
         private val KEY_AUTO_ARCHIVE_DAYS =
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
+        private val KEY_SKIP_SILENCE_LEVEL =
+            androidx.datastore.preferences.core.intPreferencesKey("skip_silence_level")
+        private val KEY_BACKUP_TREE_URI =
+            androidx.datastore.preferences.core.stringPreferencesKey("backup_tree_uri")
+        private val KEY_BACKUP_INTERVAL_HOURS =
+            androidx.datastore.preferences.core.intPreferencesKey("backup_interval_hours")
+        private val KEY_BACKUP_LAST_SUCCESS =
+            androidx.datastore.preferences.core.longPreferencesKey("backup_last_success_at")
     }
 }
 

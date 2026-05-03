@@ -177,7 +177,18 @@ private fun AppNav(
                     onOpenNotes = { nav.navigate("notesBrowser") },
                     onOpenSettings = { nav.navigate("settings") },
                     onOpenNowPlaying = { nav.navigate("player") },
-                    onOpenHistory = { nav.navigate("history") }
+                    onOpenHistory = { nav.navigate("history") },
+                    onOpenSearch = { nav.navigate("search") }
+                )
+            }
+
+            composable("search") {
+                EpisodeSearchScreen(
+                    controller = controller,
+                    onBack = { nav.popBackStack() },
+                    onOpenPlayer = {
+                        nav.navigate("player") { launchSingleTop = true }
+                    }
                 )
             }
 

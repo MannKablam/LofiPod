@@ -63,6 +63,9 @@ fun EpisodesScreen(
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
+    var speedDialogOpen by remember { mutableStateOf(false) }
+    val podcastState by app.db.podcastStateDao().observe(feedUrl).collectAsState(initial = null)
+    val currentDefaultSpeed = podcastState?.defaultSpeed
 
     // Sweep + load. Auto-archive runs every time the screen is entered (cheap —
     // single indexed query). Then we hydrate per-episode state into the map.
@@ -138,6 +141,21 @@ fun EpisodesScreen(
                     }
                 },
                 actions = {
+                    // Default-speed shortcut. Tinted primary when an override
+                    // is set so the user can see at a glance that this
+                    // podcast plays at a non-default speed.
+                    IconButton(onClick = { speedDialogOpen = true }) {
+                        Icon(
+                            Icons.Filled.Speed,
+                            contentDescription = currentDefaultSpeed?.let {
+                                "Default speed for this podcast: ${"%.2fx".format(it)}"
+                            } ?: "Default speed for this podcast (no override)",
+                            tint = if (currentDefaultSpeed != null)
+                                MaterialTheme.colorScheme.primary
+                            else LocalContentColor.current,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                     // Archive visibility toggle. The icon flips between open and
                     // closed-archive boxes so the active state reads at a glance.
                     IconButton(onClick = { showArchived = !showArchived }) {
@@ -232,6 +250,46 @@ fun EpisodesScreen(
                                 if (nowArchived) "Unarchived" else "Archived"
                             )
                         }
+                    },
+                    onMarkPlayed = {
+                        // Mark-as-played: pin position to the duration so the
+                        // isPlayed check (positionMs >= durationMs - 5_000)
+                        // returns true. Stamps lastPlayedMillis so the
+                        // auto-archive sweep can pick this row up.
+                        val dur = s.durationMs.takeIf { it > 0 }
+                            ?: ep.durationSeconds?.let { it * 1000L }
+                            ?: 0L
+                        val newDur = if (dur > 0) dur else 1L
+                        episodeStates[ep.guid] = s.copy(positionMs = newDur, durationMs = newDur)
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                upsertState(app, ep, pod)
+                                app.db.episodeStateDao().updatePosition(
+                                    guid = ep.guid,
+                                    pos = newDur,
+                                    dur = newDur,
+                                    now = System.currentTimeMillis(),
+                                    listenDelta = 0L
+                                )
+                            }
+                            snackbarHostState.showSnackbar("Marked as played")
+                        }
+                    },
+                    onMarkUnplayed = {
+                        episodeStates[ep.guid] = s.copy(positionMs = 0L)
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                upsertState(app, ep, pod)
+                                app.db.episodeStateDao().updatePosition(
+                                    guid = ep.guid,
+                                    pos = 0L,
+                                    dur = s.durationMs,
+                                    now = System.currentTimeMillis(),
+                                    listenDelta = 0L
+                                )
+                            }
+                            snackbarHostState.showSnackbar("Marked as unplayed")
+                        }
                     }
                 )
             }
@@ -252,6 +310,80 @@ fun EpisodesScreen(
             }
         }
     }
+
+    if (speedDialogOpen) {
+        DefaultSpeedDialog(
+            current = currentDefaultSpeed,
+            onDismiss = { speedDialogOpen = false },
+            onPick = { picked ->
+                speedDialogOpen = false
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        val dao = app.db.podcastStateDao()
+                        if (dao.get(feedUrl) == null) {
+                            dao.upsert(com.lofipod.app.data.db.PodcastStateEntity(feedUrl, picked))
+                        } else {
+                            dao.setDefaultSpeed(feedUrl, picked)
+                        }
+                    }
+                    snackbarHostState.showSnackbar(
+                        if (picked == null) "Default speed cleared (uses 1.00x)"
+                        else "Default speed set to ${"%.2fx".format(picked)}"
+                    )
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Per-podcast default-speed picker. Same six values as the Player speed chip
+ * (so the user has one mental model for "valid speeds"), plus a "Clear"
+ * action that nulls out the override and reverts to 1.00x.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun DefaultSpeedDialog(
+    current: Float?,
+    onDismiss: () -> Unit,
+    onPick: (Float?) -> Unit
+) {
+    val choices = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Default speed for this podcast") },
+        text = {
+            Column {
+                Text(
+                    "Applied automatically every time you start an episode of this podcast. Set independently per show.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    choices.forEach { v ->
+                        val active = current != null && kotlin.math.abs(v - current) < 0.01f
+                        FilterChip(
+                            selected = active,
+                            onClick = { onPick(v) },
+                            label = { Text("%.2fx".format(v)) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onPick(null) }, enabled = current != null) {
+                Text("Clear override")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
 }
 
 @Composable
@@ -269,6 +401,8 @@ private fun EpisodeRow(
     onToggleDownload: () -> Unit,
     onToggleQueue: () -> Unit,
     onToggleArchive: () -> Unit,
+    onMarkPlayed: () -> Unit,
+    onMarkUnplayed: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val isArchived = state.archivedAt > 0
@@ -399,6 +533,43 @@ private fun EpisodeRow(
                 }
                 IconButton(onClick = onShare) {
                     Icon(Icons.Filled.Share, contentDescription = "Share raw link")
+                }
+                // Per-row overflow — currently only "Mark played/unplayed."
+                // Future per-episode "soft" actions land here so the visible
+                // button row stays focused on the high-frequency actions.
+                Box {
+                    var moreOpen by remember { mutableStateOf(false) }
+                    IconButton(onClick = { moreOpen = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "More",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = moreOpen,
+                        onDismissRequest = { moreOpen = false }
+                    ) {
+                        if (isPlayed) {
+                            DropdownMenuItem(
+                                text = { Text("Mark as unplayed") },
+                                onClick = {
+                                    moreOpen = false
+                                    onMarkUnplayed()
+                                },
+                                leadingIcon = { Icon(Icons.Filled.Replay, null) }
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text("Mark as played") },
+                                onClick = {
+                                    moreOpen = false
+                                    onMarkPlayed()
+                                },
+                                leadingIcon = { Icon(Icons.Filled.CheckCircle, null) }
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 HeartTierButton(tier = state.favoriteTier, onCycle = onCycleHeart)
