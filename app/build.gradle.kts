@@ -127,4 +127,7 @@ dependencies {
 
     // --- Documentfile for SAF helpers ---
     implementation("androidx.documentfile:documentfile:1.0.1")
+
+    // --- WorkManager (auto-backup scheduler) ---
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

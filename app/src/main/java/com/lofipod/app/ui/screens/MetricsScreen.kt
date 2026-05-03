@@ -75,8 +75,11 @@ fun MetricsScreen(onBack: () -> Unit) {
                     val notes = if (exportIncludeNotes)
                         app.db.episodeNoteEntryDao().getAll() else emptyList()
                     val checkpoints = app.db.playbackCheckpointDao().getAll()
+                    val podcastStates = app.db.podcastStateDao().getAll()
                     val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
-                    Backup.export(episodes, notes, checkpoints, pkg.versionName ?: "?")
+                    Backup.export(
+                        episodes, notes, checkpoints, podcastStates, pkg.versionName ?: "?"
+                    )
                 }
                 withContext(Dispatchers.IO) {
                     ctx.contentResolver.openOutputStream(uri)?.use { out ->

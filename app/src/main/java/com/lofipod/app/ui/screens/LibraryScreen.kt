@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -50,7 +51,8 @@ fun LibraryScreen(
     onOpenNotes: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenNowPlaying: () -> Unit,
-    onOpenHistory: () -> Unit
+    onOpenHistory: () -> Unit,
+    onOpenSearch: () -> Unit
 ) {
     val vm: LibraryViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -146,6 +148,11 @@ fun LibraryScreen(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("Search episodes") },
+                                onClick = { menuExpanded = false; onOpenSearch() },
+                                leadingIcon = { Icon(Icons.Filled.Search, null) }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Playback history") },
                                 onClick = { menuExpanded = false; onOpenHistory() },

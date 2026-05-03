@@ -104,6 +104,9 @@ class PodcastRepository(
 
     fun cached(feedUrl: String): Podcast? = cache[feedUrl]
 
+    /** Snapshot of every currently-cached podcast. Used by EpisodeSearchScreen. */
+    fun allCached(): List<Podcast> = cache.values.toList()
+
     companion object {
         /**
          * Standard browser-ish UA. Some podcast hosts (mod_security-fronted ones)

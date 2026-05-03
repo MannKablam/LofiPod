@@ -120,6 +120,12 @@ interface PlaybackCheckpointDao {
             ")"
     )
     suspend fun pruneToCount(keepCount: Int)
+
+    @Query("DELETE FROM playback_checkpoint")
+    suspend fun clear()
+
+    @Query("SELECT COUNT(*) FROM playback_checkpoint")
+    suspend fun count(): Int
 }
 
 @Dao
@@ -214,6 +220,30 @@ interface FeedVisitDao {
     suspend fun seedIfMissing(feedUrl: String, ts: Long)
 }
 
+@Dao
+interface PodcastStateDao {
+
+    @Query("SELECT * FROM podcast_state WHERE feedUrl = :feedUrl LIMIT 1")
+    suspend fun get(feedUrl: String): PodcastStateEntity?
+
+    @Query("SELECT * FROM podcast_state WHERE feedUrl = :feedUrl LIMIT 1")
+    fun observe(feedUrl: String): Flow<PodcastStateEntity?>
+
+    @Query("SELECT * FROM podcast_state")
+    suspend fun getAll(): List<PodcastStateEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(state: PodcastStateEntity)
+
+    /**
+     * Set [defaultSpeed] for [feedUrl], creating the row if it doesn't exist
+     * yet. Two-step (upsert + update) so the per-podcast default-speed UI
+     * doesn't need to know whether a row exists first.
+     */
+    @Query("UPDATE podcast_state SET defaultSpeed = :speed WHERE feedUrl = :feedUrl")
+    suspend fun setDefaultSpeed(feedUrl: String, speed: Float?)
+}
+
 @Database(
     entities = [
         EpisodeStateEntity::class,
@@ -221,9 +251,10 @@ interface FeedVisitDao {
         EpisodeNoteEntryEntity::class,
         PlaybackCheckpointEntity::class,
         QueueEntryEntity::class,
-        FeedVisitEntity::class
+        FeedVisitEntity::class,
+        PodcastStateEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -233,6 +264,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun playbackCheckpointDao(): PlaybackCheckpointDao
     abstract fun queueEntryDao(): QueueEntryDao
     abstract fun feedVisitDao(): FeedVisitDao
+    abstract fun podcastStateDao(): PodcastStateDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -343,6 +375,25 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v10 → v11: podcast_state table for per-podcast user prefs.
+         * defaultSpeed nullable — null means "no override, use 1.0x";
+         * an explicit 1.0 is the user's choice and remains their choice
+         * even if the global default is ever changed.
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS podcast_state (
+                        feedUrl TEXT NOT NULL PRIMARY KEY,
+                        defaultSpeed REAL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
          * v6 → v7: replace 1-5 star [rating] + [isFavorite] boolean with a single
          * [favoriteTier] int (0 none / 1 Excellent / 2 Most-excellent). SQLite can't
          * drop columns directly, so we recreate the table. Backfill rule:
@@ -418,7 +469,7 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10, MIGRATION_10_11
                     )
                     .build().also { instance = it }
             }

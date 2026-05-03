@@ -2,6 +2,8 @@
 
 package com.lofipod.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -132,6 +134,20 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(20.dp))
+            SectionHeader("Data")
+            AutoBackupRow()
+            Spacer(Modifier.height(8.dp))
+            ClearHistoryRow(
+                onConfirm = {
+                    scope.launch {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            app.db.playbackCheckpointDao().clear()
+                        }
+                    }
+                }
+            )
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("About")
             Text(
                 "LofiPod — a personal-canon podcast app. Backups + restore live " +
@@ -170,6 +186,202 @@ private fun SwitchRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+/**
+ * Auto-backup setup row. Picks a SAF tree (folder) and a periodic interval;
+ * the BackupWorker writes a single overwriting file inside that tree on
+ * schedule. The "Back up now" button enqueues an immediate one-shot run via
+ * the same worker class for parity. Status line shows the last successful
+ * backup so the user can sanity-check that scheduled runs are happening.
+ */
+@Composable
+private fun AutoBackupRow() {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
+    val settings = remember { com.lofipod.app.data.Settings(app) }
+    val scope = rememberCoroutineScope()
+    val treeUri by settings.backupTreeUri.collectAsState(initial = null)
+    val intervalHours by settings.backupIntervalHours.collectAsState(initial = 0)
+    val lastSuccess by settings.backupLastSuccessAt.collectAsState(initial = 0L)
+
+    val pickFolder = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        // Persist read+write so the worker can write later. Without this the
+        // permission is only valid for the duration of this Activity.
+        ctx.contentResolver.takePersistableUriPermission(
+            uri,
+            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        scope.launch { settings.setBackupTreeUri(uri.toString()) }
+    }
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text("Auto-backup", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "Writes a single overwriting JSON file (\"lofipod-backup-latest.json\") to the folder you pick. Each run replaces the previous file. Use the manual Export in Metrics for dated copies.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // Folder row
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Folder",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    treeUri?.let { shortTreeLabel(it) } ?: "(none picked)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1
+                )
+            }
+            TextButton(onClick = { pickFolder.launch(null) }) {
+                Text(if (treeUri == null) "Pick" else "Change")
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Interval picker — chips
+        Text(
+            "Interval",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        val intervals = listOf(0 to "Off", 6 to "6 hr", 12 to "12 hr", 24 to "Daily", 168 to "Weekly")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            intervals.forEach { (h, label) ->
+                FilterChip(
+                    selected = intervalHours == h,
+                    onClick = {
+                        scope.launch {
+                            settings.setBackupIntervalHours(h)
+                            com.lofipod.app.data.BackupWorker.schedule(app, h)
+                        }
+                    },
+                    label = { Text(label) },
+                    enabled = treeUri != null || h == 0
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (lastSuccess > 0) "Last backup: ${formatBackupTime(lastSuccess)}"
+                else "No backup written yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        // Manual one-off run via the same worker class — kept
+                        // separate from the periodic schedule so triggering
+                        // "Back up now" doesn't reset the periodic clock.
+                        val req = androidx.work.OneTimeWorkRequestBuilder<
+                            com.lofipod.app.data.BackupWorker>().build()
+                        androidx.work.WorkManager.getInstance(app)
+                            .enqueueUniqueWork(
+                                "lofipod-auto-backup-now",
+                                androidx.work.ExistingWorkPolicy.REPLACE,
+                                req
+                            )
+                    }
+                },
+                enabled = treeUri != null
+            ) { Text("Back up now") }
+        }
+    }
+}
+
+/** "tree:/path/...:Music" → "Music" — short tail label for the folder UI. */
+private fun shortTreeLabel(uriString: String): String {
+    return try {
+        val u = android.net.Uri.parse(uriString)
+        val last = u.lastPathSegment ?: return uriString
+        last.substringAfterLast('/').substringAfterLast(':').ifBlank { last }
+    } catch (_: Exception) {
+        uriString
+    }
+}
+
+private fun formatBackupTime(ts: Long): String {
+    val sdf = java.text.SimpleDateFormat("MMM d, h:mm a", java.util.Locale.getDefault())
+    return sdf.format(java.util.Date(ts))
+}
+
+/**
+ * "Clear playback history" row with confirm dialog. Shows the live count so
+ * the user knows what they're about to erase. Wipes only the checkpoints
+ * (jump-from / session-end / promotion records); per-episode position and
+ * favorite tier are preserved.
+ */
+@Composable
+private fun ClearHistoryRow(onConfirm: () -> Unit) {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
+    var count by remember { mutableStateOf<Int?>(null) }
+    var dialogOpen by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    suspend fun refresh() {
+        count = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.db.playbackCheckpointDao().count()
+        }
+    }
+    LaunchedEffect(Unit) { refresh() }
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Clear playback history", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                count?.let {
+                    "$it checkpoint${if (it == 1) "" else "s"} stored. Position + favorites are preserved."
+                } ?: "Position + favorites are preserved.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(
+            onClick = { dialogOpen = true },
+            enabled = (count ?: 0) > 0
+        ) { Text("Clear") }
+    }
+
+    if (dialogOpen) {
+        AlertDialog(
+            onDismissRequest = { dialogOpen = false },
+            title = { Text("Clear playback history?") },
+            text = {
+                Text(
+                    "Erases all ${count ?: 0} checkpoints — jump-from records, session-end snapshots, and most-excellent promotions. Your saved positions and favorites stay intact."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onConfirm()
+                    dialogOpen = false
+                    scope.launch { refresh() }
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { dialogOpen = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 

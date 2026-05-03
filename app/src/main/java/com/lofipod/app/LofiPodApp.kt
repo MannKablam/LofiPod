@@ -3,10 +3,17 @@ package com.lofipod.app
 import android.app.Application
 import coil.Coil
 import coil.ImageLoader
+import com.lofipod.app.data.BackupWorker
 import com.lofipod.app.data.DownloadHolder
 import com.lofipod.app.data.Downloads
 import com.lofipod.app.data.PodcastRepository
+import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.AppDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 class LofiPodApp : Application() {
@@ -44,6 +51,16 @@ class LofiPodApp : Application() {
                 .crossfade(true)
                 .build()
         )
+
+        // Re-arm the backup worker with the persisted interval. Necessary
+        // because WorkManager's enqueued schedules don't survive an
+        // uninstall — and even between launches, calling schedule() with the
+        // same params is a no-op (UPDATE policy), so it's safe to do every
+        // time.
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            val hours = Settings(this@LofiPodApp).backupIntervalHours.first()
+            BackupWorker.schedule(this@LofiPodApp, hours)
+        }
     }
 
     companion object {

@@ -19,19 +19,30 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
 import com.lofipod.app.audio.EqPresets
 import com.lofipod.app.audio.PresetId
+import com.lofipod.app.audio.SilenceSkippingProcessor
+import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     val eq: EqAudioProcessor = PlaybackService.sharedEq
+    val skipSilence: SilenceSkippingProcessor = PlaybackService.sharedSkipSilence
     val playerState by controller.state.collectAsState()
+    val app = LocalContext.current.applicationContext as LofiPodApp
+    val settings = remember { Settings(app) }
+    val persistedSkipLevel by settings.skipSilenceLevel.collectAsState(initial = skipSilence.currentLevel())
+    val composeScope = rememberCoroutineScope()
 
     var bands by remember { mutableStateOf(eq.currentBands()) }
     var gainDb by remember { mutableStateOf(eq.currentGainDb()) }
@@ -145,6 +156,31 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(20.dp))
 
+            // ---- Skip silence ----
+            Text("Skip silence", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Trims pauses out of voice content. L1 catches dead-air only; L3 tightens conversational gaps. Default off.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            StagedLevelButton(
+                currentLevel = persistedSkipLevel,
+                maxLevel = 3,
+                onCycle = {
+                    val next = (persistedSkipLevel + 1) % (3 + 1)
+                    skipSilence.setLevel(next)
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setSkipSilenceLevel(next) }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                offLabel = "Skip silence: Off",
+                onLabelPrefix = "Skip silence",
+            )
+            Spacer(Modifier.height(20.dp))
+
             Text("Presets", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             // Flat sits alone up top as the "reset" affordance. The five
@@ -195,6 +231,62 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                     activeLevel = 0
                 }
             }
+        }
+    }
+}
+
+/**
+ * Generic staged button — same vertical-slice visual language as [PresetButton]
+ * but for a single named control with [maxLevel] stages. Tap cycles
+ * 0 → 1 → ... → maxLevel → 0. Used for the Skip-silence row so it reads as
+ * the same family of "discrete level" controls as the EQ presets.
+ */
+@Composable
+private fun StagedLevelButton(
+    currentLevel: Int,
+    maxLevel: Int,
+    onCycle: () -> Unit,
+    modifier: Modifier = Modifier,
+    offLabel: String,
+    onLabelPrefix: String,
+) {
+    val colors = MaterialTheme.colorScheme
+    val isActive = currentLevel > 0
+    val fillColor = colors.primary
+    val emptyColor = colors.surfaceVariant
+    Box(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, colors.outline.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onCycle)
+    ) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            for (i in 0 until maxLevel) {
+                val lit = i < currentLevel
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(if (lit) fillColor else emptyColor)
+                )
+                if (i < maxLevel - 1) {
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(colors.outline.copy(alpha = 0.3f))
+                    )
+                }
+            }
+        }
+        val labelColor = if (isActive) colors.onPrimary else colors.onSurfaceVariant
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                if (currentLevel == 0) offLabel else "$onLabelPrefix: L$currentLevel",
+                color = labelColor,
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
     }
 }
