@@ -23,13 +23,15 @@ Bundle of small refinements; nothing destructive.
 >
 > **Bootstrap (one time)**: GitHub → Actions → "Bootstrap signing keystore"
 > → Run workflow. The job:
->   1. generates a strong random password,
+>   1. picks the password — uses an existing `LOFIPOD_KEYSTORE_PASSWORD`
+>      repo secret if you've pre-set one (so you can pick a memorable
+>      phrase yourself), otherwise generates a strong random one,
 >   2. runs `app/generate-keystore.sh` with it (CI runners have JDK
 >      pre-installed, so `keytool` works), and
 >   3. uploads two separate artifacts: `lofipod-dev-keystore`
 >      (the .jks file, 7-day retention) and `lofipod-dev-keystore-password`
->      (a text file containing the password + setup instructions, 1-day
->      retention so it doesn't sit around).
+>      (a text file with the password if generated + setup instructions
+>      either way, 1-day retention so it doesn't sit around).
 >
 > **Then, in this order**:
 >   1. Download the password artifact, save the password to a password
