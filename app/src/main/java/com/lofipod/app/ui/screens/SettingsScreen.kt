@@ -39,6 +39,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
     val autoPlayNextInFeed by settings.autoPlayNextInFeed.collectAsState(initial = true)
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
+    val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val textScale by settings.textScale.collectAsState(initial = 1.0f)
 
     Scaffold(
@@ -90,6 +91,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                 subtitle = "Already-finished episodes stay visible (dimmed and " +
                     "struck through) instead of disappearing from the per-podcast list.",
                 onCheckedChange = { v -> scope.launch { settings.setShowPlayedInList(v) } }
+            )
+
+            Spacer(Modifier.height(8.dp))
+            AutoArchiveRow(
+                value = autoArchiveDays,
+                onChange = { v -> scope.launch { settings.setAutoArchiveDays(v) } }
             )
 
             Spacer(Modifier.height(20.dp))
@@ -162,6 +169,43 @@ private fun SwitchRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+/**
+ * Auto-archive horizon picker. Discrete chips for the common windows
+ * (off / 1 / 3 / 7 / 30 days). Subtitle explains exactly what gets swept —
+ * the sweep targets *finished* episodes only, in-progress ones never
+ * disappear regardless of this setting.
+ */
+@Composable
+private fun AutoArchiveRow(value: Int, onChange: (Int) -> Unit) {
+    val choices = listOf(0, 1, 3, 7, 30)
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text("Auto-archive played episodes after", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "Finished episodes (>95% played) move to the archive after the chosen window. In-progress episodes never auto-archive. \"Off\" disables the sweep entirely.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            choices.forEach { days ->
+                FilterChip(
+                    selected = value == days,
+                    onClick = { onChange(days) },
+                    label = {
+                        Text(
+                            when (days) {
+                                0 -> "Off"
+                                1 -> "1 day"
+                                else -> "$days days"
+                            }
+                        )
+                    }
+                )
+            }
         }
     }
 }
