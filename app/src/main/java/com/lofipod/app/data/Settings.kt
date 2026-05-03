@@ -3,6 +3,7 @@ package com.lofipod.app.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -86,6 +87,20 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * How many days a *played* episode lingers in the per-podcast list before
+     * the auto-archive sweep moves it to the archive. 0 = off (never
+     * auto-archive). Default 3 days, matching the original hardcoded constant.
+     * Only finished episodes get swept; in-progress ones never auto-archive
+     * regardless of this setting.
+     */
+    val autoArchiveDays: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_AUTO_ARCHIVE_DAYS] ?: 3).coerceAtLeast(0) }
+
+    suspend fun setAutoArchiveDays(days: Int) {
+        context.dataStore.edit { it[KEY_AUTO_ARCHIVE_DAYS] = days.coerceAtLeast(0) }
+    }
+
+    /**
      * Selected visual direction. Default Cassette (the original look).
      * Old color-only theme names from before the direction overhaul map to
      * Cassette so existing installs keep working.
@@ -113,6 +128,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
         private val KEY_SHOW_PLAYED =
             androidx.datastore.preferences.core.booleanPreferencesKey("show_played_in_list")
+        private val KEY_AUTO_ARCHIVE_DAYS =
+            androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
     }
 }
 

@@ -29,9 +29,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -277,6 +277,11 @@ private fun MiniPlayer(
 ) {
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
+    // While the user is dragging the scrubber, freeze the displayed value at
+    // [dragFraction]. Reset to null once the drag finishes (and we've seeked).
+    // Without this, the live position-poll loop would yank the thumb back to
+    // the actual player position mid-drag, fighting the user's finger.
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
 
     LaunchedEffect(state.isPlaying, state.currentEpisodeGuid) {
         while (true) {
@@ -312,18 +317,29 @@ private fun MiniPlayer(
                             maxLines = 1
                         )
                     }
+                    val displayPosMs = dragFraction?.let { (it * durationMs).toLong() }
+                        ?: positionMs
                     Text(
-                        "${formatMiniTime(positionMs)} / ${formatMiniTime(durationMs)}",
+                        "${formatMiniTime(displayPosMs)} / ${formatMiniTime(durationMs)}",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
             }
-            Spacer(Modifier.height(4.dp))
-            LinearProgressIndicator(
-                progress = { if (durationMs > 0) positionMs.toFloat() / durationMs else 0f },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
+            // Draggable scrubber. Slider's intrinsic touch target is ~48 dp
+            // tall — that's intentional, lets the user grab + drag without
+            // pixel-precise aim. The parent Card's onClick still fires when
+            // the user taps anywhere outside the slider's hit region.
+            val liveFraction = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
+            Slider(
+                value = (dragFraction ?: liveFraction).coerceIn(0f, 1f),
+                onValueChange = { dragFraction = it },
+                onValueChangeFinished = {
+                    dragFraction?.let { f ->
+                        if (durationMs > 0) controller.seekTo((f * durationMs).toLong())
+                    }
+                    dragFraction = null
+                },
+                modifier = Modifier.fillMaxWidth()
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),

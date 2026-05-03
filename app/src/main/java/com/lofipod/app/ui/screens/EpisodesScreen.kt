@@ -31,10 +31,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Auto-archive horizon. Played episodes whose lastPlayedMillis is older than
- *  this get swept into the archive on EpisodesScreen open. */
-private const val AUTO_ARCHIVE_MS = 3L * 24 * 3600 * 1000  // 3 days
-
 /** UI snapshot of one episode's persisted state. */
 private data class EpisodeUiState(
     val favoriteTier: Int = 0,
@@ -63,24 +59,32 @@ fun EpisodesScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val settings = remember { com.lofipod.app.data.Settings(app) }
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
+    val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
 
     // Sweep + load. Auto-archive runs every time the screen is entered (cheap —
     // single indexed query). Then we hydrate per-episode state into the map.
-    LaunchedEffect(pod) {
+    // [autoArchiveDays] in the key list re-runs the sweep if the user changes
+    // the horizon while staying on the screen.
+    LaunchedEffect(pod, autoArchiveDays) {
         if (pod == null) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             val dao = app.db.episodeStateDao()
-            val cutoff = System.currentTimeMillis() - AUTO_ARCHIVE_MS
-            val eligible = dao.guidsEligibleForAutoArchive(feedUrl, cutoff)
-            if (eligible.isNotEmpty()) {
-                dao.bulkArchive(eligible, System.currentTimeMillis())
-                // Archived episodes don't need their downloads taking up disk.
-                val haveDownloads = app.downloadsApi.byId.value.keys
-                for (g in eligible) {
-                    if (g in haveDownloads) app.downloadsApi.remove(g)
+            // 0 days = "off" — skip the sweep entirely. Otherwise the cutoff
+            // is now minus N days (matched to lastPlayedMillis).
+            if (autoArchiveDays > 0) {
+                val cutoff = System.currentTimeMillis() -
+                    autoArchiveDays.toLong() * 24L * 3600L * 1000L
+                val eligible = dao.guidsEligibleForAutoArchive(feedUrl, cutoff)
+                if (eligible.isNotEmpty()) {
+                    dao.bulkArchive(eligible, System.currentTimeMillis())
+                    // Archived episodes don't need their downloads taking up disk.
+                    val haveDownloads = app.downloadsApi.byId.value.keys
+                    for (g in eligible) {
+                        if (g in haveDownloads) app.downloadsApi.remove(g)
+                    }
                 }
             }
             for (ep in pod.episodes) {

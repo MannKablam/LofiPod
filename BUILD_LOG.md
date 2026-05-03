@@ -2,6 +2,12 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## History grouping/filter, auto-archive setting, draggable mini-player scrubber
+
+- **History screen**: rows now bucket under day headers (Today / Yesterday / "Mon, Apr 28"), and a row of filter chips at top scopes by reason (All / Promotions / Jumps / Sessions). Each chip carries its own count, and the screen distinguishes "no checkpoints exist yet" from "no checkpoints in this category" with different empty-states. Adjacent-row reason icon (heart / undo / stop) gives a glanceable cue without reading the label.
+- **Auto-archive horizon as a setting**: the previously hardcoded 3-day window in `EpisodesScreen.AUTO_ARCHIVE_MS` is now `Settings.autoArchiveDays` (DataStore int, default 3). Surfaced in Settings → Playback as a chip row (Off / 1 / 3 / 7 / 30 days). 0 = sweep skipped entirely. The `LaunchedEffect` in `EpisodesScreen` keys on the value so changing it re-runs the sweep without leaving the screen. Only finished episodes are eligible regardless of the setting — in-progress episodes never auto-archive.
+- **Mini-player draggable scrubber**: replaced the read-only `LinearProgressIndicator` with a real `Slider`. Local drag state holds the thumb under the user's finger while the live position-poll keeps updating in the background; release commits a single `seekTo`. Position label flips to the dragged value during drag so the user has a numeric preview. Slider's intrinsic ~48 dp touch target adds some vertical real estate to the mini-player but is the right call — seek-anywhere from anywhere in the app is muscle-memory worth paying for.
+
 ## Bluetooth audio + most-excellent-as-checkpoint + Player/Settings/Library polish
 
 Bundle of small refinements; nothing destructive.
