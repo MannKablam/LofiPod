@@ -20,6 +20,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build
+        # LOFIPOD_KEYSTORE_PASSWORD is the secret you set after running the
+        # bootstrap-keystore workflow. When unset (e.g. on a fork without the
+        # secret, or before bootstrap), the gradle script falls back to AGP's
+        # default debug signing and the build still succeeds — it just won't
+        # be installable in-place over an existing version.
+        env:
+          LOFIPOD_KEYSTORE_PASSWORD: ${{ secrets.LOFIPOD_KEYSTORE_PASSWORD }}
         run: gradle assembleDebug --stacktrace --no-daemon
 
       - name: Upload APK
