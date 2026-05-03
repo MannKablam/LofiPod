@@ -11,3 +11,6 @@ app/release/
 *.apk
 *.aab
 .kotlin/
+
+# Personal notes / cheat sheets — kept on disk, not shared.
+SCREEN_MAP.md
