@@ -14,25 +14,48 @@ Bundle of small refinements; nothing destructive.
 
 ## Stable signing key for sideload updates
 
-> **Alternate route added 2026-05-02**: a one-shot
-> `.github/workflows/bootstrap-keystore.yml` workflow runs the generator on a
-> CI runner (which has the JDK + `keytool` installed) and uploads
-> `lofipod-dev.jks` as an artifact. To use it: GitHub → Actions → "Bootstrap
-> signing keystore" → Run workflow → wait → download the artifact → drop
-> `lofipod-dev.jks` into `app/` → `git add app/lofipod-dev.jks && git commit
-> -m "Add stable sideload signing key" && git push`. From then on every CI
-> build (and every local build, if a JDK ever lands on the desktop) signs
-> with the same cert, and APK updates install in place — no uninstall.
+> **Hardened 2026-05-02**: the keystore password is no longer baked into the
+> repo. It now lives in the `LOFIPOD_KEYSTORE_PASSWORD` env var (CI injects
+> it from a GitHub Actions secret of the same name; the user keeps a copy
+> in their password manager). The keystore file `app/lofipod-dev.jks` is
+> still committed — that's how every machine gets the same cert — but
+> without the password, the file is useless to anyone who clones the repo.
+>
+> **Bootstrap (one time)**: GitHub → Actions → "Bootstrap signing keystore"
+> → Run workflow. The job:
+>   1. generates a strong random password,
+>   2. runs `app/generate-keystore.sh` with it (CI runners have JDK
+>      pre-installed, so `keytool` works), and
+>   3. uploads two separate artifacts: `lofipod-dev-keystore`
+>      (the .jks file, 7-day retention) and `lofipod-dev-keystore-password`
+>      (a text file containing the password + setup instructions, 1-day
+>      retention so it doesn't sit around).
+>
+> **Then, in this order**:
+>   1. Download the password artifact, save the password to a password
+>      manager.
+>   2. Add it as a repo secret named `LOFIPOD_KEYSTORE_PASSWORD` (GitHub →
+>      Settings → Secrets and variables → Actions → New repository secret).
+>   3. Download the keystore artifact, drop `lofipod-dev.jks` into `app/`,
+>      `git add app/lofipod-dev.jks && git commit && git push`.
 >
 > **One last forced uninstall** still applies: the currently-installed APK
-> on your device is signed with whatever per-runner keystore CI was using
-> before. Uninstall once after the first build with the committed keystore;
-> from then on every sideload just updates in place and your DB / preferences
-> / downloads are preserved.
+> on the device is signed with whatever per-runner keystore CI was using
+> before. Uninstall once after the first build with the committed keystore +
+> secret; from then on every sideload installs in place and the Room DB +
+> DataStore + downloads are preserved.
+>
+> **What happens without the secret**: the gradle config detects a missing
+> `LOFIPOD_KEYSTORE_PASSWORD` and falls back to AGP's default debug signing
+> — so forks, accidental missing-secret runs, and quick local-compile
+> sanity checks still build cleanly. They just won't be installable in
+> place over a stably-signed APK.
 >
 > **Original local-keytool path** (still works if you ever install Android
-> Studio): `cd app && bash generate-keystore.sh && git add lofipod-dev.jks
-> && git commit -m "Add stable sideload signing key"`.
+> Studio):
+>   `export LOFIPOD_KEYSTORE_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"`
+>   `cd app && bash generate-keystore.sh`
+>   then save the env var to your password manager + repo secret as above.
 
 Adds a repo-tracked signing config so re-installing a new build over an
 existing install **preserves your data** instead of forcing an uninstall.
