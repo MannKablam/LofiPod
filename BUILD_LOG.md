@@ -14,13 +14,25 @@ Bundle of small refinements; nothing destructive.
 
 ## Stable signing key for sideload updates
 
-> **TODO — circle back ~2026-05-16** (≈ 2 weeks from 2026-05-02). The gradle
-> wiring + generator script are in place but the keystore itself hasn't been
-> generated yet (no `keytool` on this Git Bash shell). When back at the
-> desktop, run the steps under "One-time setup" below and commit the
-> resulting `app/lofipod-dev.jks`. Until then, builds fall back to AGP's
-> default debug signing — so the "uninstall to update" pain is still present
-> but the project still builds cleanly.
+> **Alternate route added 2026-05-02**: a one-shot
+> `.github/workflows/bootstrap-keystore.yml` workflow runs the generator on a
+> CI runner (which has the JDK + `keytool` installed) and uploads
+> `lofipod-dev.jks` as an artifact. To use it: GitHub → Actions → "Bootstrap
+> signing keystore" → Run workflow → wait → download the artifact → drop
+> `lofipod-dev.jks` into `app/` → `git add app/lofipod-dev.jks && git commit
+> -m "Add stable sideload signing key" && git push`. From then on every CI
+> build (and every local build, if a JDK ever lands on the desktop) signs
+> with the same cert, and APK updates install in place — no uninstall.
+>
+> **One last forced uninstall** still applies: the currently-installed APK
+> on your device is signed with whatever per-runner keystore CI was using
+> before. Uninstall once after the first build with the committed keystore;
+> from then on every sideload just updates in place and your DB / preferences
+> / downloads are preserved.
+>
+> **Original local-keytool path** (still works if you ever install Android
+> Studio): `cd app && bash generate-keystore.sh && git add lofipod-dev.jks
+> && git commit -m "Add stable sideload signing key"`.
 
 Adds a repo-tracked signing config so re-installing a new build over an
 existing install **preserves your data** instead of forcing an uninstall.
