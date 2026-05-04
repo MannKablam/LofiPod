@@ -95,6 +95,12 @@ class PlayerController(private val context: Context) {
         scope.cancel()
     }
 
+    /** Sticky error from the last [Player.Listener.onPlayerError] call.
+     *  Cleared by [pushState] when the player transitions back to a healthy
+     *  state (BUFFERING or READY) — error chips disappear automatically once
+     *  the user retries successfully. */
+    @Volatile private var lastError: String? = null
+
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = pushState()
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -105,12 +111,30 @@ class PlayerController(private val context: Context) {
             mediaItem?.mediaId?.let { applyEqOverrideFor(it) }
         }
         override fun onPlaybackStateChanged(playbackState: Int) {
+            // Healthy transition clears the sticky error so the chip goes
+            // away once the player recovers.
+            if (playbackState == Player.STATE_BUFFERING ||
+                playbackState == Player.STATE_READY) {
+                lastError = null
+            }
             pushState()
             if (playbackState == Player.STATE_ENDED) {
                 // Remove the just-finished episode from the queue and auto-advance.
                 val finishedGuid = controller?.currentMediaItem?.mediaId
                 scope.launch { advanceToNextInQueue(finishedGuid) }
             }
+        }
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Surface a short, human-readable message. ExoPlayer's
+            // PlaybackException.errorCodeName is stable across versions and
+            // prints things like "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED" —
+            // that's actionable for the user (network) without dragging in
+            // a full stack trace.
+            lastError = error.errorCodeName.removePrefix("ERROR_CODE_")
+                .replace('_', ' ')
+                .lowercase()
+                .replaceFirstChar { it.uppercase() }
+            pushState()
         }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
         // The next two fire as the MediaController syncs its state from a
@@ -139,6 +163,11 @@ class PlayerController(private val context: Context) {
         _state.value = PlayerState(
             isPlaying = c.isPlaying,
             isReady = c.playbackState == Player.STATE_READY,
+            // Buffering counts only when we WANT to play (playWhenReady). A
+            // paused player may also pass through BUFFERING but we shouldn't
+            // surface a "Buffering…" indicator to the user in that case.
+            isBuffering = c.playbackState == Player.STATE_BUFFERING && c.playWhenReady,
+            errorMessage = lastError,
             currentTitle = c.mediaMetadata.title?.toString(),
             currentArtist = c.mediaMetadata.artist?.toString(),
             currentArtworkUri = c.mediaMetadata.artworkUri?.toString(),
@@ -267,12 +296,44 @@ class PlayerController(private val context: Context) {
         }
     }
 
+    /**
+     * Smart play/pause toggle. Plain `c.play()` is a no-op when the player
+     * is in STATE_IDLE (no prepare yet) or STATE_ENDED (cursor parked at
+     * end-of-stream) — that's the "tap Play, nothing happens" symptom.
+     * Handle those explicitly:
+     *   - IDLE   → re-prepare, then play (recovers from a failed initial
+     *              prepare or a release-but-don't-clear cycle).
+     *   - ENDED  → seek to 0, then play (replays the same episode from
+     *              the start; matches what every other media player does
+     *              when you tap Play on a finished item).
+     *   - else   → standard pause/play toggle.
+     */
     fun togglePlay() {
         val c = controller ?: return
-        if (c.isPlaying) c.pause() else c.play()
+        when {
+            c.isPlaying -> c.pause()
+            c.playbackState == Player.STATE_IDLE -> {
+                c.prepare()
+                c.play()
+            }
+            c.playbackState == Player.STATE_ENDED -> {
+                c.seekTo(0)
+                c.play()
+            }
+            else -> c.play()
+        }
     }
 
-    fun play() { controller?.play() }
+    fun play() {
+        val c = controller ?: return
+        // Same recovery logic as togglePlay's play branch — a bare
+        // `c.play()` is a no-op in IDLE / ENDED.
+        when (c.playbackState) {
+            Player.STATE_IDLE -> { c.prepare(); c.play() }
+            Player.STATE_ENDED -> { c.seekTo(0); c.play() }
+            else -> c.play()
+        }
+    }
     fun pause() { controller?.pause() }
 
     /**
@@ -543,6 +604,19 @@ class PlayerController(private val context: Context) {
 data class PlayerState(
     val isPlaying: Boolean = false,
     val isReady: Boolean = false,
+    /**
+     * True when the player is in STATE_BUFFERING with playWhenReady=true.
+     * Lets the UI show a "Buffering…" indicator so the user knows playback
+     * is trying rather than silently broken.
+     */
+    val isBuffering: Boolean = false,
+    /**
+     * Most recent ExoPlayer error message, if any. Cleared on the next
+     * successful state transition (BUFFERING / READY) so a transient failure
+     * doesn't stick around forever. Surfaced in the player UI as a chip
+     * with a Retry button.
+     */
+    val errorMessage: String? = null,
     val currentTitle: String? = null,
     val currentArtist: String? = null,
     val currentArtworkUri: String? = null,

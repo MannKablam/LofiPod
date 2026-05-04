@@ -412,33 +412,45 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(16.dp))
                     }
-                    FilledIconButton(
-                        onClick = {
-                            if (isPreview) {
-                                // Promote preview → live. Same call path the
-                                // EpisodeRow's Play button uses, so checkpoint
-                                // recording, queue interactions, etc. all
-                                // behave identically.
-                                previewData?.let { pd ->
-                                    controller.playEpisode(
-                                        ep = pd.episode,
-                                        podcastTitle = pd.podcast?.title ?: "",
-                                        podcastArt = pd.podcast?.artworkUrl,
-                                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        FilledIconButton(
+                            onClick = {
+                                if (isPreview) {
+                                    // Promote preview → live. Same call path the
+                                    // EpisodeRow's Play button uses, so checkpoint
+                                    // recording, queue interactions, etc. all
+                                    // behave identically.
+                                    previewData?.let { pd ->
+                                        controller.playEpisode(
+                                            ep = pd.episode,
+                                            podcastTitle = pd.podcast?.title ?: "",
+                                            podcastArt = pd.podcast?.artworkUrl,
+                                        )
+                                    }
+                                } else {
+                                    controller.togglePlay()
                                 }
-                            } else {
-                                controller.togglePlay()
-                            }
-                        },
-                        modifier = Modifier.size(88.dp),
-                        enabled = !isPreview || previewData != null,
-                    ) {
-                        Icon(
-                            if (state.isPlaying && !isPreview) Icons.Filled.Pause
-                            else Icons.Filled.PlayArrow,
-                            contentDescription = if (isPreview) "Play" else "Play/Pause",
-                            modifier = Modifier.size(48.dp)
-                        )
+                            },
+                            modifier = Modifier.size(88.dp),
+                            enabled = !isPreview || previewData != null,
+                        ) {
+                            Icon(
+                                if (state.isPlaying && !isPreview) Icons.Filled.Pause
+                                else Icons.Filled.PlayArrow,
+                                contentDescription = if (isPreview) "Play" else "Play/Pause",
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
+                        // Buffering ring — drawn on top of the play button when
+                        // the player is in BUFFERING with playWhenReady=true. Tells
+                        // the user "I heard your tap, I'm trying" rather than
+                        // letting them wonder if the button is dead.
+                        if (state.isBuffering && !isPreview) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(88.dp),
+                                strokeWidth = 3.dp,
+                            )
+                        }
                     }
                     if (!isPreview) {
                         Spacer(Modifier.width(16.dp))
@@ -454,6 +466,39 @@ fun PlayerScreen(
                         }
                     }
                 }
+                // Status line: buffering text under the transport, OR error
+                // chip if the player just failed. Both are live-only — preview
+                // mode has nothing to buffer or fail at.
+                if (!isPreview) {
+                    if (state.errorMessage != null) {
+                        Spacer(Modifier.height(8.dp))
+                        AssistChip(
+                            onClick = {
+                                // Retry. togglePlay will re-prepare from IDLE
+                                // or seek-to-0 from ENDED, so this works
+                                // regardless of which terminal state the
+                                // error left the player in.
+                                controller.togglePlay()
+                            },
+                            label = { Text("Failed: ${state.errorMessage} — tap to retry") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.ErrorOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        )
+                    } else if (state.isBuffering) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Buffering…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
                 // Speed chip is a live-playback tweak — the per-podcast
                 // default-speed picker (top of the per-podcast Episodes list)
                 // is the equivalent affordance for preview mode.
