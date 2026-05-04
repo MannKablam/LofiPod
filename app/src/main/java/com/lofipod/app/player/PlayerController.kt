@@ -237,16 +237,23 @@ class PlayerController(private val context: Context) {
                 .build()
             c.setMediaItem(item, startPos)
             c.prepare()
-            // Apply per-podcast default speed (if any) before play() so the
-            // user doesn't briefly hear 1.0x audio. Falls back to 1.0f when
-            // there's no override row — the explicit fallback matters when
-            // switching feeds: an outgoing feed's 1.5x shouldn't bleed into
-            // an incoming feed that had no preference set.
+            c.play()
+
+            // Per-podcast default speed override (if set) is applied AFTER
+            // play() — between prepare() and play(), the suspending DB read
+            // was creating a window where audio would briefly start then
+            // stop ("Play → Pause → Resume" instantly). Doing the lookup
+            // here, post-play, means the user hears at most a fraction of a
+            // second of 1.0x audio before Sonic picks up the override at
+            // the next buffer boundary. The skip-the-1.0x-fallback path
+            // also avoids any unnecessary setPlaybackSpeed call (which
+            // resets renderer state in some cases).
             val speedOverride = withContext(Dispatchers.IO) {
                 podcastStateDao.get(ep.feedUrl)?.defaultSpeed
             }
-            c.setPlaybackSpeed(speedOverride ?: 1.0f)
-            c.play()
+            if (speedOverride != null && kotlin.math.abs(speedOverride - 1.0f) > 0.001f) {
+                c.setPlaybackSpeed(speedOverride)
+            }
 
             // Mark this feed as "seen" — kills the new-episodes badge in Catalog
             // for this feed. Playing is the strongest signal that the user is
