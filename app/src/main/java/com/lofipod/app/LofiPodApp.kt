@@ -9,6 +9,7 @@ import com.lofipod.app.data.Downloads
 import com.lofipod.app.data.PodcastRepository
 import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.AppDatabase
+import com.lofipod.app.update.UpdateWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,14 +53,14 @@ class LofiPodApp : Application() {
                 .build()
         )
 
-        // Re-arm the backup worker with the persisted interval. Necessary
-        // because WorkManager's enqueued schedules don't survive an
-        // uninstall — and even between launches, calling schedule() with the
-        // same params is a no-op (UPDATE policy), so it's safe to do every
-        // time.
+        // Re-arm the workers from persisted Settings. WorkManager schedules
+        // don't survive an uninstall, and even between launches re-issuing
+        // the same schedule is a no-op under UPDATE policy — so it's safe
+        // to do every time.
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-            val hours = Settings(this@LofiPodApp).backupIntervalHours.first()
-            BackupWorker.schedule(this@LofiPodApp, hours)
+            val settings = Settings(this@LofiPodApp)
+            BackupWorker.schedule(this@LofiPodApp, settings.backupIntervalHours.first())
+            UpdateWorker.schedule(this@LofiPodApp, settings.updateAutoCheckEnabled.first())
         }
     }
 

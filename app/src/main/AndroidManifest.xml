@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- API 33+: needed to post the media notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- In-app updater: needed to invoke the system installer for an APK
+         downloaded from GitHub releases. The user still has to grant the
+         per-app "Install unknown apps" permission once via system Settings;
+         the app detects that and prompts. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".LofiPodApp"
@@ -44,5 +49,18 @@
             android:name=".player.LofiPodDownloadService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
+
+        <!-- FileProvider for sharing the downloaded APK URI with the system
+             installer. Direct file:// URIs are blocked since Android 7;
+             FileProvider hands out a content:// URI the installer can read. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
     </application>
 </manifest>

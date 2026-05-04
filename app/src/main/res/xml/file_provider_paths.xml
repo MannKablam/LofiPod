@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Cache subdirectory where the in-app updater stages downloaded APKs.
+         Mapped through FileProvider so we can hand the system installer a
+         content:// URI (file:// is blocked since Android 7). The path
+         segment "updates" is purely cosmetic — it has to match the dir the
+         updater writes into. -->
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

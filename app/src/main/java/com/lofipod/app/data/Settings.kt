@@ -146,6 +146,48 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_BACKUP_LAST_SUCCESS] = ts }
     }
 
+    // ---- Update checker ----
+
+    /**
+     * When true, the nightly UpdateWorker fires at 23:59 local time and
+     * checks GitHub for a newer release. Default true — the cost of a
+     * once-a-day HTTPS request is negligible and makes "Why isn't there an
+     * update yet?" never come up.
+     */
+    val updateAutoCheckEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_UPDATE_AUTO_CHECK] ?: true }
+
+    suspend fun setUpdateAutoCheckEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_UPDATE_AUTO_CHECK] = v }
+    }
+
+    /** Epoch ms of the last successful update check; 0 = never. */
+    val updateLastCheckedAt: Flow<Long> =
+        context.dataStore.data.map { it[KEY_UPDATE_LAST_CHECKED] ?: 0L }
+
+    suspend fun setUpdateLastCheckedAt(ts: Long) {
+        context.dataStore.edit { it[KEY_UPDATE_LAST_CHECKED] = ts }
+    }
+
+    /** versionCode of a downloaded-but-not-yet-installed update; 0 = none. */
+    val updateAvailableVersionCode: Flow<Int> =
+        context.dataStore.data.map { it[KEY_UPDATE_AVAILABLE_CODE] ?: 0 }
+
+    suspend fun setUpdateAvailableVersionCode(code: Int) {
+        context.dataStore.edit { it[KEY_UPDATE_AVAILABLE_CODE] = code }
+    }
+
+    /** versionName of a downloaded-but-not-yet-installed update; null = none. */
+    val updateAvailableVersionName: Flow<String?> =
+        context.dataStore.data.map { it[KEY_UPDATE_AVAILABLE_NAME] }
+
+    suspend fun setUpdateAvailableVersionName(name: String?) {
+        context.dataStore.edit {
+            if (name == null) it.remove(KEY_UPDATE_AVAILABLE_NAME)
+            else it[KEY_UPDATE_AVAILABLE_NAME] = name
+        }
+    }
+
     /**
      * Selected visual direction. Default Lowlight (eye-friendly amber/charcoal).
      * Migration map for legacy values:
@@ -189,6 +231,14 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("backup_interval_hours")
         private val KEY_BACKUP_LAST_SUCCESS =
             androidx.datastore.preferences.core.longPreferencesKey("backup_last_success_at")
+        private val KEY_UPDATE_AUTO_CHECK =
+            androidx.datastore.preferences.core.booleanPreferencesKey("update_auto_check")
+        private val KEY_UPDATE_LAST_CHECKED =
+            androidx.datastore.preferences.core.longPreferencesKey("update_last_checked_at")
+        private val KEY_UPDATE_AVAILABLE_CODE =
+            androidx.datastore.preferences.core.intPreferencesKey("update_available_version_code")
+        private val KEY_UPDATE_AVAILABLE_NAME =
+            androidx.datastore.preferences.core.stringPreferencesKey("update_available_version_name")
     }
 }
 
