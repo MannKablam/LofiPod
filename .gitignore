@@ -14,3 +14,7 @@ app/release/
 
 # Personal notes / cheat sheets — kept on disk, not shared.
 SCREEN_MAP.md
+
+# Design exploration assets — JSX mockups, theme spec drafts. Not part of
+# the Android build; live on disk only.
+LofiPod Design/
