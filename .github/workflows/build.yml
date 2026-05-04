@@ -1,7 +1,12 @@
 name: Build debug APK
 
+# Branches only — tag pushes are owned by release.yml. Without the filter,
+# both workflows fire on a `git push origin v0.3.0`, which is wasteful and
+# produces a confusing artifact alongside the real release.
 on:
   push:
+    branches:
+      - "**"
   workflow_dispatch:
 
 jobs:

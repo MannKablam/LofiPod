@@ -134,6 +134,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(20.dp))
+            SectionHeader("Updates")
+            UpdatesRow()
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("Data")
             AutoBackupRow()
             Spacer(Modifier.height(8.dp))
@@ -185,6 +189,169 @@ private fun SwitchRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+/**
+ * Updates section. Wires:
+ *   - auto-check toggle (drives the daily 23:59 UpdateWorker)
+ *   - "Check for updates" on-demand button
+ *   - last-checked timestamp
+ *   - "Update available" chip + Install button when a download is staged
+ *
+ * Install path: tapping "Install" hands the staged APK to the system
+ * package installer. If "Install unknown apps" hasn't been granted to
+ * LofiPod, the button instead routes the user to that system Settings page;
+ * after they grant it, the next tap launches the installer dialog.
+ */
+@Composable
+private fun UpdatesRow() {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as com.lofipod.app.LofiPodApp
+    val settings = remember { com.lofipod.app.data.Settings(app) }
+    val checker = remember { com.lofipod.app.update.UpdateChecker(app) }
+    val scope = rememberCoroutineScope()
+
+    val autoCheck by settings.updateAutoCheckEnabled.collectAsState(initial = true)
+    val lastChecked by settings.updateLastCheckedAt.collectAsState(initial = 0L)
+    val availableCode by settings.updateAvailableVersionCode.collectAsState(initial = 0)
+    val availableName by settings.updateAvailableVersionName.collectAsState(initial = null)
+
+    var checking by remember { mutableStateOf(false) }
+    var statusLine by remember { mutableStateOf<String?>(null) }
+    var stagedApk by remember { mutableStateOf<java.io.File?>(null) }
+
+    // Currently-installed versionCode for the "vs available" comparison
+    // and the "you're already on…" tooltip.
+    val installedCode = remember {
+        runCatching {
+            val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P)
+                pkg.longVersionCode.toInt()
+            else @Suppress("DEPRECATION") pkg.versionCode
+        }.getOrDefault(0)
+    }
+
+    // Whether the previously-staged APK is still on disk and still useful
+    // (its versionCode > installedCode). On first composition we re-derive
+    // this from cache + Settings so the "Install" button reappears after a
+    // process restart without re-checking.
+    LaunchedEffect(availableCode) {
+        if (availableCode > installedCode) {
+            val cached = java.io.File(ctx.cacheDir, "updates/lofipod-$availableCode.apk")
+            stagedApk = cached.takeIf { it.exists() && it.length() > 0 }
+        } else {
+            stagedApk = null
+        }
+    }
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        // Auto-check toggle
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = autoCheck,
+                onCheckedChange = { v ->
+                    scope.launch {
+                        settings.setUpdateAutoCheckEnabled(v)
+                        com.lofipod.app.update.UpdateWorker.schedule(app, v)
+                    }
+                }
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Auto-check nightly", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Polls GitHub releases at 23:59 local time. A notification appears when a new build is ready to install.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // On-demand check + status
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Installed: build $installedCode",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    when {
+                        lastChecked == 0L -> "Never checked."
+                        else -> "Last checked: ${formatBackupTime(lastChecked)}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                statusLine?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            TextButton(
+                enabled = !checking,
+                onClick = {
+                    checking = true
+                    statusLine = "Checking…"
+                    scope.launch {
+                        when (val r = checker.checkAndDownload()) {
+                            is com.lofipod.app.update.UpdateChecker.Result.UpToDate -> {
+                                statusLine = "Up to date (build ${r.installed})."
+                            }
+                            is com.lofipod.app.update.UpdateChecker.Result.Updated -> {
+                                stagedApk = r.apkFile
+                                statusLine = "Update ready: ${r.versionName}."
+                            }
+                            is com.lofipod.app.update.UpdateChecker.Result.Failed -> {
+                                statusLine = "Check failed: ${r.message}"
+                            }
+                        }
+                        checking = false
+                    }
+                }
+            ) { Text(if (checking) "Checking…" else "Check now") }
+        }
+
+        // Available-update chip + Install button
+        val staged = stagedApk
+        if (staged != null && availableCode > installedCode) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Update available: ${availableName ?: "build $availableCode"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        "Tap Install to apply. The system will show its standard install dialog.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FilledTonalButton(onClick = {
+                    if (checker.canRequestInstall()) {
+                        checker.launchInstaller(staged)
+                    } else {
+                        // Permission missing — kick the user into Settings.
+                        // Once they grant it, returning here and tapping
+                        // Install again succeeds without further hops.
+                        checker.openInstallUnknownAppsSettings()
+                        statusLine = "Grant \"Install unknown apps\" to LofiPod, then tap Install again."
+                    }
+                }) { Text("Install") }
+            }
         }
     }
 }

@@ -13,8 +13,12 @@ android {
         applicationId = "com.lofipod.app"
         minSdk = 28          // Android 9+; GrapheneOS targets recent versions
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
+        // Release builds inject these from the tag-driven workflow. Local
+        // builds and pushes-to-branch use the literals here. Versioning
+        // discipline: bump these in the gradle file when tagging stops being
+        // monotonic relative to history (rare).
+        versionCode = (project.findProperty("lofipodVersionCode") as String?)?.toInt() ?: 2
+        versionName = (project.findProperty("lofipodVersionName") as String?) ?: "0.2.0"
     }
 
     /**

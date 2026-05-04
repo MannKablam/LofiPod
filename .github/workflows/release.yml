@@ -1,0 +1,124 @@
+name: Release APK on tag
+
+# Triggered by a `v*` tag push. Builds the release APK, signs it with the
+# stable repo-tracked keystore (password from the LOFIPOD_KEYSTORE_PASSWORD
+# secret), and attaches both the APK and a small `latest.json` manifest to
+# a new GitHub Release.
+#
+# The in-app updater polls
+#   https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+# nightly. That URL is stable across releases — GitHub redirects "latest" to
+# whichever release is the most recent — so the app doesn't need to know any
+# specific tag name to discover updates.
+#
+# Tag format: `v<semver>`, e.g. `v0.3.0`, `v1.0.0-rc1`. The leading `v` is
+# what this workflow filter matches on. The semver portion becomes
+# `versionName`. `versionCode` comes from `github.run_number` so it
+# monotonically increases (Android's only hard requirement for in-place
+# updates over a previous install).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# `permissions: contents: write` is required so the workflow can create a
+# release. The default GITHUB_TOKEN doesn't have write scope unless asked.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compute version
+        id: ver
+        run: |
+          # Strip the leading 'v' from the tag — what's left is the semver
+          # we'll feed into versionName.
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION_NAME="${TAG#v}"
+          # versionCode = github.run_number. Always monotonically increases
+          # for this repo regardless of which workflow ran, so each new
+          # release will satisfy "code > previous code".
+          VERSION_CODE="${{ github.run_number }}"
+          echo "tag=$TAG"            >> "$GITHUB_OUTPUT"
+          echo "name=$VERSION_NAME"  >> "$GITHUB_OUTPUT"
+          echo "code=$VERSION_CODE"  >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG  (versionName=$VERSION_NAME, versionCode=$VERSION_CODE)"
+
+      - name: Build release APK
+        env:
+          LOFIPOD_KEYSTORE_PASSWORD: ${{ secrets.LOFIPOD_KEYSTORE_PASSWORD }}
+          # Override versionCode + versionName at the gradle layer via
+          # -P props read in app/build.gradle.kts. Avoids hand-editing the
+          # gradle file per release.
+          ORG_GRADLE_PROJECT_lofipodVersionCode: ${{ steps.ver.outputs.code }}
+          ORG_GRADLE_PROJECT_lofipodVersionName: ${{ steps.ver.outputs.name }}
+        run: gradle assembleRelease --stacktrace --no-daemon
+
+      - name: Locate APK
+        id: apk
+        run: |
+          # AGP names the file based on flavor + applicationId; pick whatever
+          # APK lands in the release output dir. There should be exactly one.
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -n1)"
+          echo "Found APK: $APK"
+          # Rename to a stable filename so the in-app downloader has a
+          # predictable URL (releases/latest/download/lofipod.apk).
+          STABLE="lofipod.apk"
+          cp "$APK" "$STABLE"
+          echo "path=$STABLE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate manifest
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION_NAME: ${{ steps.ver.outputs.name }}
+          VERSION_CODE: ${{ steps.ver.outputs.code }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Manifest schema (versioned with `manifestSchema` so future shape
+          # changes can be detected client-side). `apkUrl` points at the
+          # stable "releases/latest/download/<filename>" redirect target so
+          # the URL is the same across releases.
+          cat > latest.json <<EOF
+          {
+            "manifestSchema": 1,
+            "tag": "$TAG",
+            "versionName": "$VERSION_NAME",
+            "versionCode": $VERSION_CODE,
+            "apkUrl": "https://github.com/$REPO/releases/latest/download/lofipod.apk",
+            "releaseUrl": "https://github.com/$REPO/releases/tag/$TAG"
+          }
+          EOF
+          cat latest.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body: |
+            **versionCode:** ${{ steps.ver.outputs.code }}
+            **versionName:** ${{ steps.ver.outputs.name }}
+
+            See [BUILD_LOG.md](BUILD_LOG.md) for what changed.
+          files: |
+            lofipod.apk
+            latest.json
+          # Keep this `false` so the in-app `releases/latest` endpoint
+          # actually returns this release (drafts and prereleases are
+          # excluded from "latest" by GitHub's logic).
+          draft: false
+          prerelease: false

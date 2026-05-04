@@ -2,6 +2,67 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## In-app updater + tag-driven release pipeline
+
+End-to-end updates from a `git tag v*` push:
+
+**CI side** — new `.github/workflows/release.yml`:
+- Triggers on `v*` tag push (build.yml now scoped to branches only — no
+  duplicate work).
+- Parses the tag: leading `v` stripped → `versionName`. `versionCode` =
+  `github.run_number` (always monotonically increases for this repo
+  regardless of which workflow ran, so each release will satisfy
+  Android's "code > previous code" rule for in-place install).
+- Builds `assembleRelease` signed with the repo's stable keystore, copies
+  the APK to a stable filename `lofipod.apk`.
+- Generates `latest.json` (`{ manifestSchema, tag, versionCode,
+  versionName, apkUrl, releaseUrl }`). `apkUrl` points at GitHub's
+  stable `releases/latest/download/` redirect — same URL for every
+  release so the in-app checker doesn't need to know specific tag names.
+- Creates the GitHub Release with both files attached. Not a draft, not
+  a prerelease — those don't count as "latest" in GitHub's API.
+- `app/build.gradle.kts` now reads `versionCode` / `versionName` from
+  `-PlofipodVersionCode` / `-PlofipodVersionName` gradle properties when
+  set. The release workflow injects them via `ORG_GRADLE_PROJECT_*` env;
+  local builds keep the literals in the file.
+
+**App side** — new `update/UpdateChecker.kt`:
+- Fetches the manifest via OkHttp, compares `versionCode` against the
+  installed `PackageInfo.longVersionCode`. On a hit, downloads the APK
+  into `cacheDir/updates/lofipod-<code>.apk` (versioned filename so a
+  re-check after the user dismisses the dialog reuses the existing file).
+- `launchInstaller` hands the APK to the system installer via a
+  `FileProvider` content:// URI (file:// is blocked since Android 7).
+- `canRequestInstall` / `openInstallUnknownAppsSettings` cover the
+  "Install unknown apps" permission. Manifest declares
+  `REQUEST_INSTALL_PACKAGES`; the user still has to grant the per-app
+  toggle once via system Settings — the UI detects that and routes them.
+- `res/xml/file_provider_paths.xml` exposes the `updates/` cache subdir.
+
+**Schedule** — new `update/UpdateWorker.kt` (CoroutineWorker):
+- `schedule()` re-aligns the periodic job to next 23:59 local time, then
+  every 24 hours. Re-issuing on every app launch (`LofiPodApp.onCreate`)
+  resets the initial delay so timezone changes / app upgrades don't leave
+  a stale schedule pointing at the old wall clock.
+- On a hit, posts a notification (channel `lofipod-updates`); tapping it
+  fires the system installer for the already-staged APK. Tap-to-install
+  is the user's call — Android doesn't allow truly silent install.
+- Bails early if the user has turned auto-check off in Settings.
+
+**Settings → Updates section**:
+- Auto-check toggle (default on; reschedules / cancels the worker).
+- "Check now" button for on-demand runs.
+- Last-checked timestamp.
+- "Update available: vX.Y.Z" chip with an Install button when a
+  download is staged. Reappears after process restart by re-deriving
+  from cache + persisted version metadata in Settings.
+
+**The user-facing release flow**:
+- Day-to-day: `git push` → no release, no app pickup.
+- Ship: `git tag v0.3.0 && git push origin v0.3.0` → CI builds, signs,
+  releases. App picks it up at next 23:59 local (or on demand from
+  Settings → Updates → Check now).
+
 ## Episode preview: tap an episode title to inspect without playing
 
 User flow:
