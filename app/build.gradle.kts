@@ -57,8 +57,17 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 minification + resource shrinking are OFF on purpose. The
+            // first release-built APK (v0.3.0) had silent audio output while
+            // the UI looked normal — classic symptom of R8 stripping
+            // reflectively-loaded Media3 audio-sink internals (and possibly
+            // our custom EqAudioProcessor / SilenceSkippingProcessor) under
+            // the default Android rules. proguard-rules.pro is empty; we
+            // don't have a vetted keep-rules set yet. Until we do, leave
+            // minification off — APK is bigger but playback works. Re-enable
+            // once we've authored + tested the keep rules.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (canSignStably) {
                 signingConfig = signingConfigs.getByName("lofipodDev")
@@ -128,6 +137,11 @@ dependencies {
 
     // --- Image loading (artwork) ---
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // --- HTML parsing for Kabod Pack transcripts ---
+    // Used purely on already-fetched HTML strings — does NOT introduce a
+    // browser, WebView, or network. The app's no-WebView invariant stands.
+    implementation("org.jsoup:jsoup:1.18.1")
 
     // --- Documentfile for SAF helpers ---
     implementation("androidx.documentfile:documentfile:1.0.1")
