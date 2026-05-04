@@ -67,6 +67,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
+            // Updates first — most-frequent action when the user opens
+            // Settings is "is there a new build?" Putting it at the top
+            // means no scrolling past Theme / Playback / etc. to reach it.
+            SectionHeader("Updates")
+            UpdatesRow()
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("Theme")
             Spacer(Modifier.height(4.dp))
             LofiTheme.values().forEach { t ->
@@ -132,10 +139,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
-            Spacer(Modifier.height(20.dp))
-            SectionHeader("Updates")
-            UpdatesRow()
 
             Spacer(Modifier.height(20.dp))
             SectionHeader("Data")
@@ -222,15 +225,22 @@ private fun UpdatesRow() {
     var statusLine by remember { mutableStateOf<String?>(null) }
     var stagedApk by remember { mutableStateOf<java.io.File?>(null) }
 
-    // Currently-installed versionCode for the "vs available" comparison
-    // and the "you're already on…" tooltip.
-    val installedCode = remember {
+    // Currently-installed package info. versionCode drives the
+    // "is the available release newer?" comparison; versionName is the
+    // human-readable label shown in the UI ("Installed: v0.3.4").
+    val installedPkg = remember {
         runCatching {
-            val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P)
-                pkg.longVersionCode.toInt()
-            else @Suppress("DEPRECATION") pkg.versionCode
-        }.getOrDefault(0)
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+        }.getOrNull()
+    }
+    val installedCode = remember(installedPkg) {
+        if (installedPkg == null) 0
+        else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P)
+            installedPkg.longVersionCode.toInt()
+        else @Suppress("DEPRECATION") installedPkg.versionCode
+    }
+    val installedName = remember(installedPkg) {
+        installedPkg?.versionName ?: "?"
     }
 
     // Whether the previously-staged APK is still on disk and still useful
@@ -275,7 +285,7 @@ private fun UpdatesRow() {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Installed: build $installedCode",
+                    "Installed: v$installedName",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
@@ -302,7 +312,7 @@ private fun UpdatesRow() {
                     scope.launch {
                         when (val r = checker.checkAndDownload()) {
                             is com.lofipod.app.update.UpdateChecker.Result.UpToDate -> {
-                                statusLine = "Up to date (build ${r.installed})."
+                                statusLine = "Up to date (v$installedName)."
                             }
                             is com.lofipod.app.update.UpdateChecker.Result.Updated -> {
                                 stagedApk = r.apkFile
