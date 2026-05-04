@@ -18,7 +18,7 @@ import java.io.IOException
  * database. Idempotent — already-installed packs (matched by [KabodPackEntity.packId])
  * are skipped on re-run.
  *
- * Bundled packs live under `assets/kabod/*.kabod`. Each pack file name
+ * Bundled packs live under `assets/kabod/` (one `.kabod` per pack). File name
  * convention: `<packId>.kabod` (informational; the pack's own `<kabod:packId>`
  * tag is authoritative).
  *
