@@ -1,8 +1,10 @@
 package com.lofipod.app.data
 
 import com.lofipod.app.data.db.AppDatabase
+import com.lofipod.app.data.db.EpisodeKabodEntity
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateEntity
+import com.lofipod.app.data.db.KabodPackEntity
 import com.lofipod.app.data.db.PlaybackCheckpointEntity
 import com.lofipod.app.data.db.PodcastStateEntity
 import org.json.JSONArray
@@ -23,14 +25,19 @@ object Backup {
      * - v6 swapped per-episode rating + isFavorite for favoriteTier.
      * - v7 adds podcastState[] (per-podcast prefs, currently default speed).
      *   v7 backups are still readable on v6 builds — the array is ignored.
+     * - v8 adds kabodPacks[] + episodeKabod[] for Kabod Pack metadata.
+     *   v8 backups are still readable on v7 builds — the arrays are ignored.
+     *   Cached transcripts are NOT exported — they re-fetch on demand.
      */
-    const val CURRENT_SCHEMA = 7
+    const val CURRENT_SCHEMA = 8
 
     fun export(
         episodes: List<EpisodeStateEntity>,
         noteEntries: List<EpisodeNoteEntryEntity>,
         checkpoints: List<PlaybackCheckpointEntity>,
         podcastStates: List<PodcastStateEntity>,
+        kabodPacks: List<KabodPackEntity>,
+        episodeKabod: List<EpisodeKabodEntity>,
         appVersion: String
     ): String {
         val obj = JSONObject().apply {
@@ -84,6 +91,38 @@ object Backup {
                     })
                 }
             })
+            put("kabodPacks", JSONArray().apply {
+                kabodPacks.forEach { k ->
+                    put(JSONObject().apply {
+                        put("packId", k.packId)
+                        put("feedUrl", k.feedUrl)
+                        put("title", k.title)
+                        if (k.speaker != null) put("speaker", k.speaker)
+                        if (k.bookOfBible != null) put("bookOfBible", k.bookOfBible)
+                        if (k.sourceSite != null) put("sourceSite", k.sourceSite)
+                        put("archived", k.archived)
+                        put("installedAt", k.installedAt)
+                    })
+                }
+            })
+            put("episodeKabod", JSONArray().apply {
+                episodeKabod.forEach { e ->
+                    put(JSONObject().apply {
+                        put("guid", e.guid)
+                        put("packId", e.packId)
+                        if (e.partNumber != null) put("partNumber", e.partNumber)
+                        if (e.scripture != null) put("scripture", e.scripture)
+                        if (e.scriptureBook != null) put("scriptureBook", e.scriptureBook)
+                        if (e.scriptureStartCh != null) put("scriptureStartCh", e.scriptureStartCh)
+                        if (e.scriptureStartV != null) put("scriptureStartV", e.scriptureStartV)
+                        if (e.scriptureEndCh != null) put("scriptureEndCh", e.scriptureEndCh)
+                        if (e.scriptureEndV != null) put("scriptureEndV", e.scriptureEndV)
+                        if (e.transcriptUrl != null) put("transcriptUrl", e.transcriptUrl)
+                        if (e.transcriptSelector != null) put("transcriptSelector", e.transcriptSelector)
+                        if (e.speaker != null) put("speaker", e.speaker)
+                    })
+                }
+            })
         }
         return obj.toString(2)
     }
@@ -106,6 +145,8 @@ object Backup {
         val noteDao = db.episodeNoteEntryDao()
         val checkpointDao = db.playbackCheckpointDao()
         val podcastStateDao = db.podcastStateDao()
+        val kabodPackDao = db.kabodPackDao()
+        val episodeKabodDao = db.episodeKabodDao()
 
         var epRestored = 0
         obj.optJSONArray("episodeState")?.let { arr ->
@@ -215,7 +256,58 @@ object Backup {
             }
         }
 
-        return ImportResult(epRestored, notesRestored, checkpointsRestored, podcastStatesRestored)
+        var kabodPacksRestored = 0
+        obj.optJSONArray("kabodPacks")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val k = arr.getJSONObject(i)
+                kabodPackDao.upsert(
+                    KabodPackEntity(
+                        packId = k.getString("packId"),
+                        feedUrl = k.getString("feedUrl"),
+                        title = k.getString("title"),
+                        speaker = k.optStringOrNull("speaker"),
+                        bookOfBible = k.optStringOrNull("bookOfBible"),
+                        sourceSite = k.optStringOrNull("sourceSite"),
+                        archived = k.optBoolean("archived", true),
+                        installedAt = k.optLong("installedAt", System.currentTimeMillis()),
+                    )
+                )
+                kabodPacksRestored++
+            }
+        }
+
+        var episodeKabodRestored = 0
+        obj.optJSONArray("episodeKabod")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val e = arr.getJSONObject(i)
+                episodeKabodDao.upsert(
+                    EpisodeKabodEntity(
+                        guid = e.getString("guid"),
+                        packId = e.getString("packId"),
+                        partNumber = if (e.has("partNumber")) e.optInt("partNumber") else null,
+                        scripture = e.optStringOrNull("scripture"),
+                        scriptureBook = e.optStringOrNull("scriptureBook"),
+                        scriptureStartCh = if (e.has("scriptureStartCh")) e.optInt("scriptureStartCh") else null,
+                        scriptureStartV = if (e.has("scriptureStartV")) e.optInt("scriptureStartV") else null,
+                        scriptureEndCh = if (e.has("scriptureEndCh")) e.optInt("scriptureEndCh") else null,
+                        scriptureEndV = if (e.has("scriptureEndV")) e.optInt("scriptureEndV") else null,
+                        transcriptUrl = e.optStringOrNull("transcriptUrl"),
+                        transcriptSelector = e.optStringOrNull("transcriptSelector"),
+                        speaker = e.optStringOrNull("speaker"),
+                    )
+                )
+                episodeKabodRestored++
+            }
+        }
+
+        return ImportResult(
+            episodeCount = epRestored,
+            noteCount = notesRestored,
+            checkpointCount = checkpointsRestored,
+            podcastStateCount = podcastStatesRestored,
+            kabodPackCount = kabodPacksRestored,
+            episodeKabodCount = episodeKabodRestored,
+        )
     }
 
     data class ImportResult(
@@ -223,6 +315,8 @@ object Backup {
         val noteCount: Int,
         val checkpointCount: Int = 0,
         val podcastStateCount: Int = 0,
+        val kabodPackCount: Int = 0,
+        val episodeKabodCount: Int = 0,
     )
 }
 

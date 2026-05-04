@@ -113,6 +113,8 @@ fun PlayerScreen(
      * activate — we just show the live state. Same screen, no surprise.
      */
     previewGuid: String? = null,
+    /** Open the full-page Transcript route for the given guid. */
+    onOpenTranscript: (String) -> Unit = {},
 ) {
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
@@ -471,6 +473,7 @@ fun PlayerScreen(
                 episodeGuid = displayedGuid,
                 controller = controller,
                 isPreview = isPreview,
+                onOpenTranscript = onOpenTranscript,
                 modifier = Modifier.weight(1f).fillMaxWidth()
             )
         }
@@ -600,10 +603,11 @@ private fun BottomTabs(
     episodeGuid: String?,
     controller: PlayerController,
     isPreview: Boolean,
+    onOpenTranscript: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var tabIndex by remember { mutableStateOf(0) }
-    val tabs = listOf("Notes", "Details")
+    val tabs = listOf("Notes", "Details", "Transcript")
 
     Column(modifier = modifier) {
         TabRow(selectedTabIndex = tabIndex) {
@@ -622,7 +626,12 @@ private fun BottomTabs(
                     controller = controller,
                     isPreview = isPreview,
                 )
-                else -> DetailsTab(episodeGuid = episodeGuid, controller = controller)
+                1 -> DetailsTab(episodeGuid = episodeGuid, controller = controller)
+                else -> TranscriptContent(
+                    episodeGuid = episodeGuid,
+                    showFullPageButton = true,
+                    onOpenFullPage = { episodeGuid?.let(onOpenTranscript) },
+                )
             }
         }
     }
@@ -858,12 +867,14 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
     val scope = rememberCoroutineScope()
     var details by remember(episodeGuid) { mutableStateOf<EpisodeDetails?>(null) }
     var eqDisabled by remember(episodeGuid) { mutableStateOf(false) }
+    var kabodMeta by remember(episodeGuid) { mutableStateOf<com.lofipod.app.data.db.EpisodeKabodEntity?>(null) }
 
     LaunchedEffect(episodeGuid) {
         val state = withContext(Dispatchers.IO) { app.db.episodeStateDao().get(episodeGuid) }
         val pod = state?.let { app.repo.cached(it.feedUrl) }
         val ep = pod?.episodes?.find { it.guid == episodeGuid }
         eqDisabled = state?.eqDisabled ?: false
+        kabodMeta = withContext(Dispatchers.IO) { app.db.episodeKabodDao().get(episodeGuid) }
         details = EpisodeDetails(
             episode = ep,
             podcastTitle = pod?.title,
@@ -901,6 +912,23 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
             Spacer(Modifier.height(6.dp))
             Text(metaLine(ep, d.durationMs), style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        // Kabod metadata: scripture passage + part number, when present.
+        // Surfaced here (rather than only in the Transcript tab) so users
+        // browsing the Details tab see the sermon's scripture at a glance.
+        kabodMeta?.let { km ->
+            val parts = listOfNotNull(
+                km.partNumber?.let { "Part $it" },
+                km.scripture,
+            )
+            if (parts.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    parts.joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))

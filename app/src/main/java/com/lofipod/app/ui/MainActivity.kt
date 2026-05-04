@@ -153,7 +153,8 @@ private fun AppNav(
     // clean focus on whatever's on screen above. Audio keeps playing in the
     // background regardless; backing out reveals the dock again.
     val onPlayerRoute = currentRoute == "player" ||
-        currentRoute?.startsWith("player/preview/") == true
+        currentRoute?.startsWith("player/preview/") == true ||
+        currentRoute?.startsWith("player/transcript/") == true
 
     Scaffold(
         bottomBar = {
@@ -224,7 +225,21 @@ private fun AppNav(
                     onOpenEq = { nav.navigate("eq") },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
-                    onOpenSettings = { nav.navigate("settings") }
+                    onOpenSettings = { nav.navigate("settings") },
+                    onOpenTranscript = { guid ->
+                        val encoded = URLEncoder.encode(guid, "UTF-8")
+                        nav.navigate("player/transcript/$encoded")
+                    }
+                )
+            }
+
+            composable("player/transcript/{guid}") { back ->
+                val raw = back.arguments?.getString("guid") ?: return@composable
+                val guid = URLDecoder.decode(raw, "UTF-8")
+                TranscriptScreen(
+                    guid = guid,
+                    controller = controller,
+                    onBack = { nav.popBackStack() }
                 )
             }
 
@@ -244,6 +259,10 @@ private fun AppNav(
                     onOpenMyLists = { nav.navigate("mylists") },
                     onOpenSettings = { nav.navigate("settings") },
                     previewGuid = guid,
+                    onOpenTranscript = { g ->
+                        val enc = URLEncoder.encode(g, "UTF-8")
+                        nav.navigate("player/transcript/$enc")
+                    }
                 )
             }
 

@@ -15,6 +15,15 @@ app/release/
 # Personal notes / cheat sheets — kept on disk, not shared.
 SCREEN_MAP.md
 
+# AI-tool / IDE state. Not part of the build, not part of the project.
+.claude/
+
 # Design exploration assets — JSX mockups, theme spec drafts. Not part of
 # the Android build; live on disk only.
 LofiPod Design/
+
+# Kabod Pack research scratch — helper scripts + per-message HTML cache the
+# research pass leaves behind in tools/. The keepers (the generator script,
+# the verified JSON catalogs, the summary) are committed; everything with a
+# leading underscore is a working artifact and not shared.
+tools/_*

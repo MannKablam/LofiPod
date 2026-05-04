@@ -42,7 +42,7 @@ class CatalogViewModel(app: Application) : AndroidViewModel(app) {
      * to actually re-pull.
      */
     private suspend fun loadCanon(force: Boolean) {
-        val sources = Sources.PODCASTS
+        val sources = Sources.ALL
         if (sources.isEmpty()) {
             _state.value = CatalogUiState()
             return

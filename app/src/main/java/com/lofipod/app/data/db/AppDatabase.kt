@@ -252,9 +252,12 @@ interface PodcastStateDao {
         PlaybackCheckpointEntity::class,
         QueueEntryEntity::class,
         FeedVisitEntity::class,
-        PodcastStateEntity::class
+        PodcastStateEntity::class,
+        KabodPackEntity::class,
+        EpisodeKabodEntity::class,
+        EpisodeTranscriptEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -265,6 +268,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun queueEntryDao(): QueueEntryDao
     abstract fun feedVisitDao(): FeedVisitDao
     abstract fun podcastStateDao(): PodcastStateDao
+    abstract fun kabodPackDao(): KabodPackDao
+    abstract fun episodeKabodDao(): EpisodeKabodDao
+    abstract fun episodeTranscriptDao(): EpisodeTranscriptDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -394,6 +400,60 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v11 → v12: Kabod Pack support. Three new tables — none touch existing
+         * tables. `kabod_pack` holds channel-level metadata for installed packs,
+         * `episode_kabod` holds per-episode metadata (scripture, transcript URL,
+         * part number), `episode_transcript` caches fetched transcript text so
+         * re-opening doesn't hit the network.
+         */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS kabod_pack (
+                        packId TEXT NOT NULL PRIMARY KEY,
+                        feedUrl TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        speaker TEXT,
+                        bookOfBible TEXT,
+                        sourceSite TEXT,
+                        archived INTEGER NOT NULL,
+                        installedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_kabod (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        packId TEXT NOT NULL,
+                        partNumber INTEGER,
+                        scripture TEXT,
+                        scriptureBook TEXT,
+                        scriptureStartCh INTEGER,
+                        scriptureStartV INTEGER,
+                        scriptureEndCh INTEGER,
+                        scriptureEndV INTEGER,
+                        transcriptUrl TEXT,
+                        transcriptSelector TEXT,
+                        speaker TEXT
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_transcript (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        sourceUrl TEXT NOT NULL,
+                        paragraphsJson TEXT NOT NULL,
+                        fetchedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
          * v6 → v7: replace 1-5 star [rating] + [isFavorite] boolean with a single
          * [favoriteTier] int (0 none / 1 Excellent / 2 Most-excellent). SQLite can't
          * drop columns directly, so we recreate the table. Backfill rule:
@@ -469,7 +529,7 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10, MIGRATION_10_11
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12
                     )
                     .build().also { instance = it }
             }

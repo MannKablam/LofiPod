@@ -54,11 +54,14 @@ class BackupWorker(
             val notes = app.db.episodeNoteEntryDao().getAll()
             val checkpoints = app.db.playbackCheckpointDao().getAll()
             val podcastStates = app.db.podcastStateDao().getAll()
+            val kabodPacks = app.db.kabodPackDao().getAll()
+            val episodeKabod = app.db.episodeKabodDao().getAll()
             val pkg = applicationContext.packageManager.getPackageInfo(
                 applicationContext.packageName, 0
             )
             val json = Backup.export(
-                episodes, notes, checkpoints, podcastStates, pkg.versionName ?: "?"
+                episodes, notes, checkpoints, podcastStates,
+                kabodPacks, episodeKabod, pkg.versionName ?: "?"
             )
 
             // Single retained file: delete the existing one, then create fresh.

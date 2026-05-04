@@ -6,12 +6,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.HourglassEmpty
@@ -22,6 +25,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +62,37 @@ fun CatalogScreen(
     val state by vm.state.collectAsState()
     val playerState by controller.state.collectAsState()
     var menuExpanded by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+
+    // SAF picker for "Import pack…" — accepts any file (SAF can't filter by
+    // .kabod extension), validates after open by attempting to parse. On
+    // success, the pack lands in the catalog automatically via vm.refresh().
+    val packPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val app = ctx.applicationContext as LofiPodApp
+            val result = try {
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    app.kabodLoader.importStream(input)
+                }
+            } catch (e: Exception) {
+                snackbarHostState.showSnackbar("Import failed: ${e.message}")
+                null
+            }
+            if (result != null) {
+                snackbarHostState.showSnackbar(
+                    "Imported \"${result.podcast.title}\" — ${result.podcast.episodes.size} entries"
+                )
+                vm.refresh()
+            } else {
+                snackbarHostState.showSnackbar("That file isn't a valid Kabod Pack.")
+            }
+        }
+    }
 
     // Per-feed last-visited timestamps. Drives the "new episodes" badge.
     val app = LocalContext.current.applicationContext as LofiPodApp
@@ -173,11 +208,22 @@ fun CatalogScreen(
                                 onClick = { menuExpanded = false; vm.refresh() },
                                 leadingIcon = { Icon(Icons.Filled.Refresh, null) }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Import pack…") },
+                                onClick = {
+                                    menuExpanded = false
+                                    // SAF can't filter on .kabod; allow any
+                                    // file and validate on parse.
+                                    packPicker.launch(arrayOf("*/*"))
+                                },
+                                leadingIcon = { Icon(Icons.Filled.FolderOpen, null) }
+                            )
                         }
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         Box(
             modifier = Modifier
