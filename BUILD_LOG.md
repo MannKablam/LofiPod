@@ -2,6 +2,52 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Episode preview: tap an episode title to inspect without playing
+
+User flow:
+- Catalog → tap a podcast → Episodes list.
+- Tap an episode **title** → opens the Player screen, but in *preview mode*
+  — same artwork / scrubber / Notes + Details tabs / heart toggle, but the
+  audio isn't playing.
+- Tap **Play** in the preview → it promotes to live playback. The screen
+  flips to live mode automatically because `state.currentEpisodeGuid` now
+  matches `previewGuid`.
+- Tap anywhere else on the row (chevron, description, meta line) → still
+  expands the in-card description, same as before.
+
+Implementation: same `PlayerScreen` composable, two routes pointing to it.
+
+- New route `"player/preview/{guid}"` registered alongside `"player"`. Both
+  drive `PlayerScreen`; the preview route passes a non-null `previewGuid`
+  arg.
+- `previewGuid` only activates preview mode when it doesn't match the
+  currently-playing episode. Previewing what's already live just shows the
+  live state — no surprise.
+- Preview-mode adjustments inside `PlayerScreen`:
+  - Title bar: "Preview" text instead of the GraphicEq glyph.
+  - Artwork / title / artist / scrubber: pull from a `PreviewData` snapshot
+    loaded once via `resolvePreviewData`. The resolver searches
+    `repo.allCached()` so episodes that have never been played (no
+    `episode_state` row) still display correctly; falls back to
+    `episode_state` alone if no cached feed has the GUID.
+  - Slider: disabled (read-only) — saved position from `episode_state` is
+    shown for context.
+  - Transport row collapses to a single big Play button (skip-±15/30 only
+    make sense during live playback).
+  - Speed chip hidden — per-podcast default-speed picker (top of the
+    Episodes list) is the equivalent affordance.
+  - Pending-return chip hidden.
+  - "Add note" disabled (no live position to anchor against). Past notes
+    still surface and remain tappable to jump-and-play.
+  - Heart-cycle: ensures an `episode_state` row exists before the UPDATE,
+    since previewing a never-played episode means no row yet.
+- `MiniPlayer` hides on both `"player"` and `"player/preview/*"` routes —
+  audio keeps playing in the background regardless; backing out reveals the
+  dock again.
+- Episodes list: title `Text` gets its own `.clickable` that fires before
+  the card-level expand-toggle. Compose dispatches the inner clickable for
+  taps within the text bounds, so the rest of the card behaves identically.
+
 ## Theme cleanup: popup backgrounds, retire DMG, default to Lowlight
 
 Symptom: typing a note in Daylight pulled up an `AlertDialog` with a slate /

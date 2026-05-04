@@ -49,7 +49,14 @@ fun EpisodesScreen(
     feedUrl: String,
     controller: PlayerController,
     onBack: () -> Unit,
-    onPlay: (Episode, Podcast) -> Unit
+    onPlay: (Episode, Podcast) -> Unit,
+    /**
+     * Tapping the episode title opens the Player in preview mode — same
+     * screen, all the same elements, but the episode isn't playing yet.
+     * Hitting Play in the preview promotes it to live. Tapping anywhere
+     * else on the row keeps the in-card description-expansion behavior.
+     */
+    onPreview: (Episode) -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
     val pod = remember(feedUrl) { app.repo.cached(feedUrl) }
@@ -199,6 +206,7 @@ fun EpisodesScreen(
                         if (isCurrent) controller.togglePlay()
                         else onPlay(ep, pod)
                     },
+                    onPreviewTitle = { onPreview(ep) },
                     onShare = { ctx.shareEnclosure(ep.audioUrl, ep.title) },
                     onCycleHeart = {
                         val next = (s.favoriteTier + 1) % 3
@@ -396,6 +404,7 @@ private fun EpisodeRow(
     isCurrent: Boolean,
     isPlaying: Boolean,
     onPlay: () -> Unit,
+    onPreviewTitle: () -> Unit,
     onShare: () -> Unit,
     onCycleHeart: () -> Unit,
     onToggleDownload: () -> Unit,
@@ -461,7 +470,15 @@ private fun EpisodeRow(
                             ep.title,
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = if (expanded) Int.MAX_VALUE else 2,
-                            modifier = Modifier.weight(1f),
+                            // Title is its own click target — tap navigates
+                            // to the Player in preview mode. The card's
+                            // surrounding clickable still handles expand /
+                            // collapse for everything else (chevron, meta
+                            // line, description), so tapping anywhere outside
+                            // the title text still toggles the in-card view.
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable(onClick = onPreviewTitle),
                             color = MaterialTheme.colorScheme.onSurface
                                 .copy(alpha = textAlpha),
                             textDecoration = titleDecoration

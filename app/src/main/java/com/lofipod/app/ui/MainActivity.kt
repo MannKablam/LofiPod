@@ -148,9 +148,16 @@ private fun AppNav(
         }
     }
 
+    // Mini-player hides on every flavor of the player route — both the live
+    // "player" and the preview "player/preview/{guid}" — so the user gets a
+    // clean focus on whatever's on screen above. Audio keeps playing in the
+    // background regardless; backing out reveals the dock again.
+    val onPlayerRoute = currentRoute == "player" ||
+        currentRoute?.startsWith("player/preview/") == true
+
     Scaffold(
         bottomBar = {
-            if (currentRoute != "player" && playerState.currentEpisodeGuid != null) {
+            if (!onPlayerRoute && playerState.currentEpisodeGuid != null) {
                 MiniPlayer(
                     controller = controller,
                     state = playerState,
@@ -202,6 +209,10 @@ private fun AppNav(
                     onPlay = { ep, pod ->
                         controller.playEpisode(ep, pod.title, pod.artworkUrl)
                         nav.navigate("player")
+                    },
+                    onPreview = { ep ->
+                        val encoded = URLEncoder.encode(ep.guid, "UTF-8")
+                        nav.navigate("player/preview/$encoded")
                     }
                 )
             }
@@ -214,6 +225,25 @@ private fun AppNav(
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
                     onOpenSettings = { nav.navigate("settings") }
+                )
+            }
+
+            // Preview mode: same composable, different route. Carries a guid
+            // arg the screen uses to load static episode data without
+            // touching the live player. Hitting Play on the preview promotes
+            // it to live (state.currentEpisodeGuid catches up and the screen
+            // flips into live mode automatically).
+            composable("player/preview/{guid}") { back ->
+                val encoded = back.arguments?.getString("guid") ?: return@composable
+                val guid = URLDecoder.decode(encoded, "UTF-8")
+                PlayerScreen(
+                    controller = controller,
+                    onBack = { nav.popBackStack() },
+                    onOpenEq = { nav.navigate("eq") },
+                    onOpenHistory = { nav.navigate("history") },
+                    onOpenMyLists = { nav.navigate("mylists") },
+                    onOpenSettings = { nav.navigate("settings") },
+                    previewGuid = guid,
                 )
             }
 
