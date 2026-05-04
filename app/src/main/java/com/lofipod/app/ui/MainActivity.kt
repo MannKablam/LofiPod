@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -413,12 +415,23 @@ private fun MiniPlayer(
                         modifier = Modifier.size(28.dp)
                     )
                 }
-                IconButton(onClick = { controller.togglePlay() }) {
-                    Icon(
-                        if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = "Play/Pause",
-                        modifier = Modifier.size(36.dp)
-                    )
+                Box(contentAlignment = Alignment.Center) {
+                    IconButton(onClick = { controller.togglePlay() }) {
+                        Icon(
+                            if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = "Play/Pause",
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+                    // Subtle buffering ring on the mini-player play button —
+                    // gives the user the same "I'm trying" signal the full
+                    // player shows, without taking extra vertical space.
+                    if (state.isBuffering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(48.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
                 }
                 IconButton(onClick = { controller.seekRelative(30_000) }) {
                     Icon(
