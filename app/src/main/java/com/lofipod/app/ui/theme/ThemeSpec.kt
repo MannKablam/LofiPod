@@ -2,6 +2,7 @@ package com.lofipod.app.ui.theme
 
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.compositionLocalOf
@@ -30,7 +31,7 @@ data class LofiThemeSpec(
     val artworkPlaceholderInk: Color,
     val kind: Kind,
 ) {
-    enum class Kind { Cassette, Reel, Dmg, Ticker }
+    enum class Kind { Cassette, Reel, Ticker }
 }
 
 val LocalLofiThemeSpec = compositionLocalOf<LofiThemeSpec> {
@@ -42,7 +43,21 @@ val lofiTheme: LofiThemeSpec
     @Composable @ReadOnlyComposable
     get() = LocalLofiThemeSpec.current
 
-// ---------- Cassette · Direction B (current look, kept as default) ----------
+// ---------------------------------------------------------------------------
+// Color schemes.
+//
+// Every scheme explicitly fills in `surfaceContainerLowest/Low/Container/
+// High/Highest` because M3 dialogs, dropdown menus, and the bottom sheet
+// palette pull their backgrounds from those slots — not from `surface`. If
+// they're left to the factory's auto-derivation, a light-palette theme built
+// with `darkColorScheme(...)` (or vice versa) ends up with popups that look
+// nothing like the rest of the app. This was the "popup window background
+// looks dark/inconsistent" symptom on Daylight. Each theme picks the factory
+// (`light` or `dark`) that matches the dominant content surface, then nails
+// the container ladder by hand so popups land on the right shade.
+// ---------------------------------------------------------------------------
+
+// ---------- Cassette · Direction B (the original look) ----------
 private val CassetteScheme: ColorScheme = darkColorScheme(
     primary            = Color(0xFFE6B469),  // amber
     onPrimary          = Color(0xFF1A1B2E),
@@ -54,17 +69,22 @@ private val CassetteScheme: ColorScheme = darkColorScheme(
     surfaceVariant     = Color(0xFF2F2E48),
     onBackground       = Color(0xFFEDE5D6),
     onSurface          = Color(0xFFEDE5D6),
-    onSurfaceVariant   = Color(0xFF9B9180)
+    onSurfaceVariant   = Color(0xFF9B9180),
+    surfaceContainerLowest  = Color(0xFF15162A),
+    surfaceContainerLow     = Color(0xFF1F1F36),
+    surfaceContainer        = Color(0xFF25243A),
+    surfaceContainerHigh    = Color(0xFF2F2E48),
+    surfaceContainerHighest = Color(0xFF3A3A56),
 )
 
 // ---------- Reel-to-Reel · Direction D ----------
-// Studio tape machine. Cream faceplate is the dominant *surface*, walnut chassis
-// is the background. Oxblood is the lone accent.
-private val ReelScheme: ColorScheme = darkColorScheme(
+// Cream-on-walnut studio look. Content surfaces are cream (light), so the
+// popup ladder lives on the light side; the walnut background frames it.
+private val ReelScheme: ColorScheme = lightColorScheme(
     primary            = Color(0xFF7A2E22),  // oxblood — the spot accent
     onPrimary          = Color(0xFFE8DCC0),
-    primaryContainer   = Color(0xFF4A1B14),
-    onPrimaryContainer = Color(0xFFE8DCC0),
+    primaryContainer   = Color(0xFFD8C9A6),
+    onPrimaryContainer = Color(0xFF2A1F18),
     secondary          = Color(0xFFB8893E),  // brass
     background         = Color(0xFF1B1410),  // walnut chassis
     surface            = Color(0xFFE8DCC0),  // cream faceplate
@@ -73,56 +93,41 @@ private val ReelScheme: ColorScheme = darkColorScheme(
     onSurface          = Color(0xFF2A1F18),  // ink on cream
     onSurfaceVariant   = Color(0xFF5C4A38),
     outline            = Color(0xFFA89472),
-)
-
-// ---------- DMG Handheld · Direction E ----------
-// Four-ink LCD. Pixel font everywhere on screen. Magenta is hardware-only — we
-// route it to onPrimary so it never lands on body text.
-private val DmgScheme: ColorScheme = darkColorScheme(
-    primary            = Color(0xFF0F380F),  // darkest ink
-    onPrimary          = Color(0xFF9BBC0F),  // lightest screen
-    primaryContainer   = Color(0xFF8BAC0F),  // selected fill
-    onPrimaryContainer = Color(0xFF0F380F),
-    secondary          = Color(0xFF306230),  // mid-dark
-    background         = Color(0xFF9BBC0F),  // LCD lightest
-    surface            = Color(0xFF8BAC0F),  // LCD light
-    surfaceVariant     = Color(0xFF8BAC0F),
-    onBackground       = Color(0xFF0F380F),
-    onSurface          = Color(0xFF0F380F),
-    onSurfaceVariant   = Color(0xFF306230),
-    outline            = Color(0xFF0F380F),
-    error              = Color(0xFF7A2E62),  // magenta — chrome-only spot
+    surfaceContainerLowest  = Color(0xFFF2E9D6),
+    surfaceContainerLow     = Color(0xFFEDE2C8),
+    surfaceContainer        = Color(0xFFE8DCC0),
+    surfaceContainerHigh    = Color(0xFFE0D2B0),
+    surfaceContainerHighest = Color(0xFFD8C9A6),
 )
 
 // ---------- Ticker Tape · Direction F ----------
-// Monochrome newsroom paper. Red is the only spot color.
-private val TickerScheme: ColorScheme = darkColorScheme(
+// Newsroom paper. Light surfaces throughout, red is the only spot color.
+private val TickerScheme: ColorScheme = lightColorScheme(
     primary            = Color(0xFF9E2A1B),  // red spot
     onPrimary          = Color(0xFFF4EFE2),
-    primaryContainer   = Color(0xFF5C1A11),
-    onPrimaryContainer = Color(0xFFF4EFE2),
+    primaryContainer   = Color(0xFFE5DCC2),
+    onPrimaryContainer = Color(0xFF1B1A18),
     secondary          = Color(0xFF1B1A18),  // ink as secondary
     background         = Color(0xFFF4EFE2),  // paper
-    surface            = Color(0xFFE5DCC2),  // shaded paper
+    surface            = Color(0xFFEAE2CC),
     surfaceVariant     = Color(0xFFE5DCC2),
     onBackground       = Color(0xFF1B1A18),
     onSurface          = Color(0xFF1B1A18),
     onSurfaceVariant   = Color(0xFF5A554A),
     outline            = Color(0xFFB8AE93),
+    surfaceContainerLowest  = Color(0xFFFAF5E8),
+    surfaceContainerLow     = Color(0xFFF0EAD8),
+    surfaceContainer        = Color(0xFFEAE2CC),
+    surfaceContainerHigh    = Color(0xFFE5DCC2),
+    surfaceContainerHighest = Color(0xFFDDD2B5),
 )
 
 // ---------- Daylight ----------
 // Plain, bright, maximum-contrast theme for outdoor / direct-sunlight reading.
-// White background, near-black text, saturated-but-not-screaming blue accent.
-// No decorative fonts — sans-serif everywhere for legibility on a phone screen
-// you can barely see in noon sun.
-//
-// surfaceTint = Transparent: Material 3 normally blends primary into surfaces at
-// elevation as a "tonal elevation" overlay, which on Daylight took the popup
-// menu / dialog backgrounds visibly darker (bluish slate over the near-white
-// surface). Killing the tint keeps elevated containers — including the
-// DropdownMenu popup — at the actual surface color so text reads clean.
-private val DaylightScheme: ColorScheme = darkColorScheme(
+// Built on `lightColorScheme` (was darkColorScheme — that's why menus/dialogs
+// ended up dark) and the surfaceContainer ladder is white-leaning so popups
+// stay clean.
+private val DaylightScheme: ColorScheme = lightColorScheme(
     primary            = Color(0xFF0E63C8),  // crisp blue accent
     onPrimary          = Color(0xFFFFFFFF),
     primaryContainer   = Color(0xFFD3E4FC),
@@ -136,14 +141,19 @@ private val DaylightScheme: ColorScheme = darkColorScheme(
     onSurface          = Color(0xFF101114),
     onSurfaceVariant   = Color(0xFF44464C),
     outline            = Color(0xFF74767C),
+    surfaceContainerLowest  = Color(0xFFFFFFFF),
+    surfaceContainerLow     = Color(0xFFFAFAFC),
+    surfaceContainer        = Color(0xFFF5F5F7),
+    surfaceContainerHigh    = Color(0xFFEFEFF2),
+    surfaceContainerHighest = Color(0xFFE6E6EA),
 )
 
-// ---------- Lowlight ----------
-// Plain, dim, eye-friendly theme for nighttime / dark-room use. Background is a
-// near-black charcoal (not pure #000 — true black on OLED can produce smear and
-// halo with bright accents). Text is a warm off-white. Accent is a desaturated
-// amber so the screen emits less blue light at the wavelengths that interfere
-// with sleep.
+// ---------- Lowlight (default) ----------
+// Plain, dim, eye-friendly theme for nighttime / dark-room use. Background is
+// near-black charcoal (not pure #000 — true black on OLED can produce smear
+// and halo with bright accents). Text is warm off-white. Accent is a
+// desaturated amber so the screen emits less blue light at the wavelengths
+// that interfere with sleep.
 private val LowlightScheme: ColorScheme = darkColorScheme(
     primary            = Color(0xFFD7A45C),  // warm amber, low blue
     onPrimary          = Color(0xFF1A130A),
@@ -157,6 +167,11 @@ private val LowlightScheme: ColorScheme = darkColorScheme(
     onSurface          = Color(0xFFE8DDC9),
     onSurfaceVariant   = Color(0xFF9A9286),
     outline            = Color(0xFF4A4640),
+    surfaceContainerLowest  = Color(0xFF0A0A0C),
+    surfaceContainerLow     = Color(0xFF131316),
+    surfaceContainer        = Color(0xFF17171A),
+    surfaceContainerHigh    = Color(0xFF202024),
+    surfaceContainerHighest = Color(0xFF2A2A30),
 )
 
 fun specFor(theme: LofiTheme): LofiThemeSpec = when (theme) {
@@ -181,19 +196,6 @@ fun specFor(theme: LofiTheme): LofiThemeSpec = when (theme) {
         artworkPlaceholderFill = Color(0xFFE8DCC0),
         artworkPlaceholderInk = Color(0xFF2A1F18),
         kind = LofiThemeSpec.Kind.Reel,
-    )
-    LofiTheme.DMG -> LofiThemeSpec(
-        theme = theme,
-        // The pixel font is wide — using it for display only keeps the body
-        // legible while still announcing the theme on the wordmark.
-        colors = DmgScheme,
-        displayFont = PressStart2P,
-        bodyFont = FontFamily.Default,
-        accent = Color(0xFF0F380F),
-        onAccent = Color(0xFF9BBC0F),
-        artworkPlaceholderFill = Color(0xFF9BBC0F),
-        artworkPlaceholderInk = Color(0xFF0F380F),
-        kind = LofiThemeSpec.Kind.Dmg,
     )
     LofiTheme.TICKER -> LofiThemeSpec(
         theme = theme,

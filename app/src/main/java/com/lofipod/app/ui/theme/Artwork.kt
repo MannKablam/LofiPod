@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -49,7 +48,6 @@ private fun DirectionPlaceholder(modifier: Modifier = Modifier) {
     when (spec.kind) {
         LofiThemeSpec.Kind.Cassette -> CassettePlaceholder(modifier, spec)
         LofiThemeSpec.Kind.Reel     -> ReelPlaceholder(modifier, spec)
-        LofiThemeSpec.Kind.Dmg      -> DmgPlaceholder(modifier, spec)
         LofiThemeSpec.Kind.Ticker   -> TickerPlaceholder(modifier, spec)
     }
 }
@@ -115,41 +113,6 @@ private fun ReelPlaceholder(modifier: Modifier, spec: LofiThemeSpec) {
                     end = Offset(ex, ey),
                     strokeWidth = 3f
                 )
-            }
-        }
-    }
-}
-
-// DMG: 8×8 pixel sprite (inked cassette icon) on the LCD background.
-@Composable
-private fun DmgPlaceholder(modifier: Modifier, spec: LofiThemeSpec) {
-    Box(
-        modifier = modifier
-            .background(spec.artworkPlaceholderFill)
-            .border(2.dp, spec.artworkPlaceholderInk),
-        contentAlignment = Alignment.Center
-    ) {
-        // 8×8 cassette glyph — 1 = ink, 0 = transparent.
-        val glyph = listOf(
-            "00000000",
-            "01111110",
-            "01000010",
-            "01011010",
-            "01000010",
-            "01100110",
-            "01000010",
-            "00000000",
-        )
-        Canvas(Modifier.fillMaxSize().padding(6.dp)) {
-            val cell = size.minDimension / 8f
-            for (row in 0 until 8) for (col in 0 until 8) {
-                if (glyph[row][col] == '1') {
-                    drawRect(
-                        color = spec.artworkPlaceholderInk,
-                        topLeft = Offset(col * cell, row * cell),
-                        size = Size(cell, cell)
-                    )
-                }
             }
         }
     }
