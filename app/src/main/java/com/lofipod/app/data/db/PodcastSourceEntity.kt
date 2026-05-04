@@ -4,7 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * One row per podcast in the user's in-app library. Imports from a sources file
+ * One row per podcast in the user's in-app catalog. Imports from a sources file
  * upsert into this table; future fetches read from it directly. Keyed by feed URL.
  */
 @Entity(tableName = "podcast_source")

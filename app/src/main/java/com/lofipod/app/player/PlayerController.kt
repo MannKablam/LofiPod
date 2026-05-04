@@ -248,7 +248,7 @@ class PlayerController(private val context: Context) {
             c.setPlaybackSpeed(speedOverride ?: 1.0f)
             c.play()
 
-            // Mark this feed as "seen" — kills the new-episodes badge in Library
+            // Mark this feed as "seen" — kills the new-episodes badge in Catalog
             // for this feed. Playing is the strongest signal that the user is
             // current with the channel.
             withContext(Dispatchers.IO) {

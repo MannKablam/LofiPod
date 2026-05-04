@@ -34,9 +34,9 @@ import com.lofipod.app.player.PlayerController
  * network or DB on the search path, so typing is instantaneous even with
  * dozens of feeds loaded.
  *
- * "Cached" here means "fetched in the current Library load." Feeds the user
+ * "Cached" here means "fetched in the current Catalog load." Feeds the user
  * hasn't loaded since opening the app aren't searchable yet — the empty-
- * state nudges them to open Library to populate the cache.
+ * state nudges them to open Catalog to populate the cache.
  */
 @Composable
 fun EpisodeSearchScreen(
@@ -48,7 +48,7 @@ fun EpisodeSearchScreen(
     var query by remember { mutableStateOf("") }
 
     // Snapshot the cache once on entry. Re-snapping on every search keystroke
-    // would be wasteful — the cache only changes when Library refreshes,
+    // would be wasteful — the cache only changes when Catalog refreshes,
     // which the user has to navigate to anyway.
     val allPods = remember { app.repo.allCached() }
     val totalEpisodeCount = remember(allPods) { allPods.sumOf { it.episodes.size } }
@@ -113,7 +113,7 @@ fun EpisodeSearchScreen(
 
             when {
                 allPods.isEmpty() -> EmptyState(
-                    "No feeds in the cache yet. Open Library and let it load, then come back."
+                    "No feeds in the cache yet. Open Catalog and let it load, then come back."
                 )
 
                 query.isBlank() -> EmptyState(

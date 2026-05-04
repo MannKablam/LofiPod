@@ -18,12 +18,12 @@ import kotlinx.coroutines.launch
  * Reads the podcast canon from [Sources.PODCASTS] (compiled in) and fetches each
  * feed. There is no in-app way to add or remove podcasts — by design.
  */
-class LibraryViewModel(app: Application) : AndroidViewModel(app) {
+class CatalogViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = (app as LofiPodApp).repo
 
-    private val _state = MutableStateFlow(LibraryUiState())
-    val state: StateFlow<LibraryUiState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(CatalogUiState())
+    val state: StateFlow<CatalogUiState> = _state.asStateFlow()
 
     init {
         viewModelScope.launch { loadCanon(force = false) }
@@ -37,24 +37,24 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * If [force] is false (the default for init / lifecycle revival), short-circuit
      * to whatever the in-memory [PodcastRepository] cache has — no network hit and
-     * no "loading feeds" flicker on navigation back into Library, even if the VM
+     * no "loading feeds" flicker on navigation back into Catalog, even if the VM
      * was rebuilt by the framework. Refresh from the overflow menu sets force=true
      * to actually re-pull.
      */
     private suspend fun loadCanon(force: Boolean) {
         val sources = Sources.PODCASTS
         if (sources.isEmpty()) {
-            _state.value = LibraryUiState()
+            _state.value = CatalogUiState()
             return
         }
         if (!force) {
             val cached = sources.mapNotNull { repo.cached(it.feedUrl) }
             if (cached.size == sources.size) {
-                _state.value = LibraryUiState(podcasts = cached)
+                _state.value = CatalogUiState(podcasts = cached)
                 return
             }
         }
-        _state.value = LibraryUiState(
+        _state.value = CatalogUiState(
             loading = true,
             feedProgress = sources.map { FeedLoadStatus(it, FeedStatus.LOADING) }
         )
@@ -70,14 +70,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             }
-            _state.value = LibraryUiState(podcasts = pods)
+            _state.value = CatalogUiState(podcasts = pods)
         } catch (e: Exception) {
-            _state.value = LibraryUiState(error = e.message ?: "Failed to load")
+            _state.value = CatalogUiState(error = e.message ?: "Failed to load")
         }
     }
 }
 
-data class LibraryUiState(
+data class CatalogUiState(
     val loading: Boolean = false,
     val feedProgress: List<FeedLoadStatus> = emptyList(),
     val podcasts: List<Podcast> = emptyList(),
