@@ -37,7 +37,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val settings = remember { Settings(app) }
 
-    val theme by settings.theme.collectAsState(initial = LofiTheme.CASSETTE)
+    val theme by settings.theme.collectAsState(initial = LofiTheme.LOWLIGHT)
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
     val autoPlayNextInFeed by settings.autoPlayNextInFeed.collectAsState(initial = true)
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)

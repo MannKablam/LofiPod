@@ -147,17 +147,22 @@ class Settings(private val context: Context) {
     }
 
     /**
-     * Selected visual direction. Default Cassette (the original look).
-     * Old color-only theme names from before the direction overhaul map to
-     * Cassette so existing installs keep working.
+     * Selected visual direction. Default Lowlight (eye-friendly amber/charcoal).
+     * Migration map for legacy values:
+     *  - TWILIGHT/FOREST/CORAL → Cassette (pre-direction-overhaul color names)
+     *  - GAMEBOY/DMG           → Lowlight (DMG Handheld theme was retired
+     *                                       2026-05-03; both names map forward
+     *                                       to the new default rather than
+     *                                       leaving existing users on a now-
+     *                                       missing enum value)
      */
     val theme: Flow<LofiTheme> = context.dataStore.data.map {
-        val raw = it[KEY_THEME] ?: LofiTheme.CASSETTE.name
+        val raw = it[KEY_THEME] ?: LofiTheme.LOWLIGHT.name
         runCatching { LofiTheme.valueOf(raw) }.getOrElse {
             when (raw) {
                 "TWILIGHT", "FOREST", "CORAL" -> LofiTheme.CASSETTE
-                "GAMEBOY" -> LofiTheme.DMG
-                else -> LofiTheme.CASSETTE
+                "GAMEBOY", "DMG" -> LofiTheme.LOWLIGHT
+                else -> LofiTheme.LOWLIGHT
             }
         }
     }
@@ -189,16 +194,20 @@ class Settings(private val context: Context) {
 
 /**
  * Visual direction. Each is a complete palette + type + decorative-chrome lane.
- * Cassette is Direction B (the original); D/E/F are the lo-fi family cousins from
- * design/specs/Direction-{D,E,F}.md. The palette + display font + accent rule are
- * what each direction actually wires into the Material theme; richer chrome
- * (sprockets, reels, sprites) lives in per-direction composables.
+ * Cassette is Direction B (the original); Reel + Ticker are the lo-fi family
+ * cousins from design/specs/Direction-{D,F}.md. Daylight + Lowlight are the
+ * two plain themes for outdoor and night use respectively. The palette +
+ * display font + accent rule are what each direction actually wires into the
+ * Material theme; richer chrome (sprockets, reels) lives in per-direction
+ * composables.
+ *
+ * Lowlight is the default — it's the most universally comfortable, and it
+ * doubles as the migration target for any retired theme value (see Settings).
  */
 enum class LofiTheme(val displayName: String, val tagline: String) {
+    LOWLIGHT("Lowlight",     "Near-black + warm amber. Best at night."),
     CASSETTE("Cassette",     "Twilight navy, amber tape — the original."),
     REEL    ("Reel-to-Reel", "Cream faceplate, brass + oxblood, mono type."),
-    DMG     ("DMG Handheld", "Olive LCD, magenta chrome, pixel-only."),
     TICKER  ("Ticker Tape",  "Newsroom paper, courier ink, spot red."),
     DAYLIGHT("Daylight",     "High-contrast white + ink. Best in sunlight."),
-    LOWLIGHT("Lowlight",     "Near-black + warm amber. Best at night.")
 }

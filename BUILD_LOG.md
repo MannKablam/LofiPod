@@ -2,6 +2,49 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Theme cleanup: popup backgrounds, retire DMG, default to Lowlight
+
+Symptom: typing a note in Daylight pulled up an `AlertDialog` with a slate /
+near-black background even though the rest of the app was bright white.
+Same on the overflow `DropdownMenu`.
+
+Root cause: M3 1.3+ routes dialog and dropdown backgrounds through the
+`surfaceContainer*` slot ladder (`surfaceContainerLowest` /
+`surfaceContainerLow` / `surfaceContainer` / `surfaceContainerHigh` /
+`surfaceContainerHighest`), and **none of our schemes specified those
+slots**. Worse, the light-feeling themes (Daylight, Reel, Ticker) were
+built with `darkColorScheme(...)`, so M3's auto-derivation produced
+dark-mode container shades on a light palette — exactly the visible bug.
+
+Fix:
+- Every scheme now explicitly sets the full `surfaceContainer*` ladder
+  with values picked to match each theme's intended popup feel.
+- Daylight, Reel, Ticker switched to `lightColorScheme(...)` (Cassette and
+  Lowlight stay on `darkColorScheme` — they're dark themes). The factory
+  still matters for the small set of slots we *don't* override.
+- The "surfaceTint = Transparent" hack on Daylight is preserved as belt-
+  and-suspenders against future Material elevation overlays.
+
+The styling architecture was already consolidated — `ui/theme/ThemeSpec.kt`
+holds every palette + font + accent, screens read via
+`MaterialTheme.colorScheme.X`. The bug wasn't scattered styling; it was an
+under-specified `ColorScheme`. (Only one screen-side hardcoded color
+remains: `MostExcellentGold` in `MyListsScreen`, an intentional brand
+accent that doesn't tie to a theme slot.)
+
+Theme retirement: **DMG Handheld removed.**
+- Dropped from the `LofiTheme` enum, removed `DmgScheme` from
+  `ThemeSpec.kt`, removed `DmgPlaceholder` from `Artwork.kt`, removed
+  `Kind.Dmg` from the kind enum.
+- Migration: `KEY_THEME = "DMG"` (or the older `"GAMEBOY"`) now resolves
+  to Lowlight on read, so existing users on the retired theme don't get
+  stranded on a missing enum value.
+
+Default theme: **Cassette → Lowlight.** Lowlight is the most universally
+comfortable; it also doubles as the migration target for retired theme
+values. Existing users with an explicit choice keep it; only fresh
+installs (or someone who never opened Settings) see the new default.
+
 ## EQ persistence + rename Library → Catalog
 
 - **EQ bands + volume boost now persist across app restart.** Previously the

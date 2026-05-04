@@ -50,7 +50,7 @@ private fun typographyFor(spec: LofiThemeSpec): Typography {
 fun LofiPodTheme(content: @Composable () -> Unit) {
     val ctx = LocalContext.current
     val settings = remember { Settings(ctx) }
-    val selectedTheme by settings.theme.collectAsState(initial = LofiTheme.CASSETTE)
+    val selectedTheme by settings.theme.collectAsState(initial = LofiTheme.LOWLIGHT)
     val textScale by settings.textScale.collectAsState(initial = 1.0f)
     val spec = specFor(selectedTheme)
 
