@@ -2,6 +2,148 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Kabod Pack format + Romans-by-Piper pack + Player transcript surface
+
+**The format.** A "Kabod Pack" is RSS 2.0 with a `kabod:` namespace overlay
+(`https://lofipod.app/ns/kabod/1`), file extension `.kabod`. Standard RSS tags
+carry audio + dates so the pack would also work in a generic podcast app; the
+`kabod:` extensions carry sermon-specific metadata: `packId`, `archived`,
+`speaker`, `bookOfBible`, `sourceSite`, `seriesStart`/`seriesEnd` at the
+channel level; `partNumber`, `scripture`, structured `scriptureRef`,
+`transcriptUrl`, `transcriptSelector` per item. Optional `itunesCollectionId`
+(channel) / `itunesTrackId` (item) are reserved for CDN-rotation fallback via
+the iTunes Lookup API — unused in v1, slots exist.
+
+A pack is for *completed* content — the `archived` flag tells the app to
+never refresh the feed (`PodcastRepository.fetchOne` short-circuits to the
+asset loader for `kabod://` URLs and never touches the network for them).
+Hostable as a feed-like endpoint OR shipped locally — both are supported.
+
+**The first pack: John Piper's Romans (1998-04-26 → 2006-12-24).** 223
+verified entries, the full verse-by-verse exposition. Two sermons from the
+desiringgod.org series listing were excluded because their primary text
+isn't Romans: "Does James Contradict Paul?" (1999-08-08, James 2 — an
+apologetic excursus during Romans 4) and "Treasuring Christ Together"
+(2004-12-05, vision-casting, no scripture text). One borderline entry
+("Be Constant in Prayer for the Joy of Hope", 2004-12-26) was kept after
+verifying its primary text is Romans 12:12 even though the page lists
+both Ephesians 1:15-23 and Romans 12:12. `partNumber` is the position in
+the verified subset (1..223) — desiringgod.org's series page doesn't
+publish explicit ordinal labels. Final entry: "Jesus Christ in the Book
+of Romans", preached Christmas Eve 2006.
+
+Built via a one-time generator script (`tools/build-piper-romans-pack.py`)
+that converts a JSON catalog (verified by a research pass against
+desiringgod.org) into the `.kabod` XML. The script handles both my own
+schema and the research pass's pre-structured shape; re-runnable for future
+packs from other series.
+
+Output committed to `app/src/main/assets/kabod/desiringgod-piper-romans.kabod`
+(~170 KB, 223 entries). Audio enclosure URLs point at desiringgod.org's own
+CDN (`audio.desiringgod.org`), which DG hosts itself.
+
+**App-side schema (Room v11 → v12).** Three new tables, no existing ones
+touched:
+- `kabod_pack` — channel-level metadata per installed pack.
+- `episode_kabod` — per-episode kabod fields (scripture, transcript URL,
+  part number, speaker), keyed by the same `guid` as `episode_state`.
+- `episode_transcript` — cache of fetched + parsed transcripts so
+  re-opening the Transcript tab doesn't re-hit the network.
+
+Backup schema bumped v7 → v8: `kabodPacks[]` and `episodeKabod[]` arrays
+round-trip the new tables. Cached transcripts are intentionally NOT exported
+— they re-fetch on demand. v7 backups still import on the new build.
+
+**Ingestion.** Two paths, both routing to the same `KabodAssetLoader`
+(idempotent — already-installed packs by `packId` are skipped):
+- **Bundled**: `LofiPodApp.onCreate` scans `assets/kabod/*.kabod` on every
+  launch, parses, upserts. Synthetic `PodcastSourceEntity` rows are inserted
+  so the catalog UI surfaces the pack alongside RSS feeds. The kabod feed
+  uses a `kabod://<packId>` URL so it shares identity space with RSS
+  (queue / favorites / notes / history / downloads all key off
+  `(feedUrl, guid)` already and need no special-casing).
+- **SAF import** ("Import pack…" in the Catalog overflow): standard
+  `ActivityResultContracts.OpenDocument` picker, parse + upsert, snackbar
+  reports "Imported {title} — {N} entries" or the error.
+
+`PodcastRepository.fetchOne` checks for the `kabod://` scheme and routes
+to the asset loader instead of HTTP. The standard RSS path is untouched.
+
+**Download parity is preserved.** Kabod-pack episodes flow through the
+same `Episode` model with a real HTTP `audioUrl`, so the existing Media3
+`DownloadManager` path (`Downloads.start(Episode)` keyed by `guid`)
+handles them with no special-casing — same Download button, same progress
+indicator, same offline playback. No friction; it just looks like a
+podcast.
+
+**Transcript surface.** Two surfaces sharing one renderer
+(`TranscriptContent`):
+- **Tab on PlayerScreen** — third tab alongside Notes / Details. States:
+  no transcript URL → "No transcript available"; URL set, fetching →
+  spinner + "Loading transcript…"; loaded → paragraph list with a "Read
+  full page" icon top-right; failed → inline error + Retry button.
+- **Full-page route** `player/transcript/{guid}` — own `TranscriptScreen`,
+  hides artwork/scrubber/controls so the user gets a clean reading
+  surface. Audio keeps playing through this view; back arrow returns to
+  the player. Top bar carries a play/pause icon that only renders when
+  this episode is what's loaded.
+
+Paragraphs render via Compose `Text` + `AnnotatedString` in
+`bodyLarge` with 1.5× line height. Source attribution at the foot of the
+list as plain text (not a tappable link — no browser).
+
+**Scripture handoff to Logos.** Inline regex finds scripture references
+(`Romans 1:1`, `Rom. 1:1–7`, `Romans 1`, etc., with the leading-numeric
+book pattern for `1 Corinthians` etc.); matched ranges render in
+`primary` color, semibold, and tappable via `LinkAnnotation.Clickable`.
+Tap fires `Intent.ACTION_VIEW` for `https://ref.ly/<ref>` (e.g.
+`https://ref.ly/Rom1.1`). Logos / Faithlife registers `ref.ly` as an app
+link, so devices with Logos installed land directly on the passage.
+Without Logos, the OS chooser shows. If no app handles the link at all,
+a snackbar reports "No Bible app installed to open {ref}". No in-app
+WebView — handing off via system intent is the user choosing what to do
+with the link, not us embedding a browser.
+
+**HTML transcript parsing.** New `TranscriptHtmlParser` with five
+per-host extractors (`DesiringGod`, `SermonAudio`, `Bethany`, `Castos`,
+`Generic`). The pack's optional `<kabod:transcriptSelector>` overrides
+the host-matched extractor when present. Powered by **jsoup**
+(`org.jsoup:jsoup:1.18.1`, ~430 KB) — used purely on already-fetched
+HTML strings; jsoup does NOT introduce a browser, WebView, or network.
+The app's no-WebView invariant stands (verified: zero
+`android.webkit.*` imports or `WebView` instantiations anywhere in
+`app/`).
+
+**`PlayerScreen.DetailsTab`** also picks up the kabod metadata and
+shows "Part {N} · Romans 1:1" in primary color under the meta line, so
+users who never open the Transcript tab still see the sermon's scripture
+at a glance.
+
+**Files**: 14 new (parser + 5 extractors + 3 entities + 3 DAOs +
+`TranscriptRepository` + `KabodAssetLoader` + `XmlUtils` + `ScriptureRef`
++ `TranscriptScreen` + `TranscriptContent`); modified
+`AppDatabase` (entities + DAO refs + `MIGRATION_11_12`),
+`Sources.kt` (`KABOD_PACKS` + `ALL`),
+`PodcastRepository.fetchOne` (`kabod://` routing),
+`LofiPodApp.onCreate` (loader wired + `transcripts` exposed),
+`PlayerScreen` (third tab + `onOpenTranscript` plumbing + scripture
+chip in DetailsTab),
+`MainActivity` (`player/transcript/{guid}` route + back-stack hide
+in MiniPlayer guard),
+`CatalogScreen` ("Import pack…" overflow item + SAF picker),
+`Backup` (v7 → v8 round-trip + caller updates in
+`BackupWorker` + `MetricsScreen`),
+`build.gradle.kts` (jsoup dep).
+
+Tools also: `tools/build-piper-romans-pack.py` (the generator),
+`tools/romans-catalog.json` (verified 223-entry source — already filtered
+to strict Romans by the research pass), `tools/romans-sample-10.json`
+(the early-build subset, kept for reference).
+
+Local build verification was not run (no gradle wrapper jar is
+committed; the repo relies on CI's `gradle/actions/setup-gradle@v4`).
+First push will compile via the existing `build.yml` workflow.
+
 ## In-app updater + tag-driven release pipeline
 
 End-to-end updates from a `git tag v*` push:

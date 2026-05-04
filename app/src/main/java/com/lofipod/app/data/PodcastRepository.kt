@@ -41,6 +41,12 @@ class PodcastRepository(
         }
         .build()
 
+    /**
+     * Optional Kabod Pack loader. When set, [fetchOne] routes feeds with the
+     * `kabod://` scheme through it instead of HTTP. Wired up by [com.lofipod.app.LofiPodApp].
+     */
+    @Volatile var kabodLoader: KabodAssetLoader? = null
+
     @Volatile private var cache: Map<String, Podcast> = emptyMap()
 
     suspend fun loadSourcesFile(uri: Uri): List<SourceEntry> = withContext(Dispatchers.IO) {
@@ -88,17 +94,27 @@ class PodcastRepository(
      * Runs the blocking HTTP + parse on Dispatchers.IO via [runInterruptible], so coroutine
      * cancellation (e.g. from [withTimeoutOrNull]) actually interrupts the worker thread —
      * which OkHttp's [okhttp3.Call.execute] honors and aborts the call.
+     *
+     * Synthetic `kabod://` URLs short-circuit to the bundled-asset loader (no HTTP).
      */
-    suspend fun fetchOne(src: SourceEntry): Podcast = runInterruptible(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url(src.feedUrl)
-            .build()    // UA is set globally by the http interceptor
-        http.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) error("HTTP ${resp.code} for ${src.feedUrl}")
-            val body = resp.body ?: error("Empty body")
-            val parsed = body.byteStream().use { RssParser.parse(src.feedUrl, it) }
-            // Override title if user provided a display name
-            if (src.displayName != null) parsed.copy(title = src.displayName) else parsed
+    suspend fun fetchOne(src: SourceEntry): Podcast {
+        val loader = kabodLoader
+        if (loader != null && loader.isKabodFeed(src.feedUrl)) {
+            val pod = loader.loadIntoCache(src.feedUrl)
+                ?: error("Kabod pack not found for ${src.feedUrl}")
+            return if (src.displayName != null) pod.copy(title = src.displayName) else pod
+        }
+        return runInterruptible(Dispatchers.IO) {
+            val req = Request.Builder()
+                .url(src.feedUrl)
+                .build()    // UA is set globally by the http interceptor
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) error("HTTP ${resp.code} for ${src.feedUrl}")
+                val body = resp.body ?: error("Empty body")
+                val parsed = body.byteStream().use { RssParser.parse(src.feedUrl, it) }
+                // Override title if user provided a display name
+                if (src.displayName != null) parsed.copy(title = src.displayName) else parsed
+            }
         }
     }
 

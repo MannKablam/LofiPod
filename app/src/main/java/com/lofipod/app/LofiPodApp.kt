@@ -6,8 +6,10 @@ import coil.ImageLoader
 import com.lofipod.app.data.BackupWorker
 import com.lofipod.app.data.DownloadHolder
 import com.lofipod.app.data.Downloads
+import com.lofipod.app.data.KabodAssetLoader
 import com.lofipod.app.data.PodcastRepository
 import com.lofipod.app.data.Settings
+import com.lofipod.app.data.TranscriptRepository
 import com.lofipod.app.data.db.AppDatabase
 import com.lofipod.app.update.UpdateWorker
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +28,10 @@ class LofiPodApp : Application() {
         private set
     lateinit var downloadsApi: Downloads
         private set
+    lateinit var kabodLoader: KabodAssetLoader
+        private set
+    lateinit var transcripts: TranscriptRepository
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -34,6 +40,9 @@ class LofiPodApp : Application() {
         db = AppDatabase.get(this)
         downloads = DownloadHolder(this)
         downloadsApi = Downloads(this, downloads.downloadManager)
+        kabodLoader = KabodAssetLoader(this, db)
+        repo.kabodLoader = kabodLoader
+        transcripts = TranscriptRepository(db)
 
         // Coil's default OkHttp uses a generic UA that some podcast art hosts (e.g.
         // cloudfront fronts) reject. Force the same browser-ish UA we use for feed
@@ -61,6 +70,17 @@ class LofiPodApp : Application() {
             val settings = Settings(this@LofiPodApp)
             BackupWorker.schedule(this@LofiPodApp, settings.backupIntervalHours.first())
             UpdateWorker.schedule(this@LofiPodApp, settings.updateAutoCheckEnabled.first())
+        }
+
+        // Install bundled Kabod Packs (idempotent — packs already in the DB
+        // are skipped). Runs on a background scope so app launch isn't blocked
+        // even if the asset list grows.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                kabodLoader.installBundled()
+            } catch (e: Exception) {
+                System.err.println("Kabod bundle install failed: ${e.message}")
+            }
         }
     }
 

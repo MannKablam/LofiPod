@@ -21,6 +21,19 @@ import com.lofipod.app.parser.SourceEntry
  */
 object Sources {
 
+    /**
+     * Bundled Kabod Packs. Each entry uses the synthetic `kabod://<packId>`
+     * scheme — [PodcastRepository.fetchOne] sees the scheme and routes to
+     * [KabodAssetLoader] (asset file read + parse) instead of HTTP. The same
+     * packId must match the bundled file at `assets/kabod/<packId>.kabod`.
+     */
+    val KABOD_PACKS: List<SourceEntry> = listOf(
+        SourceEntry(
+            feedUrl = "kabod://desiringgod-piper-romans",
+            displayName = null  // pack file's own title wins
+        ),
+    )
+
     val PODCASTS: List<SourceEntry> = listOf(
         SourceEntry(
             feedUrl = "https://ccmodesto.com/?feed=seriesengine&enmse_pid=4",
@@ -56,7 +69,10 @@ object Sources {
         )
     )
 
+    /** All sources that should appear in the catalog — kabod packs + RSS feeds. */
+    val ALL: List<SourceEntry> = KABOD_PACKS + PODCASTS
+
     /** Convenience: look up a podcast's display name (or null) by its feed URL. */
     fun displayNameOf(feedUrl: String): String? =
-        PODCASTS.firstOrNull { it.feedUrl == feedUrl }?.displayName
+        ALL.firstOrNull { it.feedUrl == feedUrl }?.displayName
 }
