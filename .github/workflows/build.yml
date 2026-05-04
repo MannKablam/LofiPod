@@ -40,6 +40,11 @@ jobs:
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/*.apk
+          # Tag-driven Releases are the canonical install source now —
+          # this artifact is just a "did the commit build" sanity check.
+          # 7-day retention keeps Actions storage tidy on the 500 MB Free
+          # quota without losing recent debugging value.
+          retention-days: 7
 
       - name: Upload build reports on failure
         if: failure()
@@ -50,3 +55,4 @@ jobs:
             app/build/reports/
             app/build/outputs/logs/
           if-no-files-found: ignore
+          retention-days: 7
