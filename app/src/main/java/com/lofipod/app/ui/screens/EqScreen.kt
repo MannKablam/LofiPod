@@ -66,11 +66,24 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
         scrollScope.launch { scrollState.animateScrollTo(graphicEqY) }
     }
 
+    /**
+     * Persist the current band gains as a CSV (one float per ISO band, in
+     * order). Centers + Q come from `EqPresets.DEFAULT_BANDS` and are not
+     * stored — only the user-controlled gain values need to round-trip.
+     */
+    fun persistBands(latest: List<EqBand>) {
+        val csv = latest.joinToString(",") { it.gainDb.toString() }
+        composeScope.launch {
+            withContext(Dispatchers.IO) { settings.setEqBandsCsv(csv) }
+        }
+    }
+
     fun applyFlat() {
         activePreset = null
         activeLevel = 0
         bands = EqPresets.FLAT
         eq.setBands(bands)
+        persistBands(bands)
         scrollToBands()
     }
 
@@ -85,6 +98,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
         bands = if (activePreset == null) EqPresets.FLAT
                 else preset.levels[activeLevel - 1]
         eq.setBands(bands)
+        persistBands(bands)
         scrollToBands()
     }
 
@@ -145,6 +159,13 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 onValueChange = {
                     gainDb = it
                     eq.setGainDb(it)
+                },
+                onValueChangeFinished = {
+                    // Persist on release rather than every drag tick — DataStore
+                    // writes coalesce in practice, but no reason to thrash.
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setGainDb(gainDb) }
+                    }
                 },
                 valueRange = 0f..12f,
                 steps = 23
@@ -226,6 +247,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                     newBands[idx] = band.copy(gainDb = newGain)
                     bands = newBands
                     eq.setBands(newBands)
+                    persistBands(newBands)
                     // Manual band edits drop us off the preset rail.
                     activePreset = null
                     activeLevel = 0

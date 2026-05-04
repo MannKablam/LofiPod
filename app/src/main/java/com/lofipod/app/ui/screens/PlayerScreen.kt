@@ -733,7 +733,7 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
         Spacer(Modifier.height(12.dp))
         if (ep == null) {
             Text(
-                "Episode metadata is not in the cache. Open this feed in Library to refresh.",
+                "Episode metadata is not in the cache. Open this feed in Catalog to refresh.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

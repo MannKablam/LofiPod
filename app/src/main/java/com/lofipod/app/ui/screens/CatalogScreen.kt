@@ -35,14 +35,14 @@ import com.lofipod.app.data.db.FeedVisitEntity
 import com.lofipod.app.data.model.Podcast
 import com.lofipod.app.player.PlayerController
 import com.lofipod.app.ui.FeedLoadStatus
-import com.lofipod.app.ui.LibraryViewModel
+import com.lofipod.app.ui.CatalogViewModel
 import com.lofipod.app.ui.theme.ThemedArtwork
 import com.lofipod.app.ui.theme.lofiTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
-fun LibraryScreen(
+fun CatalogScreen(
     controller: PlayerController,
     onPodcastClick: (Podcast) -> Unit,
     onOpenMyLists: () -> Unit,
@@ -54,7 +54,7 @@ fun LibraryScreen(
     onOpenHistory: () -> Unit,
     onOpenSearch: () -> Unit
 ) {
-    val vm: LibraryViewModel = viewModel()
+    val vm: CatalogViewModel = viewModel()
     val state by vm.state.collectAsState()
     val playerState by controller.state.collectAsState()
     var menuExpanded by remember { mutableStateOf(false) }
@@ -321,8 +321,8 @@ private fun NewEpisodesBadge(count: Int) {
 /**
  * Count of episodes whose pubDate is strictly after the last-visited timestamp.
  * Returns 0 when [lastVisitedAt] is null (no visit row yet — the LaunchedEffect
- * in [LibraryScreen] seeds one to NOW so this is a transient state on first
- * Library load and never a "show all episodes as new" surprise).
+ * in [CatalogScreen] seeds one to NOW so this is a transient state on first
+ * Catalog load and never a "show all episodes as new" surprise).
  */
 private fun newEpisodesSince(pod: Podcast, lastVisitedAt: Long?): Int {
     val cutoff = lastVisitedAt ?: return 0

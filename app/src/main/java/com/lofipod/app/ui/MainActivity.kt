@@ -161,11 +161,11 @@ private fun AppNav(
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = "library",
+            startDestination = "catalog",
             modifier = Modifier.padding(padding)
         ) {
-            composable("library") {
-                LibraryScreen(
+            composable("catalog") {
+                CatalogScreen(
                     controller = controller,
                     onPodcastClick = { pod ->
                         val encoded = URLEncoder.encode(pod.feedUrl, "UTF-8")

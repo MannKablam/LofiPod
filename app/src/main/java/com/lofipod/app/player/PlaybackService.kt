@@ -49,7 +49,7 @@ class PlaybackService : MediaSessionService() {
         private const val SAVE_INTERVAL_MS = 10_000L
 
         /** Intent action used by the media-session tap target to ask MainActivity
-         *  to navigate straight to the Player screen instead of resuming on Library. */
+         *  to navigate straight to the Player screen instead of resuming on Catalog. */
         const val ACTION_OPEN_PLAYER = "com.lofipod.app.OPEN_PLAYER"
     }
 
@@ -105,20 +105,33 @@ class PlaybackService : MediaSessionService() {
             }
         })
 
-        // Rehydrate the persisted skip-silence level into the shared
-        // processor. One-shot read on service creation — the EQ screen also
-        // writes through to sharedSkipSilence directly when the user changes
-        // it, so we don't need an ongoing flow collector here.
+        // Rehydrate persisted audio prefs into the shared processors.
+        // One-shot reads on service creation — the EQ screen writes through
+        // to the same Settings entries (and to the live processors) when
+        // the user changes anything, so we don't need ongoing collectors.
         scope.launch {
-            val saved = com.lofipod.app.data.Settings(this@PlaybackService)
-                .skipSilenceLevel
-                .first()
-            sharedSkipSilence.setLevel(saved)
+            val settings = com.lofipod.app.data.Settings(this@PlaybackService)
+            sharedSkipSilence.setLevel(settings.skipSilenceLevel.first())
+
+            // EQ bands — CSV of 10 gain values, one per ISO band. If the
+            // CSV is missing or malformed, leave the processor at FLAT
+            // defaults rather than half-loading a bad config.
+            val csv = settings.eqBandsCsv.first()
+            if (csv != null) {
+                val gains = csv.split(",").mapNotNull { it.trim().toFloatOrNull() }
+                if (gains.size == com.lofipod.app.audio.EqPresets.DEFAULT_BANDS.size) {
+                    val rehydrated = com.lofipod.app.audio.EqPresets.DEFAULT_BANDS
+                        .mapIndexed { i, b -> b.copy(gainDb = gains[i]) }
+                    sharedEq.setBands(rehydrated)
+                }
+            }
+
+            sharedEq.setGainDb(settings.gainDb.first())
         }
 
         // Notification tap target: route through MainActivity with a custom
         // action so the UI can route the user to the Player screen instead of
-        // dropping them on the Library. Without this, tapping the system media
+        // dropping them on the Catalog. Without this, tapping the system media
         // notification did literally nothing.
         val sessionActivityIntent = Intent(this, MainActivity::class.java).apply {
             action = ACTION_OPEN_PLAYER

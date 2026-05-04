@@ -99,7 +99,7 @@ fun EpisodesScreen(
                     durationMs = s.durationMs,
                 )
             }
-            // Mark the feed as visited — clears the new-episodes badge on Library.
+            // Mark the feed as visited — clears the new-episodes badge on Catalog.
             app.db.feedVisitDao().upsert(
                 com.lofipod.app.data.db.FeedVisitEntity(
                     feedUrl, System.currentTimeMillis()

@@ -360,7 +360,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        /** v9 → v10: feed_visit table for the new-episodes badge on Library. */
+        /** v9 → v10: feed_visit table for the new-episodes badge on Catalog. */
         private val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

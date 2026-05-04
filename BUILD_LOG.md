@@ -2,6 +2,31 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EQ persistence + rename Library → Catalog
+
+- **EQ bands + volume boost now persist across app restart.** Previously the
+  `KEY_EQ_BANDS` / `KEY_GAIN_DB` slots existed in `Settings` but nobody
+  collected or wrote through them, so every launch reset the EQ to flat and
+  the boost to 0 dB. Fixed in two places:
+  - `PlaybackService.onCreate` now reads `eqBandsCsv` + `gainDb` (alongside
+    the existing skip-silence rehydrate) and applies them to `sharedEq`
+    before the player starts. Malformed CSVs fall through to flat rather
+    than half-load a bad config.
+  - `EqScreen` writes through to `Settings` on every band change, preset
+    apply, Flat reset, and on `onValueChangeFinished` for the volume-boost
+    slider (release-only — no DataStore thrash mid-drag).
+- **Rename: `LibraryScreen` → `CatalogScreen`, route `"library"` → `"catalog"`.**
+  Same for `LibraryViewModel` → `CatalogViewModel` and `LibraryUiState` →
+  `CatalogUiState`. File renames done via `git mv` so `git log --follow`
+  still tracks history. Comment + user-facing string references updated
+  across `PlaybackService`, `PlayerController`, `EpisodesScreen`,
+  `EpisodeSearchScreen`, `FeedVisitEntity`, `PlayerScreen`,
+  `PodcastSourceEntity`, `AppDatabase`. The lone "runtime library" mention
+  in `Sources.kt` is generic English (not the screen name) and stays as
+  is. Historical BUILD_LOG entries reference `LibraryScreen` /
+  `LibraryViewModel` — those are accurate records of what was committed at
+  the time and aren't rewritten.
+
 ## Skip silence, per-podcast speed, search, mark played, clear history, auto-backup
 
 Sweep through six items off the deeper polish list.
