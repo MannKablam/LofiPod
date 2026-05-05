@@ -2,6 +2,56 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Refreshed catalog + expandable card stacks for grouped feeds
+
+Source canon refreshed against Podcast Index. Same fetch model (raw RSS, not
+the Podcast Index API itself — that one truncates `<description>`); IDs were
+just used as a directory to find publisher RSS URLs. New entries: Now That
+We're A Family, Simple Farmhouse Life, Homeschool Made Simple, The Briefing
+with Albert Mohler, The Pour Over. Just Thinking moved off the dead Anchor
+URL onto `feeds.podcastmirror.com`. Bethany / BibleThinker / Alpha and
+Omega / Desiring God feeds are unchanged from the old list.
+
+Two podcasts are actually clusters of feeds — Calvary Chapel Modesto has
+four (Topical Studies, Thru the Bible, Sunday Morning, Sunday Evening) and
+John Piper has three (APJ, Solid Joys, Light + Truth). Rather than four
+near-identical CCM cards in the catalog, both are folded into a single
+expandable "card stack" row that opens on tap to reveal the children.
+
+**Data model.** Introduced a sealed `CatalogItem` interface in
+`SourcesFileParser.kt` with two implementers: `SourceEntry` (one feed) and
+`SourceGroup` (a named cluster of `SourceEntry` children). `Sources.PODCASTS`
+is now `List<CatalogItem>` and the order in that list is the catalog order.
+A flat `Sources.PODCAST_FEEDS` accessor expands groups into their children,
+and `Sources.ALL` (kabod packs + flat feeds) is what the fetch path
+(`CatalogViewModel`, `PodcastRepository`) reads — fetching is per-feed and
+ignores grouping.
+
+`Sources.displayNameOf(feedUrl)` now prefixes group children with the group
+name (e.g. "Calvary Chapel Modesto — Topical Studies") so screens outside
+the catalog (history, metrics) get unambiguous labels. The catalog screen
+itself reads child names directly off `SourceEntry.displayName` and renders
+them under the group header without the prefix.
+
+**Catalog UI.** `CatalogScreen.kt` walks `Sources.PODCASTS` instead of
+iterating loaded `Podcast` objects. It joins by `feedUrl` against an
+in-memory map. A new `GroupRow` composable renders each group: first
+child's artwork as a stand-in, group title, "N feeds · M episodes"
+subtitle, summed "new" badge, and a chevron that rotates 180° via
+`animateFloatAsState` when expanded. Expanded children render inline
+underneath the group header with 24dp start padding and the short
+display-name override (e.g. "Topical Studies" rather than the feed's own
+"Calvary Chapel Modesto — Topical Studies"). Expansion state lives in a
+`mutableStateMapOf` keyed by `groupId`. `PodcastRow` gained two optional
+parameters (`titleOverride`, `indent`) so it can be reused for both
+top-level and nested rows; existing call sites are unchanged.
+
+A group is hidden entirely if all of its children failed to load — the
+subtitle's feed/episode count reflects only loaded children.
+
+The old iTunes-ID lookup comments in `Sources.kt` were replaced with
+Podcast Index IDs since that's now the directory used for URL re-resolution.
+
 ## Kabod Pack format + Romans-by-Piper pack + Player transcript surface
 
 **The format.** A "Kabod Pack" is RSS 2.0 with a `kabod:` namespace overlay

@@ -2,6 +2,7 @@
 
 package com.lofipod.app.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
@@ -28,6 +30,7 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,8 +38,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.PodcastRepository.FeedStatus
+import com.lofipod.app.data.Sources
 import com.lofipod.app.data.db.FeedVisitEntity
 import com.lofipod.app.data.model.Podcast
+import com.lofipod.app.parser.SourceEntry
+import com.lofipod.app.parser.SourceGroup
 import com.lofipod.app.player.PlayerController
 import com.lofipod.app.ui.FeedLoadStatus
 import com.lofipod.app.ui.CatalogViewModel
@@ -249,18 +255,81 @@ fun CatalogScreen(
                     }
                 }
                 else -> {
+                    // Loaded pods are flat — keyed by feed URL — but we render
+                    // hierarchically off [Sources.PODCASTS] so groups can fold
+                    // their children into one expandable card. Lookups by URL
+                    // are O(1) via this map.
+                    val podsByUrl = remember(state.podcasts) {
+                        state.podcasts.associateBy { it.feedUrl }
+                    }
+                    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
                     LazyColumn(
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(state.podcasts) { pod ->
-                            val lastSeen = visitsByFeed[pod.feedUrl]
-                            val newCount = newEpisodesSince(pod, lastSeen)
-                            PodcastRow(
-                                pod = pod,
-                                newEpisodeCount = newCount,
-                                onClick = { onPodcastClick(pod) }
-                            )
+                        Sources.PODCASTS.forEach { catalogItem ->
+                            when (catalogItem) {
+                                is SourceEntry -> {
+                                    val pod = podsByUrl[catalogItem.feedUrl]
+                                    if (pod != null) {
+                                        item(key = catalogItem.feedUrl) {
+                                            val newCount = newEpisodesSince(
+                                                pod, visitsByFeed[catalogItem.feedUrl]
+                                            )
+                                            PodcastRow(
+                                                pod = pod,
+                                                newEpisodeCount = newCount,
+                                                onClick = { onPodcastClick(pod) }
+                                            )
+                                        }
+                                    }
+                                }
+                                is SourceGroup -> {
+                                    val loadedChildren = catalogItem.children.mapNotNull { entry ->
+                                        podsByUrl[entry.feedUrl]?.let { pod -> entry to pod }
+                                    }
+                                    if (loadedChildren.isNotEmpty()) {
+                                        val expanded = expandedGroups[catalogItem.groupId] == true
+                                        val totalEps = loadedChildren.sumOf { it.second.episodes.size }
+                                        val newSum = loadedChildren.sumOf { (entry, pod) ->
+                                            newEpisodesSince(pod, visitsByFeed[entry.feedUrl])
+                                        }
+                                        val leadArtworkUrl = loadedChildren.first().second.artworkUrl
+                                        item(key = catalogItem.groupId) {
+                                            GroupRow(
+                                                group = catalogItem,
+                                                leadArtworkUrl = leadArtworkUrl,
+                                                feedCount = loadedChildren.size,
+                                                totalEpisodes = totalEps,
+                                                newEpisodeCount = newSum,
+                                                expanded = expanded,
+                                                onToggle = {
+                                                    expandedGroups[catalogItem.groupId] = !expanded
+                                                }
+                                            )
+                                        }
+                                        if (expanded) {
+                                            items(
+                                                items = loadedChildren,
+                                                key = { (entry, _) ->
+                                                    "${catalogItem.groupId}:${entry.feedUrl}"
+                                                }
+                                            ) { (entry, pod) ->
+                                                val newCount = newEpisodesSince(
+                                                    pod, visitsByFeed[entry.feedUrl]
+                                                )
+                                                PodcastRow(
+                                                    pod = pod,
+                                                    newEpisodeCount = newCount,
+                                                    onClick = { onPodcastClick(pod) },
+                                                    titleOverride = entry.displayName,
+                                                    indent = true
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -395,15 +464,24 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
     }
 }
 
+/**
+ * Top-level catalog card for a single feed. Reused for [SourceGroup] children
+ * with [indent] true (start padding marks them as nested) and [titleOverride]
+ * set (since group children carry short labels like "Topical Studies" that
+ * differ from the feed's own <title>).
+ */
 @Composable
 private fun PodcastRow(
     pod: Podcast,
     newEpisodeCount: Int,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    titleOverride: String? = null,
+    indent: Boolean = false,
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(start = if (indent) 24.dp else 0.dp)
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
@@ -415,7 +493,7 @@ private fun PodcastRow(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    pod.title,
+                    titleOverride ?: pod.title,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 2
                 )
@@ -429,6 +507,66 @@ private fun PodcastRow(
                     NewEpisodesBadge(count = newEpisodeCount)
                 }
             }
+        }
+    }
+}
+
+/**
+ * Card-stack header for a [SourceGroup]. Uses the first child's artwork as a
+ * stand-in (cheap and recognizable; a bespoke stacked-thumbnail visual is a
+ * later iteration). Tapping toggles inline expansion of the children below.
+ */
+@Composable
+private fun GroupRow(
+    group: SourceGroup,
+    leadArtworkUrl: String?,
+    feedCount: Int,
+    totalEpisodes: Int,
+    newEpisodeCount: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "group-chevron"
+    )
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ThemedArtwork(artworkUrl = leadArtworkUrl, size = 64.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    group.groupName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2
+                )
+                Text(
+                    if (totalEpisodes > 0) "$feedCount feeds  ·  $totalEpisodes episodes"
+                    else "$feedCount feeds",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (newEpisodeCount > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    NewEpisodesBadge(count = newEpisodeCount)
+                }
+            }
+            Icon(
+                Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(28.dp)
+                    .graphicsLayer { rotationZ = rotation }
+            )
         }
     }
 }
