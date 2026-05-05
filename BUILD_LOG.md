@@ -2,6 +2,35 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Download status on PlayerScreen + auto-download for live plays
+
+PlayerScreen now surfaces the same five-state download affordance the
+catalog row carries (download / spinner+percent+cancel / done / retry).
+Sits on the artist line, right-aligned. Same composable in both modes —
+extracted from EpisodesScreen into `DownloadUi.kt` so the catalog row
+and the player header stay in lockstep.
+
+**Live**: `PlayerController.playEpisode` now triggers
+`downloadsApi.start(ep)` after `setMediaItem/prepare/play`, gated by an
+in-memory check against the current download map so we don't thrash
+DownloadManager on every play. By the time the user is committed
+enough to be playing, an offline copy for the next session is the
+better default. The auto-trigger skips guids already in any download
+state including FAILED — a previously-failed download isn't auto-
+retried on every play; the user can retry from the chip explicitly.
+
+**Preview**: button is fully interactive from the start — tap downloads,
+tap-while-downloading cancels, tap-when-done deletes. The episode is
+already known via `previewData`, so the click goes straight through to
+`downloadsApi.start(previewData.episode)`.
+
+In live mode the user can also override the auto-download by tapping
+cancel or delete on the same button; a new
+`PlayerController.startDownloadForCurrent(guid)` looks up the
+audioUrl/feedUrl from `episode_state` (already upserted by playEpisode)
+to handle re-start from FAILED without needing the full Episode object
+in hand.
+
 ## EQ preset memory + Notes parity + shared seek increments
 
 Three small post-v0.4.3 corrections, bundled because each is self-contained.

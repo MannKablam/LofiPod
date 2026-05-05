@@ -356,6 +356,47 @@ class PlayerController(private val context: Context) {
                     FeedVisitEntity(ep.feedUrl, System.currentTimeMillis())
                 )
             }
+
+            // Auto-download episodes the user starts playing. Reasoning: by
+            // the time playback is rolling, the user is committed enough that
+            // having an offline copy for the next session is the better
+            // default. Idempotent — DownloadManager skips if the guid is
+            // already queued/downloading/completed; this check is just a
+            // cheap precheck against the in-memory snapshot to avoid the
+            // service-call round trip. Skips guids already in downloads
+            // including FAILED, so a previously-failed download isn't auto-
+            // retried on every play (the user can retry from the chip).
+            val app = context.applicationContext as LofiPodApp
+            if (!app.downloadsApi.byId.value.containsKey(ep.guid)) {
+                app.downloadsApi.start(ep)
+            }
+        }
+    }
+
+    /**
+     * Start a download for [guid] using the audioUrl + feedUrl persisted in
+     * the episode_state row. Intended for the live-mode download button on
+     * PlayerScreen — the screen has the guid but not the full Episode,
+     * since the live state is driven off the MediaController. No-op if no
+     * row exists yet (shouldn't happen for an episode that's currently
+     * playing — playEpisode upserts the row before setMediaItem).
+     */
+    fun startDownloadForCurrent(guid: String) {
+        val app = context.applicationContext as LofiPodApp
+        scope.launch {
+            val state = withContext(Dispatchers.IO) { dao.get(guid) } ?: return@launch
+            val ep = Episode(
+                guid = state.guid,
+                feedUrl = state.feedUrl,
+                title = state.title,
+                description = null,
+                pubDateMillis = null,
+                audioUrl = state.audioUrl,
+                audioMimeType = null,
+                durationSeconds = null,
+                episodeArtworkUrl = state.artworkUrl
+            )
+            app.downloadsApi.start(ep)
         }
     }
 
