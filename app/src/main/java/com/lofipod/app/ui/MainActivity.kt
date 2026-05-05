@@ -408,7 +408,7 @@ private fun MiniPlayer(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { controller.seekRelative(-15_000) }) {
+                IconButton(onClick = { controller.seekBack() }) {
                     Icon(
                         Icons.Filled.Replay,
                         contentDescription = "Back 15s",
@@ -433,7 +433,7 @@ private fun MiniPlayer(
                         )
                     }
                 }
-                IconButton(onClick = { controller.seekRelative(30_000) }) {
+                IconButton(onClick = { controller.seekForward() }) {
                     Icon(
                         Icons.Filled.Forward30,
                         contentDescription = "Forward 30s",

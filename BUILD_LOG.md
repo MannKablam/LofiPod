@@ -2,6 +2,39 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EQ preset memory + Notes parity + shared seek increments
+
+Three small post-v0.4.3 corrections, bundled because each is self-contained.
+
+**EQ screen now remembers its active preset.** Previously, navigating
+out of EQ and back showed the preset row at "Flat" even though the
+audio was still applying e.g. Voice L2 — the highlight state was stored
+as `remember { mutableStateOf(...) }` and reset on every recomposition.
+Now derived from the current bands by reverse-matching against the
+known preset levels (whole-integer dB values, exactly representable as
+Float, so list-equality is safe). No new persistence — single source of
+truth is the bands themselves. Falls through to "no preset highlighted"
+for FLAT and for any custom hand-tuned curve that doesn't match a level.
+
+**Notes tab on PlayerScreen reaches parity with the per-episode Notes
+screen.** Pulled `NoteCard` (jump / edit / delete row) and
+`NoteEditorDialog` into a shared `NoteUi.kt`. Both NotesScreen and
+PlayerScreen.NotesTab now render the same row, with the same dialog for
+both Add and Edit. The `pauseOnNote` behavior (auto-pause while writing,
+auto-resume on close) is in lockstep across both screens because the
+dialog is the same code.
+
+**Bluetooth / vehicle media controls.** Already worked via Media3's
+default mapping of KEYCODE_MEDIA_REWIND/FAST_FORWARD to
+`player.seekBack()`/`seekForward()`, which use the increments configured
+on ExoPlayer in `PlaybackService` (15s back / 30s forward). What was
+inconsistent: the on-screen back/forward buttons in PlayerScreen and
+MiniPlayer hardcoded `seekRelative(-15_000)` / `seekRelative(30_000)`,
+meaning a future "adjustable skip increments" Setting would only flow
+to BT and not to the on-screen buttons. Both sides now go through new
+`PlayerController.seekBack()` / `seekForward()` methods that delegate
+to the controller, so the ExoPlayer config is the one place to tweak.
+
 ## Fix: FAILED_RUNTIME_CHECK on the very first play after cold bind
 
 v0.4.2's queue fix (below) made the first-play attempt actually reach the
