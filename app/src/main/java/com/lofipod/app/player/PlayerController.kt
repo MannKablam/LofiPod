@@ -59,6 +59,22 @@ class PlayerController(private val context: Context) {
     private val _pendingReturn = MutableStateFlow<PendingReturn?>(null)
     val pendingReturn: StateFlow<PendingReturn?> = _pendingReturn.asStateFlow()
 
+    /**
+     * Captured args of a [playEpisode] call that arrived while [controller]
+     * was still null (the MediaController is built async; until the future
+     * fires we have nothing to forward commands to). Drained in [connect]'s
+     * listener once the controller is live. Last-wins: a second tap before
+     * connect overwrites the first, which is the right UX (whatever the user
+     * most recently asked for is what plays).
+     *
+     * Without this queue, a fast-tap-on-fresh-install lost the race against
+     * the cold service bind and the play was silently dropped — which is
+     * what produced the "tap Play, nothing happens, then toggling skip
+     * silence makes it work" symptom. Skip silence wasn't the fix; the
+     * 2–5 seconds of detour just gave the controller time to connect.
+     */
+    @Volatile private var pendingPlay: PendingPlay? = null
+
     fun connect(onReady: () -> Unit) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
@@ -68,6 +84,16 @@ class PlayerController(private val context: Context) {
                 pushState()
             }
             onReady()
+            // Drain any play attempt the user fired while we were still
+            // binding to the service. Posted via scope.launch so the replay
+            // lands on Main.immediate (same as everything else here), not on
+            // whatever thread the future completed on.
+            scope.launch {
+                pendingPlay?.let { p ->
+                    pendingPlay = null
+                    playEpisode(p.ep, p.podcastTitle, p.podcastArt, p.forcedStartMs)
+                }
+            }
             // Belt-and-suspenders: when the activity is recreated against a
             // still-running service (cold launch with audio playing), the
             // MediaController syncs its state from the session over a few
@@ -92,6 +118,7 @@ class PlayerController(private val context: Context) {
         controller?.release()
         controller = null
         _pendingReturn.value = null
+        pendingPlay = null
         scope.cancel()
     }
 
@@ -193,7 +220,13 @@ class PlayerController(private val context: Context) {
         podcastArt: String?,
         forcedStartMs: Long? = null
     ) {
-        val c = controller ?: return
+        val c = controller
+        if (c == null) {
+            // Controller still building — queue and bail. The drain in
+            // [connect]'s listener replays this call once we're live.
+            pendingPlay = PendingPlay(ep, podcastTitle, podcastArt, forcedStartMs)
+            return
+        }
         scope.launch {
             // 1. Outgoing item: persist position + (optionally) record session_end checkpoint.
             val outgoingId = c.currentMediaItem?.mediaId
@@ -628,4 +661,11 @@ data class PendingReturn(
     val guid: String,
     val positionMs: Long,
     val createdAt: Long
+)
+
+private data class PendingPlay(
+    val ep: Episode,
+    val podcastTitle: String,
+    val podcastArt: String?,
+    val forcedStartMs: Long?,
 )
