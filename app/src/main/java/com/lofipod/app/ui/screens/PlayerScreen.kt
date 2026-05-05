@@ -123,6 +123,9 @@ fun PlayerScreen(
 
     val app = LocalContext.current.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
+    // Per-episode download state for the inline DownloadButton. Recomposes
+    // automatically as downloads progress / change state.
+    val downloadsByGuid by app.downloadsApi.byId.collectAsState()
 
     // Resolve preview data once per [previewGuid]. Loaded async because we
     // hit the DB; stays null until ready (we render a brief loading state
@@ -369,11 +372,44 @@ fun PlayerScreen(
                     style = MaterialTheme.typography.titleLarge,
                     maxLines = 2
                 )
-                Text(
-                    displayedArtist,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // Artist line + per-episode download status. The download
+                // button mirrors the EpisodesScreen affordance (download,
+                // cancel, delete, retry) and surfaces the same Media3
+                // Download object — auto-download in playEpisode means a
+                // fresh live play almost always lands here on QUEUED →
+                // DOWNLOADING → COMPLETED, while preview lets the user kick
+                // it off explicitly before committing to playing.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        displayedArtist,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (displayedGuid != null) {
+                        val download = downloadsByGuid[displayedGuid]
+                        DownloadButton(
+                            download = download,
+                            onClick = {
+                                val d = downloadsByGuid[displayedGuid]
+                                if (d == null || d.state == androidx.media3.exoplayer.offline.Download.STATE_FAILED) {
+                                    // Start. Preview has full Episode in
+                                    // hand; live looks up via episode_state.
+                                    if (isPreview) {
+                                        previewData?.episode?.let { app.downloadsApi.start(it) }
+                                    } else {
+                                        controller.startDownloadForCurrent(displayedGuid)
+                                    }
+                                } else {
+                                    app.downloadsApi.remove(displayedGuid)
+                                }
+                            }
+                        )
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 val frac = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
                 Slider(
