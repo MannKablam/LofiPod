@@ -2,6 +2,40 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix: FAILED_RUNTIME_CHECK on the very first play after cold bind
+
+v0.4.2's queue fix (below) made the first-play attempt actually reach the
+controller instead of being silently dropped — which exposed the
+underlying race it had been masking. Symptom: error chip *"Failed: Failed
+runtime check — tap to retry"*, fired by ExoPlayer
+(`ERROR_CODE_FAILED_RUNTIME_CHECK = 1004`) on the first
+setMediaItem/prepare/play immediately after a cold MediaController bind.
+Three small changes in `PlayerController.kt`:
+
+1. **Settle delay before draining `pendingPlay`.** The drain in
+   `connect()`'s future listener now waits 150 ms before replaying the
+   queued `playEpisode`, giving the MediaController's session-side state
+   sync a beat to settle before we hit it with commands. Hammering
+   setMediaItem on the same frame the future resolved was the trigger.
+
+2. **Skip the bundled seek when startPos is 0.** `setMediaItem(item,
+   startPos)` is internally setMediaItems + queued seek-to-startPos,
+   and on Media3 1.4.x that seek can race with prepare on a fresh load
+   (matches the pattern in androidx/media#1641). Fresh-install plays
+   always have startPos = 0 (no saved position), so they take the
+   `setMediaItem(item)` no-seek overload now. Resume-from-saved-position
+   (startPos > 0) keeps the bundled form — that path has been stable.
+
+3. **Better diagnostics on player errors.** `onPlayerError` now logs the
+   full exception (with cause class + message) to logcat under the
+   `LofiPodPlayer` tag, and the error chip appends the cause class name
+   ("Failed: Failed runtime check (IllegalStateException) — tap to
+   retry") so opaque codes still hint at what actually blew up. Capture
+   with `adb logcat -s LofiPodPlayer:* *:E`.
+
+The 150 ms delay is the load-bearing change; (2) is defensive belt-and-
+suspenders; (3) is observability for whatever surfaces next.
+
 ## Fix: fresh-install playback won't start
 
 Symptom: on a fresh install the very first tap on Play did nothing. The

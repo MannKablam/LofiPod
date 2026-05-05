@@ -87,12 +87,18 @@ class PlayerController(private val context: Context) {
             // Drain any play attempt the user fired while we were still
             // binding to the service. Posted via scope.launch so the replay
             // lands on Main.immediate (same as everything else here), not on
-            // whatever thread the future completed on.
+            // whatever thread the future completed on. Short settle delay
+            // first: hammering setMediaItem/prepare/play onto a controller
+            // the same beat its future resolved was producing
+            // ERROR_CODE_FAILED_RUNTIME_CHECK from inside ExoPlayer on
+            // fresh installs (the session-side player needs a moment for
+            // its initial state sync before it can accept commands cleanly).
             scope.launch {
-                pendingPlay?.let { p ->
-                    pendingPlay = null
-                    playEpisode(p.ep, p.podcastTitle, p.podcastArt, p.forcedStartMs)
-                }
+                val p = pendingPlay ?: return@launch
+                kotlinx.coroutines.delay(150)
+                if (controller == null) return@launch
+                pendingPlay = null
+                playEpisode(p.ep, p.podcastTitle, p.podcastArt, p.forcedStartMs)
             }
             // Belt-and-suspenders: when the activity is recreated against a
             // still-running service (cold launch with audio playing), the
@@ -152,15 +158,28 @@ class PlayerController(private val context: Context) {
             }
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Always log the full exception to logcat so the user can grab
+            // diagnostics with `adb logcat -s LofiPodPlayer:* *:E` when the
+            // chip alone isn't enough to figure out what broke.
+            android.util.Log.w(
+                "LofiPodPlayer",
+                "Player error: code=${error.errorCodeName} msg=${error.message} " +
+                    "cause=${error.cause?.javaClass?.simpleName}: ${error.cause?.message}",
+                error
+            )
             // Surface a short, human-readable message. ExoPlayer's
             // PlaybackException.errorCodeName is stable across versions and
             // prints things like "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED" —
             // that's actionable for the user (network) without dragging in
-            // a full stack trace.
-            lastError = error.errorCodeName.removePrefix("ERROR_CODE_")
+            // a full stack trace. Append the cause's class name when present
+            // so opaque codes like FAILED_RUNTIME_CHECK still hint at the
+            // actual underlying exception type.
+            val codeName = error.errorCodeName.removePrefix("ERROR_CODE_")
                 .replace('_', ' ')
                 .lowercase()
                 .replaceFirstChar { it.uppercase() }
+            val causeName = error.cause?.javaClass?.simpleName
+            lastError = if (causeName != null) "$codeName ($causeName)" else codeName
             pushState()
         }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
@@ -297,7 +316,18 @@ class PlayerController(private val context: Context) {
                         .build()
                 )
                 .build()
-            c.setMediaItem(item, startPos)
+            // setMediaItem(item, startPos) bundles a seek into the load,
+            // which on Media3 1.4.x can race with prepare on the very first
+            // play after a cold service start (FAILED_RUNTIME_CHECK from
+            // inside ExoPlayer). When startPos is 0 there's nothing to seek
+            // to, so use the no-position overload — it skips the implicit
+            // seek entirely. Resume-from-saved-position (startPos > 0) keeps
+            // the bundled form, which is the path that's been stable.
+            if (startPos > 0L) {
+                c.setMediaItem(item, startPos)
+            } else {
+                c.setMediaItem(item)
+            }
             c.prepare()
             c.play()
 
