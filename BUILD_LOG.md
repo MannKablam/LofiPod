@@ -2,6 +2,85 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Kabod Pack catalog card + artwork overrides + Kabod schema doc
+
+Three threads shipping together as v0.4.0.
+
+**1. Kabod Pack render path + distinguished card chrome**
+
+The catalog refactor (previous entry) iterated `Sources.PODCASTS` only — kabod
+packs live in `Sources.KABOD_PACKS` and were getting fetched into state but
+never rendered. Bug was masked because the only kabod pack in the canon was
+the Romans series and we hadn't tested the catalog after the refactor.
+
+Fix + visual polish in one pass. New `KabodPackRow` composable, rendered at
+the **top** of the catalog ahead of all RSS feeds — these are weighty,
+archived bodies of work and deserve the prominence.
+
+The card is intentionally distinguished from regular podcast rows:
+- **Border**: `BorderStroke(1.5.dp, primary @ 0.55α)` — visible across every
+  theme without being garish.
+- **Background**: `surface` instead of the usual `surfaceVariant`. The
+  contrast with neighboring cards reads as "this row is different" without
+  relying on the border alone.
+- **Book glyph badge**: a 24dp circular `Surface` plate carrying
+  `Icons.Filled.MenuBook`, anchored to the lower-right of the artwork via
+  `align(BottomEnd) + offset(4.dp, 4.dp)`. The badge's primary fill
+  preserves icon legibility against any artwork (DG's default OG image is
+  bland; this gives the row a recognizable identity).
+- **Hebrew chip**: כבוד ("kabod" — weight, glory, presence) in a primary
+  `Surface` chip pinned to the upper-right via `align(TopEnd)`. The Column's
+  56dp end-padding reserves space so titles don't wrap behind it. Unpointed
+  spelling at 14sp bold — the niqqud (vowel-point) form clashes with the
+  chip's vertical metrics; system fonts pick up Noto Sans Hebrew
+  automatically, no asset needed.
+- **Subtitle**: "{author} · {N} entries" instead of the usual "{N}
+  episodes". Speaker identity is a primary identifier for archived
+  expository series, and `entries` is more neutral than `episodes` for a
+  generic packaged-content format.
+
+The kabod chip itself is the visual signature — it names the format, points
+back to the Hebrew root, and carries the gravity of the pastor's labor.
+Same chip + glyph treatment will apply to every kabod pack we ship.
+
+**2. Catalog artwork overrides — fully populated cards**
+
+`SourceEntry` gains an optional `customArtworkUrl: String?` and `SourceGroup`
+gains `groupArtworkUrl: String?`. CatalogScreen now prefers the override at
+each render site; falls back to the parsed feed's `<itunes:image>` when
+unset. Three places thread the override:
+- `PodcastRow` takes `artworkUrl: String?` directly (decoupled from `pod`).
+- `KabodPackRow` does too.
+- `GroupRow`'s `leadArtworkUrl` falls back through `groupArtworkUrl` →
+  first child's `customArtworkUrl` → first child's parsed feed art.
+
+Two specific overrides land:
+- **Bethany Bible Church**: pinned to its own CDN copy. Same image the feed
+  exposes via `<itunes:image>`, but hardcoded so the card always renders
+  even if the feed parse skips the tag for any reason.
+- **Calvary Chapel Modesto**: the `Sunday Morning Service` and `Sunday
+  Evening Service` feeds both reference `ccmodesto.com/podcast/podcast-cc.jpg`,
+  which is currently a zero-byte file (200 OK with empty body). Both child
+  feeds + the cluster's group banner now point at the working
+  `2026-Topical-podcast-itunes-1400.jpg` cover on CCM's DigitalOcean Spaces
+  bucket — high-res, CCM-branded, and at least one source of truth for the
+  whole cluster.
+
+After the overrides every card in the catalog renders with real artwork —
+no placeholders for actively-shipped feeds.
+
+**3. Kabod Pack format reference (`KABOD_SCHEMA.md`)**
+
+A standalone, self-contained reference for the `.kabod` format: file
+identity, channel- and item-level fields with their requirements, build
+flow, ingestion paths, storage tables, and a "what not to put in the
+format" section. Lives at the project root, **gitignored** — kept on disk
+for AI-agent recall and for anyone hand-authoring a pack, but not part of
+the shipped repo (the format is also documented inline in BUILD_LOG and
+in the `KabodPackParser` source). When the schema needs a breaking change,
+bump the namespace URI from `/1` to `/2` and the parser will treat `/2`
+content as plain RSS until support is added.
+
 ## Refreshed catalog + expandable card stacks for grouped feeds
 
 Source canon refreshed against Podcast Index. Same fetch model (raw RSS, not

@@ -17,7 +17,15 @@ sealed interface CatalogItem {
 
 data class SourceEntry(
     val feedUrl: String,
-    override val displayName: String?   // null => fall back to feed's own <title>
+    override val displayName: String?,   // null => fall back to feed's own <title>
+    /**
+     * Optional override for this feed's catalog artwork. When non-null, the
+     * catalog renders this URL instead of whatever the parsed feed exposes
+     * via `<itunes:image>`. Useful when the feed-attached art is broken
+     * (e.g. CCM's `podcast-cc.jpg` is uploaded as 0 bytes), bland, or
+     * resolves slowly enough that a placeholder is what the user sees.
+     */
+    val customArtworkUrl: String? = null,
 ) : CatalogItem {
     override val id: String get() = feedUrl
 }
@@ -25,7 +33,14 @@ data class SourceEntry(
 data class SourceGroup(
     val groupId: String,
     val groupName: String,
-    val children: List<SourceEntry>
+    val children: List<SourceEntry>,
+    /**
+     * Optional banner artwork for the cluster's collapsed card. When null,
+     * [com.lofipod.app.ui.screens.CatalogScreen] falls back to the first
+     * loaded child's artwork — which is fine for most groups but can be
+     * misleading when one feed's brand dominates a multi-show cluster.
+     */
+    val groupArtworkUrl: String? = null,
 ) : CatalogItem {
     override val id: String get() = groupId
     override val displayName: String get() = groupName
