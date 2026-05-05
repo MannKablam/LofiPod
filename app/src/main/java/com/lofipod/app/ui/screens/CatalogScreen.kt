@@ -3,10 +3,12 @@
 package com.lofipod.app.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
@@ -20,6 +22,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
@@ -267,6 +270,25 @@ fun CatalogScreen(
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // Kabod Packs render first — these are weighty, archived
+                        // bodies of work (verse-by-verse expositions, etc.) given
+                        // visual prominence by their distinguished card chrome.
+                        Sources.KABOD_PACKS.forEach { entry ->
+                            val pod = podsByUrl[entry.feedUrl]
+                            if (pod != null) {
+                                item(key = entry.feedUrl) {
+                                    val newCount = newEpisodesSince(
+                                        pod, visitsByFeed[entry.feedUrl]
+                                    )
+                                    KabodPackRow(
+                                        pod = pod,
+                                        artworkUrl = entry.customArtworkUrl ?: pod.artworkUrl,
+                                        newEpisodeCount = newCount,
+                                        onClick = { onPodcastClick(pod) }
+                                    )
+                                }
+                            }
+                        }
                         Sources.PODCASTS.forEach { catalogItem ->
                             when (catalogItem) {
                                 is SourceEntry -> {
@@ -278,6 +300,7 @@ fun CatalogScreen(
                                             )
                                             PodcastRow(
                                                 pod = pod,
+                                                artworkUrl = catalogItem.customArtworkUrl ?: pod.artworkUrl,
                                                 newEpisodeCount = newCount,
                                                 onClick = { onPodcastClick(pod) }
                                             )
@@ -294,11 +317,19 @@ fun CatalogScreen(
                                         val newSum = loadedChildren.sumOf { (entry, pod) ->
                                             newEpisodesSince(pod, visitsByFeed[entry.feedUrl])
                                         }
-                                        val leadArtworkUrl = loadedChildren.first().second.artworkUrl
+                                        // Group banner: explicit override wins, then
+                                        // first child's custom artwork, then first
+                                        // child's feed artwork. Three-step fall-through
+                                        // covers groups where the cluster has its own
+                                        // brand image AND groups where it doesn't.
+                                        val groupArt = catalogItem.groupArtworkUrl
+                                            ?: loadedChildren.first().let { (entry, pod) ->
+                                                entry.customArtworkUrl ?: pod.artworkUrl
+                                            }
                                         item(key = catalogItem.groupId) {
                                             GroupRow(
                                                 group = catalogItem,
-                                                leadArtworkUrl = leadArtworkUrl,
+                                                leadArtworkUrl = groupArt,
                                                 feedCount = loadedChildren.size,
                                                 totalEpisodes = totalEps,
                                                 newEpisodeCount = newSum,
@@ -320,6 +351,7 @@ fun CatalogScreen(
                                                 )
                                                 PodcastRow(
                                                     pod = pod,
+                                                    artworkUrl = entry.customArtworkUrl ?: pod.artworkUrl,
                                                     newEpisodeCount = newCount,
                                                     onClick = { onPodcastClick(pod) },
                                                     titleOverride = entry.displayName,
@@ -469,10 +501,15 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
  * with [indent] true (start padding marks them as nested) and [titleOverride]
  * set (since group children carry short labels like "Topical Studies" that
  * differ from the feed's own <title>).
+ *
+ * [artworkUrl] is decoupled from [pod] so callers can route through the
+ * [SourceEntry.customArtworkUrl] override when a feed's own art is broken
+ * or missing. Pass `pod.artworkUrl` to keep the original behavior.
  */
 @Composable
 private fun PodcastRow(
     pod: Podcast,
+    artworkUrl: String?,
     newEpisodeCount: Int,
     onClick: () -> Unit,
     titleOverride: String? = null,
@@ -489,7 +526,7 @@ private fun PodcastRow(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ThemedArtwork(artworkUrl = pod.artworkUrl, size = 64.dp)
+            ThemedArtwork(artworkUrl = artworkUrl, size = 64.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -506,6 +543,121 @@ private fun PodcastRow(
                     Spacer(Modifier.height(4.dp))
                     NewEpisodesBadge(count = newEpisodeCount)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Distinguished catalog row for a Kabod Pack — RSS-shaped pointers to
+ * *completed* bodies of work (verse-by-verse expositions, lecture series, etc).
+ *
+ * Visual differentiation from the regular [PodcastRow]:
+ *  - A primary-tinted border. The card sits on `surface` (not `surfaceVariant`)
+ *    so the border reads cleanly across all themes — these aren't "just another
+ *    podcast" cards.
+ *  - A small `MenuBook` glyph badged onto the lower-right of the artwork.
+ *    Reads as "open book / scripture exposition" without spelling out a
+ *    denomination or imposing a logo.
+ *  - The Hebrew word כָּבוֹד ("kabod" — weight, glory, presence) in a chip
+ *    floating in the upper-right corner. The word names the format and
+ *    carries the gravitas the pastor's labor deserves.
+ *  - "{author} · {N} entries" subtitle (vs RSS's "{N} episodes") since these
+ *    feeds are archived and the speaker identity is a primary identifier.
+ */
+@Composable
+private fun KabodPackRow(
+    pod: Podcast,
+    artworkUrl: String?,
+    newEpisodeCount: Int,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(
+            1.5.dp,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+        ),
+    ) {
+        Box {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Artwork + book-glyph badge anchored to the lower-right
+                // corner. Surface gives the badge a circular plate so the icon
+                // reads cleanly against any artwork.
+                Box {
+                    ThemedArtwork(artworkUrl = artworkUrl, size = 64.dp)
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .offset(x = 4.dp, y = 4.dp)
+                            .size(24.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ) {
+                        Icon(
+                            Icons.Filled.MenuBook,
+                            contentDescription = null,
+                            modifier = Modifier.padding(4.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                // 56dp end-padding reserves room for the kabod chip in the
+                // upper-right so a long title doesn't wrap behind it.
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 56.dp)
+                ) {
+                    Text(
+                        pod.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2
+                    )
+                    val subtitle = pod.author?.let { "$it  ·  ${pod.episodes.size} entries" }
+                        ?: "${pod.episodes.size} entries"
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (newEpisodeCount > 0) {
+                        Spacer(Modifier.height(4.dp))
+                        NewEpisodesBadge(count = newEpisodeCount)
+                    }
+                }
+            }
+            // Hebrew kabod chip (כָּבוֹד), upper-right. System fonts on
+            // Android pick up Noto Sans Hebrew automatically; no font asset
+            // needed. Bold + slightly larger than labelMedium so the
+            // characters read clearly at chip size.
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 10.dp, end = 10.dp),
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                shape = MaterialTheme.shapes.small,
+            ) {
+                Text(
+                    // Unpointed spelling — cleaner at chip size and what the
+                    // word looks like in everyday written Hebrew. The pointed
+                    // form (כָּבוֹד) carries the same meaning but the niqqud
+                    // dots clash with a small chip's vertical metrics.
+                    text = "כבוד",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                )
             }
         }
     }

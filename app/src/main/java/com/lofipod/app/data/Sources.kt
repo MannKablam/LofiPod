@@ -52,11 +52,21 @@ object Sources {
     val PODCASTS: List<CatalogItem> = listOf(
         SourceEntry(
             feedUrl = "https://www.bethanyto.org/feeds/media-libraries/b9b11184-9a80-11ec-b043-0614187498c1",
-            displayName = null
+            displayName = null,
+            // Pinned to the church's own CDN copy — same image the feed exposes
+            // via <itunes:image>, but hardcoded here so the card always renders
+            // even if the feed parse skips the tag for any reason.
+            customArtworkUrl = "https://d2114hmso7dut1.cloudfront.net/customers/b644a1dc-9a80-11ec-9c45-0614187498c1/sites/b65149dc-9a80-11ec-b904-0614187498c1/files/3ca82950-fb5c-11ed-b463-69be73fccae6/original/file.jpg",
         ),
         SourceGroup(
             groupId = "ccmodesto",
             groupName = "Calvary Chapel Modesto",
+            // Banner for the collapsed CCM cluster. Uses the Topical Studies
+            // 1400×1400 podcast cover — it's high-res, CCM-branded, and
+            // available on CCM's own DigitalOcean Spaces bucket. Better than
+            // letting GroupRow fall back to whichever child happens to load
+            // first.
+            groupArtworkUrl = "https://ccmodesto.sfo2.digitaloceanspaces.com/2026/05/04101315/2026-Topical-podcast-itunes-1400.jpg",
             children = listOf(
                 // Children get short labels so the expanded stack reads cleanly —
                 // every CCM feed's own <title> begins with "Calvary Chapel
@@ -72,11 +82,19 @@ object Sources {
                 ),
                 SourceEntry(
                     feedUrl = "https://www.ccmodesto.com/podcast/podcastam.xml",
-                    displayName = "Sunday Morning Service"
+                    displayName = "Sunday Morning Service",
+                    // The feed's <itunes:image> points at
+                    // ccmodesto.com/podcast/podcast-cc.jpg, which is currently
+                    // uploaded as a zero-byte file. Override with the working
+                    // Topical cover so the expanded child still has CCM-branded
+                    // art instead of a placeholder.
+                    customArtworkUrl = "https://ccmodesto.sfo2.digitaloceanspaces.com/2026/05/04101315/2026-Topical-podcast-itunes-1400.jpg",
                 ),
                 SourceEntry(
                     feedUrl = "https://www.ccmodesto.com/podcast/podcast.xml",
-                    displayName = "Sunday Evening Service"
+                    displayName = "Sunday Evening Service",
+                    // Same broken `podcast-cc.jpg` upstream; same override.
+                    customArtworkUrl = "https://ccmodesto.sfo2.digitaloceanspaces.com/2026/05/04101315/2026-Topical-podcast-itunes-1400.jpg",
                 ),
             )
         ),
