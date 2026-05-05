@@ -401,7 +401,7 @@ fun PlayerScreen(
                     // a single big Play button.
                     if (!isPreview) {
                         IconButton(
-                            onClick = { controller.seekRelative(-15_000) },
+                            onClick = { controller.seekBack() },
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
@@ -455,7 +455,7 @@ fun PlayerScreen(
                     if (!isPreview) {
                         Spacer(Modifier.width(16.dp))
                         IconButton(
-                            onClick = { controller.seekRelative(30_000) },
+                            onClick = { controller.seekForward() },
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
@@ -701,19 +701,22 @@ private fun NotesTab(
         .collectAsState(initial = emptyList())
 
     var addOpen by remember { mutableStateOf(false) }
+    var editEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var deleteEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var resumeAfterDialog by remember { mutableStateOf(false) }
 
-    fun openAdd() {
+    fun pauseIfWanted() {
         if (pauseOnNote && controller.state.value.isPlaying) {
             resumeAfterDialog = true
             controller.pause()
         }
-        addOpen = true
     }
 
-    fun closeAdd() {
+    fun openAdd() { pauseIfWanted(); addOpen = true }
+
+    fun closeDialog() {
         addOpen = false
+        editEntry = null
         if (resumeAfterDialog) {
             controller.play()
             resumeAfterDialog = false
@@ -773,10 +776,11 @@ private fun NotesTab(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(entries, key = { it.createdAt }) { entry ->
-                    InlineNoteCard(
+                    NoteCard(
                         entry = entry,
                         onJump = { controller.jumpToNotePosition(entry) },
-                        onDelete = { deleteEntry = entry }
+                        onEdit = { pauseIfWanted(); editEntry = entry },
+                        onDelete = { deleteEntry = entry },
                     )
                 }
             }
@@ -786,9 +790,11 @@ private fun NotesTab(
     if (addOpen) {
         val nowMs = remember { System.currentTimeMillis() }
         val posMs = remember { controller.currentPositionMs() }
-        InlineNoteDialog(
+        NoteEditorDialog(
             citation = citationOf(nowMs, posMs),
-            onDismiss = { closeAdd() },
+            initialText = "",
+            confirmLabel = "Save",
+            onDismiss = { closeDialog() },
             onConfirm = { text ->
                 scope.launch {
                     withContext(Dispatchers.IO) {
@@ -802,7 +808,24 @@ private fun NotesTab(
                         )
                     }
                 }
-                closeAdd()
+                closeDialog()
+            }
+        )
+    }
+
+    editEntry?.let { entry ->
+        NoteEditorDialog(
+            citation = citationOf(entry.createdAt, entry.playbackPosMs),
+            initialText = entry.text,
+            confirmLabel = "Save",
+            onDismiss = { closeDialog() },
+            onConfirm = { text ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        app.db.episodeNoteEntryDao().upsert(entry.copy(text = text))
+                    }
+                }
+                closeDialog()
             }
         )
     }
@@ -829,78 +852,9 @@ private fun NotesTab(
     }
 }
 
-@Composable
-private fun InlineNoteCard(
-    entry: EpisodeNoteEntryEntity,
-    onJump: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(Modifier.padding(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    citationOf(entry.createdAt, entry.playbackPosMs),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = onJump, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        Icons.Filled.PlayCircle,
-                        contentDescription = "Jump",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = "Delete",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            Text(entry.text, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun InlineNoteDialog(
-    citation: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var text by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(citation, style = MaterialTheme.typography.bodyMedium) },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp),
-                placeholder = { Text("Your thoughts on this moment…") },
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                    imeAction = ImeAction.Default
-                )
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(text.trim()) },
-                enabled = text.trim().isNotEmpty()
-            ) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
+// InlineNoteCard / InlineNoteDialog merged into the shared NoteCard /
+// NoteEditorDialog in NoteUi.kt — used by both this Notes tab and the
+// per-episode Notes screen so the play/edit/delete row stays in lockstep.
 
 @Composable
 private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {

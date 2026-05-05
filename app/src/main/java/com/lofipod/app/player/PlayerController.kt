@@ -479,6 +479,18 @@ class PlayerController(private val context: Context) {
         c.seekTo((c.currentPosition + deltaMs).coerceAtLeast(0))
     }
 
+    /**
+     * Seek back by the player's configured seekBackIncrementMs (set on the
+     * ExoPlayer in [PlaybackService]). Used by both the on-screen back button
+     * and — via MediaSession — Bluetooth headphones / vehicle media controls
+     * (KEYCODE_MEDIA_REWIND). Single source of truth so a future "adjustable
+     * skip increments" setting only has to flow into the ExoPlayer config.
+     */
+    fun seekBack() { controller?.seekBack() }
+
+    /** Forward equivalent of [seekBack]; uses seekForwardIncrementMs. */
+    fun seekForward() { controller?.seekForward() }
+
     fun seekTo(positionMs: Long) {
         controller?.seekTo(positionMs)
     }

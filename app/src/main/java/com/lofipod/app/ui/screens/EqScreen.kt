@@ -50,8 +50,12 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
 
     // Active preset + its current level. activeLevel == 0 means flat / no preset
     // currently lit. Tapping a different preset switches and starts at level 1.
-    var activePreset by remember { mutableStateOf<PresetId?>(null) }
-    var activeLevel by remember { mutableStateOf(0) }
+    // Derived from current bands so navigating away and back lands on the same
+    // highlight the audio is actually playing — without this the screen showed
+    // "Flat" while the EQ was still applying e.g. Voice L2.
+    val initialPreset = remember { derivePresetFromBands(bands) }
+    var activePreset by remember { mutableStateOf(initialPreset.first) }
+    var activeLevel by remember { mutableStateOf(initialPreset.second) }
 
     // Scroll plumbing: capture the y-offset of the Graphic EQ header so any
     // preset tap can scroll it into view. Without this, the band sliders sit
@@ -447,3 +451,22 @@ private fun BandRow(band: EqBand, onChange: (Float) -> Unit) {
 
 private fun formatHz(hz: Float): String =
     if (hz >= 1000) "${(hz / 1000).toInt()}kHz" else "${hz.toInt()}Hz"
+
+/**
+ * Reverse-derive which preset (if any) the EQ is currently set to by comparing
+ * gain values. Preset gains are whole-integer dB (-12..+12), each exactly
+ * representable as Float, so == on the gain list is safe.
+ *
+ * Returns (null, 0) for FLAT, (null, 0) for any custom hand-tuned curve that
+ * doesn't match a known preset level. Returns (preset, levelIndex+1) otherwise.
+ */
+private fun derivePresetFromBands(bands: List<EqBand>): Pair<PresetId?, Int> {
+    val cur = bands.map { it.gainDb }
+    if (cur == EqPresets.FLAT.map { it.gainDb }) return null to 0
+    for (preset in PresetId.values()) {
+        for ((i, levelBands) in preset.levels.withIndex()) {
+            if (cur == levelBands.map { it.gainDb }) return preset to (i + 1)
+        }
+    }
+    return null to 0
+}
