@@ -143,6 +143,12 @@ dependencies {
     // browser, WebView, or network. The app's no-WebView invariant stands.
     implementation("org.jsoup:jsoup:1.18.1")
 
+    // --- QR code generation (Settings → Share) ---
+    // ZXing core only — no Android scanning lib, just the encoder. We render
+    // the resulting BitMatrix to an Android Bitmap ourselves; no scanner
+    // surface, no camera permission added.
+    implementation("com.google.zxing:core:3.5.3")
+
     // --- Documentfile for SAF helpers ---
     implementation("androidx.documentfile:documentfile:1.0.1")
 
