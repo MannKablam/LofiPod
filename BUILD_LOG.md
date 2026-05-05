@@ -2,6 +2,40 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix: fresh-install playback won't start
+
+Symptom: on a fresh install the very first tap on Play did nothing. The
+known workaround was Settings → EQ → Skip silence → toggle L1 → back →
+tap Play, after which playback worked for the rest of the session.
+
+Earlier attempt (`Player: state-aware togglePlay + buffering/error UI`,
+v0.3.x) added STATE_IDLE recovery to `togglePlay` and asserted the skip-
+silence workaround was a recomposition coincidence. The recomposition
+read was wrong. The actual coincidence is *time elapsed*: the multi-screen
+detour burns 2–5 seconds, which is exactly long enough for the
+`MediaController.Builder.buildAsync()` future to resolve on a cold service
+bind. Skip Silence's `setLevel` is a no-op until audio has flowed
+(`sampleRate > 0`), so it can't be the active ingredient.
+
+Root cause: `PlayerController.connect()` builds the `MediaController`
+asynchronously. Until the future fires, `controller` is null and every
+public entry point — `playEpisode` included — returns silently with
+`val c = controller ?: return`. On a fresh install the `PlaybackService`
+has never been started, so first-bind is markedly slower than warm
+subsequent runs and the user reliably wins the race against `controller`
+being assigned. The first tap is dropped without any visible feedback.
+This matches [androidx/media#282](https://github.com/androidx/media/issues/282)
+and [#1059](https://github.com/androidx/media/issues/1059).
+
+Fix in `PlayerController.kt` only: queue one pending `playEpisode` when
+the controller isn't connected yet (`@Volatile var pendingPlay`, last-
+wins), drain it inside the future listener once `controller` is live,
+clear it in `release()`. Other entry points (`togglePlay`, `play`,
+`seekTo`) still drop on null — those scenarios assume an existing
+controller-connected session and queueing them isn't useful for this bug.
+The 921bd9c STATE_IDLE recovery in `togglePlay` stays in place; it's
+correct for the orthogonal "stuck IDLE after a failed prepare" case.
+
 ## Settings → Share: QR code for the latest signed APK
 
 New "Share" section pinned at the bottom of Settings. Renders a 220dp QR
