@@ -2,31 +2,40 @@
 
 package com.lofipod.app.ui.screens
 
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.LofiTheme
 import com.lofipod.app.data.Settings
+import com.lofipod.app.share.QrCode
 import com.lofipod.app.ui.theme.specFor
 import kotlinx.coroutines.launch
 
@@ -153,6 +162,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }
             )
+
+            // Share sits just above About — out of the daily-use settings
+            // flow but still anchored to a section header, not orphaned at
+            // the page foot. The user scrolls to it deliberately when
+            // they want to hand the app to someone.
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Share")
+            ShareApkRow()
 
             Spacer(Modifier.height(20.dp))
             SectionHeader("About")
@@ -362,6 +379,111 @@ private fun UpdatesRow() {
                     }
                 }) { Text("Install") }
             }
+        }
+    }
+}
+
+/**
+ * Share row. Renders a QR code that points at the stable
+ * `releases/latest/download/lofipod.apk` redirect — same URL the in-app
+ * updater uses, so a friend's phone scanning it kicks off a direct download
+ * of the most recent signed APK without needing to know about tags or the
+ * Releases page.
+ *
+ * Two complementary share affordances:
+ *  - **Visible QR** for in-person sharing (point camera at user's screen).
+ *  - **Share link button** that fires `Intent.ACTION_SEND` for remote
+ *    sharing (text, Slack, email, etc.). The URL is also displayed as
+ *    plain selectable text below the QR so it can be copied manually.
+ *
+ * The QR is generated client-side via ZXing core — no network, no WebView.
+ * Generation happens once per composition (the URL is stable) and the
+ * resulting [ImageBitmap] is cached in `remember`.
+ */
+@Composable
+private fun ShareApkRow() {
+    val ctx = LocalContext.current
+    val density = LocalDensity.current
+    val sizeDp = 220.dp
+    val sizePx = with(density) { sizeDp.roundToPx() }
+
+    // Same URL the in-app UpdateChecker hits. GitHub serves a permanent
+    // redirect from /releases/latest/download/<asset> to the actual asset
+    // URL of whatever is currently flagged as the "latest" release — so
+    // this same QR works across every future v0.x.x cut, no regeneration
+    // needed.
+    val apkUrl = "https://github.com/MannKablam/LofiPod/releases/latest/download/lofipod.apk"
+
+    // Cache the generated bitmap so it's not recomputed on every recompose.
+    // 220.dp at xxxhdpi is ~880px — generation takes a few ms but pinning
+    // it to a remember keeps scrolling smooth.
+    val qrBitmap: ImageBitmap = remember(apkUrl, sizePx) {
+        QrCode.generate(apkUrl, sizePx)
+    }
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text(
+            "Share with someone in person — they scan the code, their phone " +
+                "downloads the latest signed APK directly. They'll need to " +
+                "grant \"Install unknown apps\" to whichever browser handles " +
+                "the download (one-time per device).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+
+        // White plate behind the QR — black-on-white is what every camera
+        // scanner expects, regardless of the active theme. Surrounding
+        // padding gives the QR a visual frame.
+        Surface(
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            color = Color.White,
+            shape = RoundedCornerShape(12.dp),
+            shadowElevation = 2.dp,
+        ) {
+            Image(
+                bitmap = qrBitmap,
+                contentDescription = "QR code for the latest LofiPod APK",
+                contentScale = ContentScale.Fit,
+                // Keep the QR's hard pixel edges crisp — anti-aliased scaling
+                // softens the modules and degrades scan reliability.
+                filterQuality = FilterQuality.None,
+                modifier = Modifier
+                    .padding(12.dp)
+                    .size(sizeDp)
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // URL as selectable plain text — gives a copy-paste fallback in
+        // case the QR can't be scanned (poor lighting, scratched lens, etc).
+        SelectionContainer {
+            Text(
+                apkUrl,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        FilledTonalButton(
+            modifier = Modifier.align(Alignment.End),
+            onClick = {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "LofiPod APK")
+                    putExtra(
+                        Intent.EXTRA_TEXT,
+                        "Install LofiPod (latest signed APK):\n$apkUrl"
+                    )
+                }
+                ctx.startActivity(Intent.createChooser(send, "Share LofiPod"))
+            }
+        ) {
+            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Share link")
         }
     }
 }

@@ -2,6 +2,45 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Settings → Share: QR code for the latest signed APK
+
+New "Share" section pinned at the bottom of Settings. Renders a 220dp QR
+code that encodes the stable
+`https://github.com/MannKablam/LofiPod/releases/latest/download/lofipod.apk`
+redirect — same URL the in-app `UpdateChecker` already hits. A friend
+points their camera at the screen, their phone downloads the latest
+signed APK, they install. No tag-aware logic on either side; the GitHub
+"latest" redirect always resolves to whatever release is currently
+flagged on the repo.
+
+Three affordances stacked in the row:
+- **The QR itself** for in-person sharing.
+- **Selectable URL** below it (wrapped in `SelectionContainer`) — long-press
+  copies the same URL manually if the QR can't be scanned (poor lighting,
+  cracked lens, etc).
+- **"Share link" button** that fires `Intent.ACTION_SEND` for remote
+  sharing — text, Slack, email, etc.
+
+Generation is pure-Kotlin via ZXing core (`com.google.zxing:core:3.5.3`,
+~530 KB). `QrCode.generate(text, sizePx)` returns an [ImageBitmap]; we
+render it inside a white `Surface` plate (regardless of theme — black-on-
+white is what every camera scanner expects) and use `FilterQuality.None`
+so the modules' hard pixel edges don't get softened by anti-aliasing,
+which would degrade scan reliability.
+
+Error correction is set to `H` (~30%) over the default `M` (~15%) — the
+share QR gets scanned in whatever lighting the friend's phone is in, so
+robustness wins over density.
+
+No camera permission added (we encode, we don't scan). No WebView. No
+network beyond the existing OkHttp / Coil paths.
+
+Position deliberate: just above About at the foot of Settings. The
+Share section exists for someone else's benefit, not the user's own
+daily-use prefs — it gets scrolled to deliberately rather than
+encountered passively above the fold, but stays anchored to a section
+header rather than orphaned at the very bottom.
+
 ## Kabod Pack catalog card + artwork overrides + Kabod schema doc
 
 Three threads shipping together as v0.4.0.
