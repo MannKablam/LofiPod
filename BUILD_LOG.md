@@ -2,6 +2,34 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Stronger retry + cause-message in error chip
+
+Two diagnostic improvements after a `Failed: Failed runtime check
+(IllegalArgumentException)` chip surfaced on a Castos-hosted feed and
+tap-to-retry didn't help.
+
+**Cause-message in chip.** The chip already showed the cause's class name
+(added in v0.4.3); now it also clips and shows the cause's message when
+present, capped at ~80 chars: `Failed: Failed runtime check
+(IllegalArgumentException: Invalid Uri scheme: …) — tap to retry`. For
+IAEs especially, the message names the offending input — class alone
+hides that. Same string is logged in full to logcat under `LofiPodPlayer`.
+
+**Retry via fresh setMediaItem cycle.** The retry chip used to call
+`togglePlay()`, which after an error sees STATE_IDLE and does
+`prepare()+play()`. That re-runs prepare on the same in-memory player
+state — fine for a stuck state machine, useless if the player itself
+got confused. New `PlayerController.retryCurrentEpisode()` reconstructs
+the Episode from `episode_state` (audioUrl/feedUrl/title/artworkUrl) and
+runs the full `playEpisode` cycle: setMediaItem → prepare → play. Any
+internal state from the original failure gets reset. If the source URL
+itself is bad, retry surfaces the same error — that's correct; the
+retry isn't a magic wand, but a one-shot reset.
+
+Refactored: extracted `episodeFromState(guid)` private helper since
+`startDownloadForCurrent` was already doing the same EpisodeState →
+Episode mapping.
+
 ## Buffering layout shift + Audio-enhancement toggle wiring
 
 Two fixes targeting bugs that landed after v0.4.4.

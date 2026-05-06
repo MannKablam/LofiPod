@@ -511,11 +511,16 @@ fun PlayerScreen(
                     Spacer(Modifier.height(8.dp))
                     AssistChip(
                         onClick = {
-                            // Retry. togglePlay will re-prepare from IDLE
-                            // or seek-to-0 from ENDED, so this works
-                            // regardless of which terminal state the
-                            // error left the player in.
-                            controller.togglePlay()
+                            // Retry via a fresh setMediaItem cycle through
+                            // playEpisode — stronger than togglePlay's plain
+                            // prepare()+play() because any in-memory player
+                            // state that was confused by the original
+                            // failure gets reset alongside a fresh
+                            // MediaItem. If the source URL itself is bad,
+                            // retry will re-fail with the same chip — that's
+                            // correct, it tells the user the source is the
+                            // problem, not a transient hiccup.
+                            controller.retryCurrentEpisode()
                         },
                         label = { Text("Failed: ${state.errorMessage} — tap to retry") },
                         leadingIcon = {

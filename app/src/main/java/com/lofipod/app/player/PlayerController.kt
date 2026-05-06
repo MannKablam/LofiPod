@@ -173,13 +173,23 @@ class PlayerController(private val context: Context) {
             // that's actionable for the user (network) without dragging in
             // a full stack trace. Append the cause's class name when present
             // so opaque codes like FAILED_RUNTIME_CHECK still hint at the
-            // actual underlying exception type.
+            // actual underlying exception type, and a clipped cause message
+            // when present — IllegalArgumentException's message often names
+            // the bad input (e.g. "Invalid Uri scheme:" / "Range start is
+            // beyond …"), which the class name alone hides.
             val codeName = error.errorCodeName.removePrefix("ERROR_CODE_")
                 .replace('_', ' ')
                 .lowercase()
                 .replaceFirstChar { it.uppercase() }
             val causeName = error.cause?.javaClass?.simpleName
-            lastError = if (causeName != null) "$codeName ($causeName)" else codeName
+            val causeMsg = error.cause?.message?.takeIf { it.isNotBlank() }
+                ?.let { if (it.length > 80) it.substring(0, 77) + "…" else it }
+            val tail = when {
+                causeName != null && causeMsg != null -> " ($causeName: $causeMsg)"
+                causeName != null -> " ($causeName)"
+                else -> ""
+            }
+            lastError = "$codeName$tail"
             pushState()
         }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
@@ -396,20 +406,52 @@ class PlayerController(private val context: Context) {
     fun startDownloadForCurrent(guid: String) {
         val app = context.applicationContext as LofiPodApp
         scope.launch {
-            val state = withContext(Dispatchers.IO) { dao.get(guid) } ?: return@launch
-            val ep = Episode(
-                guid = state.guid,
-                feedUrl = state.feedUrl,
-                title = state.title,
-                description = null,
-                pubDateMillis = null,
-                audioUrl = state.audioUrl,
-                audioMimeType = null,
-                durationSeconds = null,
-                episodeArtworkUrl = state.artworkUrl
-            )
+            val ep = episodeFromState(guid) ?: return@launch
             app.downloadsApi.start(ep)
         }
+    }
+
+    /**
+     * Retry the currently-loaded episode by re-running the full
+     * setMediaItem/prepare/play cycle through [playEpisode], reconstructing
+     * the Episode from episode_state. Stronger than togglePlay's plain
+     * prepare()+play() — any in-memory player state that was confused by
+     * the original failure gets reset along with a fresh MediaItem. Used by
+     * the error chip's tap-to-retry on PlayerScreen.
+     *
+     * If the underlying issue is the source URL itself (the feed published
+     * a bad URL), the retry will surface the same error — that's correct
+     * behavior, the retry isn't a magic wand. The user gets one extra
+     * attempt against a transient codec / sink / decoder hiccup.
+     */
+    fun retryCurrentEpisode() {
+        val c = controller ?: return
+        val guid = c.currentMediaItem?.mediaId ?: return
+        scope.launch {
+            val ep = episodeFromState(guid) ?: return@launch
+            playEpisode(ep, podcastTitle = "", podcastArt = ep.episodeArtworkUrl)
+        }
+    }
+
+    /**
+     * Reconstruct an [Episode] from a persisted [EpisodeStateEntity]. Used
+     * by the live-mode download button and the retry chip — both have the
+     * guid but not the full Episode (the live MediaController state has the
+     * mediaId but not the audioUrl/feedUrl). Returns null if no row yet.
+     */
+    private suspend fun episodeFromState(guid: String): Episode? {
+        val state = withContext(Dispatchers.IO) { dao.get(guid) } ?: return null
+        return Episode(
+            guid = state.guid,
+            feedUrl = state.feedUrl,
+            title = state.title,
+            description = null,
+            pubDateMillis = null,
+            audioUrl = state.audioUrl,
+            audioMimeType = null,
+            durationSeconds = null,
+            episodeArtworkUrl = state.artworkUrl
+        )
     }
 
     /**
