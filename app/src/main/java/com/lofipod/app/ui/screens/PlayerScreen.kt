@@ -118,6 +118,7 @@ fun PlayerScreen(
 ) {
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
+    val autoplayTimer by controller.autoplayTimer.collectAsState()
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
 
@@ -448,6 +449,9 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(16.dp))
                     }
+                    val countdown = rememberAutoplayCountdown(
+                        if (isPreview) null else autoplayTimer
+                    )
                     Box(contentAlignment = Alignment.Center) {
                         FilledIconButton(
                             onClick = {
@@ -464,25 +468,47 @@ fun PlayerScreen(
                                         )
                                     }
                                 } else {
+                                    // togglePlay short-circuits to
+                                    // confirmAutoplayContinuation when the timer
+                                    // is active and the player is playing — so a
+                                    // tap on the countdown morph above naturally
+                                    // confirms continuation here.
                                     controller.togglePlay()
                                 }
                             },
                             modifier = Modifier.size(88.dp),
                             enabled = !isPreview || previewData != null,
                         ) {
-                            Icon(
-                                if (state.isPlaying && !isPreview) Icons.Filled.Pause
-                                else Icons.Filled.PlayArrow,
-                                contentDescription = if (isPreview) "Play" else "Play/Pause",
-                                modifier = Modifier.size(48.dp)
-                            )
+                            if (countdown != null) {
+                                // Hide the regular icon while the morph overlays
+                                // the button — the FilledIconButton's tonal
+                                // background still sits behind the ring + text.
+                                Spacer(Modifier.size(48.dp))
+                            } else {
+                                Icon(
+                                    if (state.isPlaying && !isPreview) Icons.Filled.Pause
+                                    else Icons.Filled.PlayArrow,
+                                    contentDescription = if (isPreview) "Play" else "Play/Pause",
+                                    modifier = Modifier.size(48.dp)
+                                )
+                            }
                         }
-                        // Buffering ring — drawn on top of the play button when
-                        // the player is in BUFFERING with playWhenReady=true. Tells
-                        // the user "I heard your tap, I'm trying" rather than
-                        // letting them wonder if the button is dead.
-                        if (state.isBuffering && !isPreview) {
-                            CircularProgressIndicator(
+                        when {
+                            // Autoplay-confirmation morph: drainable progress
+                            // ring + digital "M:SS" replaces the Pause icon
+                            // from T=60s onward (rememberAutoplayCountdown
+                            // returns null before the first beep).
+                            countdown != null -> AutoplayCountdownContent(
+                                info = countdown,
+                                ringSize = 88.dp,
+                            )
+                            // Buffering ring — drawn on top of the play button
+                            // when the player is in BUFFERING with
+                            // playWhenReady=true. Tells the user "I heard your
+                            // tap, I'm trying" rather than letting them wonder
+                            // if the button is dead. Suppressed during the
+                            // countdown so the two indicators don't stack.
+                            state.isBuffering && !isPreview -> CircularProgressIndicator(
                                 modifier = Modifier.size(88.dp),
                                 strokeWidth = 3.dp,
                             )

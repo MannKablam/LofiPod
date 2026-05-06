@@ -63,6 +63,22 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Require user confirmation to keep playing autoplay-induced episodes.
+     * When true, every autoplay (queue-next or feed-next) starts a 3:10
+     * confirmation window: at 1:00 / 2:00 / 3:00 the app emits 1/2/3 short
+     * beeps, ducking playback for the duration of each beep; at 3:10 the
+     * episode auto-pauses unless the user (or a Bluetooth play/pause press)
+     * has confirmed. Prevents indefinite background autoplay when nobody's
+     * listening. Default true.
+     */
+    val autoplayConfirmEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_AUTOPLAY_CONFIRM] ?: true }
+
+    suspend fun setAutoplayConfirmEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_AUTOPLAY_CONFIRM] = v }
+    }
+
+    /**
      * UI text scale multiplier (Compose density.fontScale override). 1.0 = stock.
      * Range 0.85 .. 1.4. Stored as float; clamped on read.
      */
@@ -233,6 +249,8 @@ class Settings(private val context: Context) {
         private val KEY_THEME = androidx.datastore.preferences.core.stringPreferencesKey("theme")
         private val KEY_AUTO_PLAY_NEXT_FEED =
             androidx.datastore.preferences.core.booleanPreferencesKey("auto_play_next_feed")
+        private val KEY_AUTOPLAY_CONFIRM =
+            androidx.datastore.preferences.core.booleanPreferencesKey("autoplay_confirm_enabled")
         private val KEY_TEXT_SCALE =
             androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
         private val KEY_SHOW_PLAYED =

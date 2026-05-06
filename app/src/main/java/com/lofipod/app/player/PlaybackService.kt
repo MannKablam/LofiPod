@@ -10,6 +10,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionResult
 import com.lofipod.app.ui.MainActivity
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.EqAudioProcessor
@@ -152,7 +153,42 @@ class PlaybackService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
+            .setCallback(AutoplayConfirmCallback)
             .build()
+    }
+
+    /**
+     * Intercepts `Player.COMMAND_PLAY_PAUSE` arriving from any controller
+     * (BT headphones, vehicle transport, system media notification) while
+     * the autoplay-confirmation timer is active. The activity-side
+     * [PlayerController] writes the timer state, [AutoplayConfirmBridge]
+     * exposes "is timer active" + the confirm callback to this service.
+     *
+     * If the bridge confirms a hit, return [SessionResult.RESULT_INFO_SKIPPED]
+     * — the player ignores the play/pause and audio keeps rolling. The
+     * activity-side controller has already been told to clear the timer in
+     * the same call, so the next play/pause press goes through normally.
+     *
+     * Our own activity-side controller never lands here while the timer is
+     * active: [PlayerController.togglePlay] short-circuits to
+     * confirmAutoplayContinuation before issuing player commands, and the
+     * timer's own auto-pause pre-clears the timer state before calling
+     * `pause()` so the bridge no longer reports active by the time the
+     * command arrives.
+     */
+    private object AutoplayConfirmCallback : MediaSession.Callback {
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            playerCommand: Int,
+        ): Int {
+            if (playerCommand == Player.COMMAND_PLAY_PAUSE &&
+                AutoplayConfirmBridge.handleMediaButtonPlayPause()
+            ) {
+                return SessionResult.RESULT_INFO_SKIPPED
+            }
+            return SessionResult.RESULT_SUCCESS
+        }
     }
 
     private fun startSaveTicker(player: Player) {
