@@ -502,37 +502,30 @@ fun PlayerScreen(
                         }
                     }
                 }
-                // Status line: buffering text under the transport, OR error
-                // chip if the player just failed. Both are live-only — preview
-                // mode has nothing to buffer or fail at.
-                if (!isPreview) {
-                    if (state.errorMessage != null) {
-                        Spacer(Modifier.height(8.dp))
-                        AssistChip(
-                            onClick = {
-                                // Retry. togglePlay will re-prepare from IDLE
-                                // or seek-to-0 from ENDED, so this works
-                                // regardless of which terminal state the
-                                // error left the player in.
-                                controller.togglePlay()
-                            },
-                            label = { Text("Failed: ${state.errorMessage} — tap to retry") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.ErrorOutline,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        )
-                    } else if (state.isBuffering) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Buffering…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                // Error chip if the player just failed (live only). The
+                // buffering signal lives on the play button itself (the
+                // CircularProgressIndicator ring around it) — a separate text
+                // line below was bouncing the speed chip and tabs every time
+                // a rewind transiently hit STATE_BUFFERING.
+                if (!isPreview && state.errorMessage != null) {
+                    Spacer(Modifier.height(8.dp))
+                    AssistChip(
+                        onClick = {
+                            // Retry. togglePlay will re-prepare from IDLE
+                            // or seek-to-0 from ENDED, so this works
+                            // regardless of which terminal state the
+                            // error left the player in.
+                            controller.togglePlay()
+                        },
+                        label = { Text("Failed: ${state.errorMessage} — tap to retry") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
                 }
 
                 // Speed chip is a live-playback tweak — the per-podcast

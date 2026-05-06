@@ -192,15 +192,27 @@ class PlayerController(private val context: Context) {
     }
 
     /**
-     * Re-evaluate the global EQ enabled flag based on the current episode's
-     * eqDisabled override. Called on item transitions and after the user toggles
-     * the override from the Player UI.
+     * Re-evaluate the EQ enabled flag for [guid]. Effective state is the AND of
+     * the master "Audio enhancement" toggle (Settings.audioEnhancementEnabled)
+     * and the inverse of the per-episode override (episode_state.eqDisabled).
+     *
+     * Called on item transitions, after the user toggles the per-episode
+     * override on PlayerScreen, and after the user flips the master toggle on
+     * the EQ screen — three writers, one source of truth (this method) so the
+     * processor's enabled flag doesn't get clobbered by whichever path ran
+     * last. Earlier bug: master toggle and per-episode override both wrote
+     * directly to `sharedEq.enabled`, so a track transition would silently
+     * undo a user's master-off toggle.
      */
     fun applyEqOverrideFor(guid: String) {
         scope.launch {
-            val disabled = withContext(Dispatchers.IO) { dao.get(guid)?.eqDisabled ?: false }
+            val episodeDisabled = withContext(Dispatchers.IO) {
+                dao.get(guid)?.eqDisabled ?: false
+            }
+            val globalEnabled = com.lofipod.app.data.Settings(context)
+                .audioEnhancementEnabled.first()
             // setEnabled is volatile-safe; no need to bounce back to main.
-            PlaybackService.sharedEq.setEnabled(!disabled)
+            PlaybackService.sharedEq.setEnabled(globalEnabled && !episodeDisabled)
         }
     }
 

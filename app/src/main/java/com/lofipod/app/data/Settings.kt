@@ -114,6 +114,22 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_SKIP_SILENCE_LEVEL] = level.coerceIn(0, 3) }
     }
 
+    /**
+     * Master "Audio enhancement" toggle from the EQ screen. Default true.
+     * Distinct from the per-episode `episode_state.eqDisabled` override —
+     * both feed into [com.lofipod.app.player.PlayerController.applyEqOverrideFor],
+     * which applies effective enabled = (global && !episodeDisabled). Persisting
+     * here means the global toggle survives navigation and isn't silently
+     * overwritten by per-episode overrides on track transition (the bug it
+     * was added to fix).
+     */
+    val audioEnhancementEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_AUDIO_ENHANCEMENT_ENABLED] ?: true }
+
+    suspend fun setAudioEnhancementEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_AUDIO_ENHANCEMENT_ENABLED] = v }
+    }
+
     // ---- Auto-backup ----
 
     /** Tree URI (SAF) the user picked as the backup folder; null = unset. */
@@ -225,6 +241,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
         private val KEY_SKIP_SILENCE_LEVEL =
             androidx.datastore.preferences.core.intPreferencesKey("skip_silence_level")
+        private val KEY_AUDIO_ENHANCEMENT_ENABLED =
+            androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
         private val KEY_BACKUP_TREE_URI =
             androidx.datastore.preferences.core.stringPreferencesKey("backup_tree_uri")
         private val KEY_BACKUP_INTERVAL_HOURS =

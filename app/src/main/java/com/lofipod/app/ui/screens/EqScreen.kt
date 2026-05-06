@@ -46,7 +46,12 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
 
     var bands by remember { mutableStateOf(eq.currentBands()) }
     var gainDb by remember { mutableStateOf(eq.currentGainDb()) }
-    var enabled by remember { mutableStateOf(true) }
+    // Master "Audio enhancement" toggle, persisted in Settings so it doesn't
+    // desync from the processor on screen revisit and isn't silently
+    // overwritten by the per-episode eqDisabled override on track
+    // transitions. Writes go through Settings + applyEqOverrideFor (single
+    // source of truth for the effective enabled state).
+    val audioEnhancementEnabled by settings.audioEnhancementEnabled.collectAsState(initial = true)
 
     // Active preset + its current level. activeLevel == 0 means flat / no preset
     // currently lit. Tapping a different preset switches and starts at level 1.
@@ -130,9 +135,16 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 .verticalScroll(scrollState)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = enabled, onCheckedChange = {
-                    enabled = it
-                    eq.setEnabled(it)
+                Switch(checked = audioEnhancementEnabled, onCheckedChange = { v ->
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setAudioEnhancementEnabled(v) }
+                        // Re-apply against the currently playing episode so the
+                        // change takes effect immediately (instead of waiting
+                        // for the next track transition).
+                        playerState.currentEpisodeGuid?.let {
+                            controller.applyEqOverrideFor(it)
+                        }
+                    }
                 })
                 Spacer(Modifier.width(12.dp))
                 Text("Audio enhancement", style = MaterialTheme.typography.titleMedium)
