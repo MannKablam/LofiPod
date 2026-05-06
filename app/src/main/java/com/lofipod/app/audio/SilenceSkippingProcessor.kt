@@ -81,11 +81,21 @@ class SilenceSkippingProcessor : BaseAudioProcessor() {
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         val l = level
-        // Off → straight passthrough. Cheap fast-path so users who never turn
-        // it on pay zero per-sample cost.
+        // Off → passthrough via per-short writes. Avoids the bulk
+        // `out.put(inputBuffer)` transfer which, when stacked on the same
+        // chain as another BaseAudioProcessor doing the same thing (the EQ in
+        // its FLAT/disabled state), tripped Media3 1.4.1's audio sink into
+        // ERROR_CODE_FAILED_RUNTIME_CHECK on the first decoder buffer. The
+        // workaround the user discovered before this fix landed was bumping
+        // Skip-silence to L1 to push it off the bulk-put path. Both
+        // processors now use per-short copies in passthrough so neither path
+        // hits the trigger.
         if (l == 0 || channelCount == 0) {
-            val out = replaceOutputBuffer(inputBuffer.remaining())
-            out.put(inputBuffer)
+            val src = inputBuffer.order(ByteOrder.nativeOrder())
+            val out = replaceOutputBuffer(src.remaining()).order(ByteOrder.nativeOrder())
+            while (src.hasRemaining()) {
+                out.putShort(src.short)
+            }
             out.flip()
             silentFrameCount = 0
             return

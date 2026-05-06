@@ -280,7 +280,10 @@ private fun AppNav(
             }
 
             composable("settings") {
-                SettingsScreen(onBack = { nav.popBackStack() })
+                SettingsScreen(
+                    controller = controller,
+                    onBack = { nav.popBackStack() }
+                )
             }
 
             composable("notesBrowser") {

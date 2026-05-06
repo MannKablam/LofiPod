@@ -2,6 +2,69 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Audio enhancement no-playback fix + diagnostics panel
+
+The bug that's been around since pre-v0.4.0 is finally pinned: with the
+default Audio enhancement = ON and Skip silence = Off, the play button
+would visibly cycle play → pause → play and audio never started. Logcat
+showed `ERROR_CODE_FAILED_RUNTIME_CHECK (IllegalArgumentException)` on
+the first decoder buffer. Workaround the user discovered: bump
+Skip-silence to L1 (or toggle Audio enhancement off) and playback would
+work.
+
+**Root cause.** Both `EqAudioProcessor` and `SilenceSkippingProcessor`
+extend Media3's `BaseAudioProcessor` and used the bulk
+`out.put(inputBuffer)` ByteBuffer-to-ByteBuffer transfer in their
+respective passthrough fast-paths (EQ when FLAT/disabled,
+SilenceSkipping when level=0). The two processors sit back-to-back in
+the audio chain — `[eq, skipSilence] → built-in skip-silence (disabled)
+→ Sonic`. With BOTH custom processors taking the bulk-put path on the
+same buffer, Media3 1.4.1's `DefaultAudioSink` tripped a runtime check
+on the first buffer and the player wedged out before audio reached
+AudioTrack. As soon as either processor's chain entry switched to its
+DSP path (per-sample reads + writes), the bug went away — which is why
+"set Skip-silence to L1" was the workaround.
+
+**Fix.** Both processors' passthrough paths now use per-short writes
+(`while (src.hasRemaining()) out.putShort(src.short)`) instead of
+`out.put(inputBuffer)`. Functionally identical (output is a verbatim
+copy of input), but the chain doesn't trip whatever runtime check the
+bulk path was hitting. The DSP paths are unchanged. Net cost: one
+short read + one short write per sample on top of what was previously a
+bulk memcpy — at 44.1kHz stereo that's ~88k ops/sec, negligible.
+
+`EqAudioProcessor.queueInput` also reordered: passthrough check moved
+ABOVE the `frameCount = remaining / (2 * channelCount)` line. The old
+order would div-by-zero on `channelCount = 0` (processor not yet
+configured) before reaching the safety check inside the if.
+
+**Audio diagnostics panel.** Settings → Audio diagnostics now shows
+selectable plain-text dump of:
+  - Live EQ state: `audio_enhancement`, `master_gain_db`, `bands_db`
+    (10 values), `skip_silence_lvl` — read straight from the running
+    `PlaybackService.sharedEq` / `sharedSkipSilence` so it reflects what
+    the audio thread actually sees.
+  - Live player state: state, current episode title, guid, speed.
+  - Last error verbose: full unclipped `ERROR_CODE_*` + cause class +
+    cause message — same string we've been logging to logcat under
+    `LofiPodPlayer`, now reachable from the device without adb. Reset
+    on the next healthy state transition (BUFFERING/READY).
+  - "Reset audio to defaults" button: writes audio_enhancement=on,
+    gain=0, bands=FLAT, skip_silence=off back into Settings AND pushes
+    them into the live processors. Lets a user recover from a wedged
+    EQ configuration without hunting through the EQ screen.
+
+`PlayerController` now also stores `lastErrorVerbose` alongside the
+existing clipped `lastError`. The chip on PlayerScreen still uses the
+clipped form (one-line constraint); the diagnostics panel shows the
+verbose form.
+
+`SettingsScreen` signature changed: now takes a `PlayerController`
+parameter (passed through from `MainActivity`) so the diagnostics panel
+can read live player state.
+
+ai_contamination: true # claude opus 4.7
+
 ## Autoplay confirmation timer — phases 3 + 4 (countdown UI + BT intercept)
 
 Last two slices of the autoplay-confirmation feature. The play button on

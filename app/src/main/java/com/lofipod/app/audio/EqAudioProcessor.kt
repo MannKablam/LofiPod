@@ -90,21 +90,37 @@ class EqAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
+        // Passthrough check FIRST, before any frameCount math — channelCount=0
+        // (processor not yet configured) would otherwise div-by-zero on the
+        // line below, and we want a robust passthrough even for partial-frame
+        // buffers at format transitions.
+        //
+        // Why per-sample copy and NOT `out.put(inputBuffer)`: with two
+        // consecutive BaseAudioProcessors in the chain both doing the bulk
+        // ByteBuffer-to-ByteBuffer transfer (this one + SilenceSkipping at
+        // level=0), Media3 1.4.1's audio sink throws
+        // ERROR_CODE_FAILED_RUNTIME_CHECK (IllegalArgumentException) on the
+        // first decoder buffer — the play button visibly cycles
+        // play→pause→play and audio never starts. Switching either processor
+        // off the bulk-put path makes playback work, which is why the user's
+        // workaround was "set Skip-silence to L1." Per-short writes look
+        // identical to the chain's view but sidestep whatever the bulk
+        // path triggers.
+        if (!enabled || channelCount == 0 || isPassthroughEffective()) {
+            val src = inputBuffer.order(ByteOrder.nativeOrder())
+            val out = replaceOutputBuffer(src.remaining()).order(ByteOrder.nativeOrder())
+            while (src.hasRemaining()) {
+                out.putShort(src.short)
+            }
+            out.flip()
+            return
+        }
+
         val frameCount = inputBuffer.remaining() / (2 * channelCount)
         if (frameCount == 0) return
 
         val out = replaceOutputBuffer(inputBuffer.remaining()).order(ByteOrder.nativeOrder())
         val src = inputBuffer.order(ByteOrder.nativeOrder())
-
-        // Fast-path: passthrough when EQ is disabled OR every band is at 0 dB and
-        // no gain boost is set. The default FLAT preset hits this path, so users
-        // who never touch the EQ pay zero per-sample cost. Choppy playback on
-        // downloaded files traced back to this loop running for nothing.
-        if (!enabled || channelCount == 0 || isPassthroughEffective()) {
-            out.put(src)
-            out.flip()
-            return
-        }
 
         ensureCoefficients()
 
