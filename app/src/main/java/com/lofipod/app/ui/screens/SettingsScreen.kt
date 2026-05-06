@@ -35,12 +35,16 @@ import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.data.LofiTheme
 import com.lofipod.app.data.Settings
+import com.lofipod.app.player.PlaybackService
+import com.lofipod.app.player.PlayerController
 import com.lofipod.app.share.QrCode
 import com.lofipod.app.ui.theme.specFor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(controller: PlayerController, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
@@ -181,6 +185,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             ShareApkRow()
 
             Spacer(Modifier.height(20.dp))
+            SectionHeader("Audio diagnostics")
+            AudioDiagnosticsRow(controller)
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("About")
             Text(
                 "LofiPod — a personal-canon podcast app. Backups + restore live " +
@@ -219,6 +227,115 @@ private fun SwitchRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+/**
+ * Selectable, copy-friendly readout of the audio chain state + last player
+ * error. Surfaced because the v0.4.7 audio-enhancement passthrough fix was
+ * impossible to diagnose without seeing the full ExoPlayer error code +
+ * cause; this panel makes that reachable from the device without adb. Also
+ * shows the live processor state (enabled, gain, all 10 band gains,
+ * skip-silence level) so a user can sanity-check that what the EQ screen
+ * shows matches what the running [PlaybackService.sharedEq] actually has.
+ */
+@Composable
+private fun AudioDiagnosticsRow(controller: PlayerController) {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
+    val settings = remember { Settings(app) }
+    val scope = rememberCoroutineScope()
+    val playerState by controller.state.collectAsState()
+    val audioEnhancement by settings.audioEnhancementEnabled.collectAsState(initial = true)
+    val skipSilenceLevel by settings.skipSilenceLevel.collectAsState(initial = 0)
+
+    // Live read of the shared processor state. Recomposes whenever
+    // playerState changes (which is on every player event), so band/gain
+    // edits made on EqScreen show up here when the user switches back to
+    // Settings — without us needing a separate flow on the processor.
+    val eq = PlaybackService.sharedEq
+    val gainDb = remember(playerState) { eq.currentGainDb() }
+    val bands = remember(playerState) { eq.currentBands() }
+    val bandsLabel = remember(bands) {
+        bands.joinToString(" ") { "%+.0f".format(it.gainDb) }
+    }
+    val errorVerbose = controller.lastErrorDetails
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        SelectionContainer {
+            Column(Modifier.fillMaxWidth()) {
+                Text(
+                    "EQ",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "  audio_enhancement = $audioEnhancement\n" +
+                        "  master_gain_db   = ${"%+.1f".format(gainDb)}\n" +
+                        "  bands_db         = $bandsLabel\n" +
+                        "  skip_silence_lvl = $skipSilenceLevel",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Player",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                val playState = when {
+                    playerState.errorMessage != null -> "ERROR"
+                    playerState.isBuffering -> "BUFFERING"
+                    playerState.isPlaying -> "PLAYING"
+                    playerState.isReady -> "READY (paused)"
+                    else -> "IDLE"
+                }
+                Text(
+                    "  state    = $playState\n" +
+                        "  episode  = ${playerState.currentTitle ?: "(none)"}\n" +
+                        "  guid     = ${playerState.currentEpisodeGuid ?: "(none)"}\n" +
+                        "  speed    = ${"%.2fx".format(playerState.speed)}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Last error",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "  ${errorVerbose ?: "(none since last successful play)"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (errorVerbose != null) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = {
+            // Defaults: audio_enhancement=on, master_gain=0, bands=FLAT,
+            // skip_silence=off. Lets the user recover from a wedged EQ
+            // configuration without hunting through the EQ screen.
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    settings.setAudioEnhancementEnabled(true)
+                    settings.setGainDb(0f)
+                    settings.setEqBandsCsv(
+                        com.lofipod.app.audio.EqPresets.FLAT
+                            .joinToString(",") { it.gainDb.toString() }
+                    )
+                    settings.setSkipSilenceLevel(0)
+                }
+                // Push the new values into the live processors so the
+                // change takes effect without restarting the service.
+                eq.setBands(com.lofipod.app.audio.EqPresets.FLAT)
+                eq.setGainDb(0f)
+                PlaybackService.sharedSkipSilence.setLevel(0)
+                playerState.currentEpisodeGuid?.let {
+                    controller.applyEqOverrideFor(it)
+                }
+            }
+        }) { Text("Reset audio to defaults") }
     }
 }
 

@@ -163,6 +163,18 @@ class PlayerController(private val context: Context) {
      *  the user retries successfully. */
     @Volatile private var lastError: String? = null
 
+    /**
+     * Full unclipped error string for the diagnostics panel: code name +
+     * message + cause class + cause message, no length cap. Mirrors what we
+     * log to logcat under tag "LofiPodPlayer". The chip on PlayerScreen still
+     * uses [lastError] (clipped for one-line display); this is what the
+     * Settings → Audio diagnostics panel surfaces so the user can copy the
+     * full failure when reporting bugs. Reset alongside [lastError]. */
+    @Volatile private var lastErrorVerbose: String? = null
+
+    /** Snapshot of [lastErrorVerbose] for UI consumption. Read-only. */
+    val lastErrorDetails: String? get() = lastErrorVerbose
+
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = pushState()
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -178,6 +190,7 @@ class PlayerController(private val context: Context) {
             if (playbackState == Player.STATE_BUFFERING ||
                 playbackState == Player.STATE_READY) {
                 lastError = null
+                lastErrorVerbose = null
             }
             pushState()
             if (playbackState == Player.STATE_ENDED) {
@@ -219,6 +232,16 @@ class PlayerController(private val context: Context) {
                 else -> ""
             }
             lastError = "$codeName$tail"
+            // Verbose form for the Settings → Audio diagnostics panel — full
+            // cause message (no 80-char clip) so a user reporting a bug can
+            // copy the same string we logged under "LofiPodPlayer".
+            val fullCauseMsg = error.cause?.message?.takeIf { it.isNotBlank() }
+            val verboseTail = when {
+                causeName != null && fullCauseMsg != null -> " ($causeName: $fullCauseMsg)"
+                causeName != null -> " ($causeName)"
+                else -> ""
+            }
+            lastErrorVerbose = "${error.errorCodeName}: $codeName$verboseTail"
             pushState()
         }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
