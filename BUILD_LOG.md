@@ -2,6 +2,159 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Autoplay confirmation timer — phases 3 + 4 (countdown UI + BT intercept)
+
+Last two slices of the autoplay-confirmation feature. The play button on
+both surfaces now visibly morphs into a countdown from T=60s onward, and
+Bluetooth / vehicle / system-notification play-pause presses confirm
+continuation instead of toggling pause during the window.
+
+**Phase 3 — visible countdown.** New
+`com.lofipod.app.ui.screens.AutoplayCountdownUi` exports
+`rememberAutoplayCountdown(timer)` and `AutoplayCountdownContent`. The
+remember helper ticks at 250ms (fast enough that the digital `M:SS`
+doesn't visibly skip seconds, slow enough for negligible recomposition
+cost) and returns null both before T=60s and when no timer is active —
+callers gate on null/non-null to flip between the regular Pause/Play
+icon and the countdown morph. Below the surface it computes
+`remaining = (started + total) - now` and `progress = remaining /
+visible_window` (where `visible_window = total - first_beep_ms = 130s`).
+
+`PlayerScreen` consumes the helper inside the existing transport-row
+play button: when the countdown info is non-null, the FilledIconButton
+keeps its 88dp tonal background but shows a `Spacer(48dp)` instead of
+the Pause icon, and `AutoplayCountdownContent(ringSize = 88dp)` overlays
+a drainable progress ring + `Text("M:SS")` in the center. Buffering
+ring is suppressed during the countdown so the two indicators don't
+stack. Tap routes through the same `controller.togglePlay()` already
+wired — phase 1 made that short-circuit to `confirmAutoplayContinuation`
+when the timer is active and the player is playing, so no separate
+confirm wiring is needed at the UI layer.
+
+`MiniPlayer` mirrors the same morph at smaller scale: ring 40dp,
+labelMedium typography, same Spacer-instead-of-icon swap. Subscribes to
+`controller.autoplayTimer` directly (no mirror state).
+
+**Phase 4 — BT / vehicle / notification intercept.** New
+`com.lofipod.app.player.AutoplayConfirmBridge` is a process-wide
+singleton that lets the service-side `MediaSession.Callback` reach the
+activity-side `PlayerController` without crossing an IPC boundary
+(both run in the same JVM). PlayerController binds itself in `connect`
+and unbinds in `release` (reference-equality guarded so a fast activity
+recreate doesn't null out the new pin from the old controller's late
+release). The bridge reads timer state directly from the bound
+controller's StateFlow rather than mirroring it, which would otherwise
+race a collector-driven mirror against the timer body's auto-pause
+clear.
+
+`PlaybackService.MediaSession.Builder` now passes a custom
+`MediaSession.Callback` whose `onPlayerCommandRequest` intercepts
+`Player.COMMAND_PLAY_PAUSE`: if the bridge confirms the timer is active,
+it runs `confirmAutoplayContinuation` and returns
+`SessionResult.RESULT_INFO_SKIPPED` to deny the play/pause command —
+audio keeps rolling, the countdown disappears, the next press goes
+through normally. Non-play-pause commands and any play/pause arriving
+when no timer is active fall straight through to
+`SessionResult.RESULT_SUCCESS`.
+
+To keep our own auto-pause from being intercepted as if it were a remote
+button press, the timer body now `compareAndSet`-clears the snapshot
+*before* calling `cc.pause()` at expiry. The bridge sees timer=null on
+the inbound command and lets it through.
+
+Combined effect: a Bluetooth play/pause press during the autoplay
+window confirms continuation just like tapping the on-screen
+countdown — same single-tap UX whether the user's hand is on the phone
+or on their headphones.
+
+## Autoplay confirmation timer — phase 2 (beeps + ducking)
+
+Audible strikes now land on the autoplay-confirmation timer. New
+`com.lofipod.app.audio.BeepPlayer` wraps `ToneGenerator(STREAM_MUSIC)`
+and ducks the player's output to zero for the duration of each tone —
+GPS-style — restoring the prior volume in a `finally` so a cancellation
+or a torn-down MediaController can never leave the player muted. Both
+the read of `player.volume` and the writes are wrapped in `runCatching`
+so a controller release mid-flight degrades into a missed restore
+rather than a crash.
+
+`PlayerController.maybeStartAutoplayTimer` swapped its single 190s
+`delay` for an absolute schedule against `SystemClock.elapsedRealtime`:
+
+  - T=60s  → 1 ducked beep (~200ms)
+  - T=120s → 2 ducked beeps, 333ms apart (~733ms total)
+  - T=180s → 3 ducked beeps (~1.27s total)
+  - T=190s → auto-pause check (unchanged from phase 1)
+
+Absolute targets — not chained relative delays — keep the strike marks
+pinned at the exact second values from autoplay start; a chained
+`delay(60_000)` four times would slide the third strike late by however
+long the prior beep sequences took.
+
+Cancellation safety: the whole body is wrapped in try/finally; the
+finally releases the BeepPlayer (which releases the ToneGenerator) and
+clears `_autoplayTimer`. The clear uses `compareAndSet(mySnapshot, null)`
+rather than a direct write, so an old timer's late finally never
+clobbers the snapshot of a newer timer that already replaced it
+(re-arm race when the user starts a fresh autoplay before the old
+coroutine's cancellation has propagated through the dispatcher).
+
+Degraded path: if `ToneGenerator`'s ctor throws — a few low-end OEM
+ROMs ship without the proprietary-beep tone bank — `BeepPlayer` logs a
+warning and runs silent. The timer keeps its full schedule and still
+auto-pauses at 3:10; the user just doesn't get audible cues until the
+phase-3 visible countdown lands.
+
+## Autoplay confirmation timer — phase 1 (skeleton + auto-pause)
+
+First slice of the autoplay-confirmation feature. Each autoplay-induced
+episode (queue-next or feed-next) now arms a 3:10 timer; if the user
+doesn't confirm, the episode auto-pauses. No beeps and no UI yet — phases
+2 and 3. The visible behavior of this phase is just the auto-pause +
+the new Settings toggle.
+
+**`PlayerController` changes.** A new `@Volatile lastPlayWasAutoplay`
+flag is set inside `advanceToNextInQueue` immediately before each
+`playEpisode(...)` call (queue-next path and feed-next path). `playEpisode`
+consumes + clears the flag at entry — so a stale flag from a long-since-
+bypassed autoplay can't latch onto a later manual play — and, if it was
+set, calls `maybeStartAutoplayTimer(ep.guid)` after `play()`.
+
+The timer body delays for `AUTOPLAY_CONFIRM_TOTAL_MS` (190_000) and then
+auto-pauses if the player is still on the same episode and still playing.
+Guid identity guards against a manual play swapping the loaded episode
+mid-window. State is exposed as a `StateFlow<AutoplayTimerState?>` for
+phase-3 UI to consume; the UI computes the remaining window itself by
+subtracting `SystemClock.elapsedRealtime` from `startedAtElapsedMs` so
+the controller doesn't have to emit a per-frame tick.
+
+Cancel paths: `confirmAutoplayContinuation()` (idempotent, public —
+called by phase-3 UI taps and the phase-4 BT intercept), explicit
+`pause()` (user is awake; auto-pause is redundant), `togglePlay` while
+the timer is active and the player is playing (treated as confirm —
+the morphed countdown button invites the tap), the start of any
+subsequent `playEpisode` (new episode = new timer arming or a clean
+manual play), and `release()`.
+
+Constants for all four phase markers (`AUTOPLAY_CONFIRM_FIRST_BEEP_MS`
+= 60_000, `_SECOND_` = 120_000, `_THIRD_` = 180_000, `_TOTAL_` = 190_000)
+live in the companion object so phases 2 and 3 can consume them without
+re-deriving the timing.
+
+**`Settings` changes.** New `autoplayConfirmEnabled` flag, default true,
+keyed `"autoplay_confirm_enabled"`. `SettingsScreen` exposes it as a
+SwitchRow under Playback, right after "Auto-play next in feed", with
+copy describing the 1/2/3 beeps + 3:10 auto-pause and the BT-confirm
+escape hatch.
+
+**Spec ambiguity carried forward.** The user's spec wrote both "the
+timer should run for 3 minutes and 10 seconds [from first beep]" AND
+"10 seconds after the last beep, the auto-played episode should
+pause." Those produce 4:10 vs 3:10 from episode start. This phase
+goes with 3:10 total (pause 10s after the third beep at 3:00). If
+playback testing wants 4:10, it's a one-line change to
+`AUTOPLAY_CONFIRM_TOTAL_MS`.
+
 ## Stronger retry + cause-message in error chip
 
 Two diagnostic improvements after a `Failed: Failed runtime check

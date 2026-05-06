@@ -75,7 +75,32 @@ class PlayerController(private val context: Context) {
      */
     @Volatile private var pendingPlay: PendingPlay? = null
 
+    /**
+     * Flips to true inside [advanceToNextInQueue] right before each
+     * [playEpisode] call so the receiving [playEpisode] knows the play was
+     * autoplay-induced (vs. a manual user tap). Consumed + cleared at the
+     * top of every [playEpisode] invocation, so a stale flag from a long-
+     * since-bypassed autoplay can't latch onto a later manual play.
+     */
+    @Volatile private var lastPlayWasAutoplay = false
+
+    /**
+     * State of the autoplay-confirmation window started inside [playEpisode]
+     * when a play is autoplay-induced (see [lastPlayWasAutoplay] +
+     * [maybeStartAutoplayTimer]). Non-null while the timer is counting; the
+     * UI (PlayerScreen / MiniPlayer) reads this to morph the play button into
+     * a countdown after the first beep. Cleared on confirmation, expiry,
+     * episode change, or release.
+     */
+    private val _autoplayTimer = MutableStateFlow<AutoplayTimerState?>(null)
+    val autoplayTimer: StateFlow<AutoplayTimerState?> = _autoplayTimer.asStateFlow()
+    private var autoplayTimerJob: kotlinx.coroutines.Job? = null
+
     fun connect(onReady: () -> Unit) {
+        // Pin this controller as the autoplay-confirm target for any
+        // service-side media-button intercept (BT, vehicle, system-
+        // notification play/pause). Unpinned in [release].
+        AutoplayConfirmBridge.bind(this)
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         future.addListener({
@@ -120,11 +145,15 @@ class PlayerController(private val context: Context) {
     }
 
     fun release() {
+        AutoplayConfirmBridge.unbind(this)
         controller?.removeListener(listener)
         controller?.release()
         controller = null
         _pendingReturn.value = null
         pendingPlay = null
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
         scope.cancel()
     }
 
@@ -268,6 +297,17 @@ class PlayerController(private val context: Context) {
             pendingPlay = PendingPlay(ep, podcastTitle, podcastArt, forcedStartMs)
             return
         }
+        // Consume the autoplay-detection flag at entry. Whether or not we
+        // re-arm the timer below, any previous timer is for a different
+        // episode and must be torn down: the body uses guid identity to
+        // decide whether to pause, but the StateFlow still drives a stale
+        // countdown UI until cleared explicitly.
+        val wasAutoplay = lastPlayWasAutoplay
+        lastPlayWasAutoplay = false
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
+
         scope.launch {
             // 1. Outgoing item: persist position + (optionally) record session_end checkpoint.
             val outgoingId = c.currentMediaItem?.mediaId
@@ -392,6 +432,16 @@ class PlayerController(private val context: Context) {
             if (!app.downloadsApi.byId.value.containsKey(ep.guid)) {
                 app.downloadsApi.start(ep)
             }
+
+            // Autoplay confirmation window: if this play was triggered by
+            // advanceToNextInQueue (queue-next or feed-next), arm the 3:10
+            // confirmation timer. The user must confirm continuation by
+            // tapping the morphed play button or pressing play/pause on a
+            // BT/vehicle transport — otherwise we auto-pause to avoid
+            // unattended indefinite playback.
+            if (wasAutoplay) {
+                maybeStartAutoplayTimer(ep.guid)
+            }
         }
     }
 
@@ -468,6 +518,16 @@ class PlayerController(private val context: Context) {
      */
     fun togglePlay() {
         val c = controller ?: return
+        // Autoplay-confirmation window: a tap while the timer is counting
+        // and the player is playing means "confirm continuation" — cancel
+        // the timer, do NOT toggle to pause. The play button is morphed
+        // into a countdown specifically to invite this tap; pausing during
+        // the timer takes a second tap (after the morph reverts), which is
+        // the intended UX from the spec.
+        if (_autoplayTimer.value != null && c.isPlaying) {
+            confirmAutoplayContinuation()
+            return
+        }
         when {
             c.isPlaying -> c.pause()
             c.playbackState == Player.STATE_IDLE -> {
@@ -492,7 +552,124 @@ class PlayerController(private val context: Context) {
             else -> c.play()
         }
     }
-    fun pause() { controller?.pause() }
+    fun pause() {
+        // Explicit pause cancels any active autoplay-confirmation window —
+        // the user is awake and pausing intentionally, so the auto-pause
+        // would be redundant and the countdown indicator should disappear.
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
+        controller?.pause()
+    }
+
+    /**
+     * Arm the autoplay-confirmation timer for [guid]. Reads the
+     * `autoplayConfirmEnabled` setting first; if disabled, the autoplay
+     * episode plays through with no timer (legacy behavior pre-v0.4.5).
+     *
+     * Schedule, anchored to [SystemClock.elapsedRealtime] at start so the
+     * marks don't drift even though each beep sequence takes hundreds of
+     * milliseconds:
+     *   - T=60s   (first beep)  — 1 ducked beep via [BeepPlayer].
+     *   - T=120s  (second beep) — 2 ducked beeps, ~333ms apart.
+     *   - T=180s  (third beep)  — 3 ducked beeps.
+     *   - T=190s  (auto-pause)  — pause if still on the same episode and
+     *                             still playing. Guid identity guards
+     *                             against a manual play having swapped the
+     *                             loaded episode mid-window; the
+     *                             [Player.isPlaying] check is belt-and-
+     *                             suspenders, since [pause] /
+     *                             [confirmAutoplayContinuation] cancel the
+     *                             job before reaching the pause line.
+     *
+     * Calling this with an existing timer job cancels the prior one — at
+     * most one autoplay timer is active at a time.
+     */
+    private fun maybeStartAutoplayTimer(guid: String) {
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = scope.launch {
+            val enabled = com.lofipod.app.data.Settings(context)
+                .autoplayConfirmEnabled.first()
+            if (!enabled) {
+                _autoplayTimer.value = null
+                return@launch
+            }
+            val started = android.os.SystemClock.elapsedRealtime()
+            val mySnapshot = AutoplayTimerState(
+                episodeGuid = guid,
+                startedAtElapsedMs = started,
+                totalDurationMs = AUTOPLAY_CONFIRM_TOTAL_MS,
+            )
+            _autoplayTimer.value = mySnapshot
+            // Scheduled against absolute elapsed-realtime targets rather than
+            // chained relative delays — keeps the strike marks pinned at
+            // 60s / 120s / 180s / 190s from autoplay start, even though the
+            // beep sequences themselves take ~0.2 / ~0.7 / ~1.3 seconds and
+            // would otherwise drift the schedule later in the window.
+            val player = controller
+            val beepPlayer = player?.let { com.lofipod.app.audio.BeepPlayer(it) }
+            try {
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_FIRST_BEEP_MS)
+                beepPlayer?.playBeeps(1)
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_SECOND_BEEP_MS)
+                beepPlayer?.playBeeps(2)
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_THIRD_BEEP_MS)
+                beepPlayer?.playBeeps(3)
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_TOTAL_MS)
+                val cc = controller
+                if (cc != null && cc.currentMediaItem?.mediaId == guid && cc.isPlaying) {
+                    // Pre-clear the timer state BEFORE issuing pause. Otherwise
+                    // [PlaybackService]'s MediaSession-callback intercept would
+                    // see the timer still active and treat our own auto-pause
+                    // command as a remote BT press → confirm + skip → playback
+                    // would not actually pause. CAS so we don't clobber a
+                    // newer timer's snapshot in the unlikely re-arm race.
+                    _autoplayTimer.compareAndSet(mySnapshot, null)
+                    android.util.Log.i(
+                        "LofiPodPlayer",
+                        "Autoplay confirmation timed out for $guid — auto-pausing"
+                    )
+                    cc.pause()
+                }
+            } finally {
+                beepPlayer?.release()
+                // CAS-clear so we only wipe state we still own. A newer timer
+                // that superseded us (cancel + relaunch from a fresh
+                // [maybeStartAutoplayTimer] / [confirmAutoplayContinuation])
+                // has already replaced [mySnapshot] with its own value, and
+                // our finally must not clobber that. compareAndSet returns
+                // false silently in that case.
+                _autoplayTimer.compareAndSet(mySnapshot, null)
+            }
+        }
+    }
+
+    /**
+     * Suspend until [SystemClock.elapsedRealtime] reaches [targetElapsedMs],
+     * computing the remaining delay each call so the schedule stays anchored
+     * to an absolute reference point even if intermediate work (beep playback,
+     * volume ducking) takes non-negligible time. No-op if the target is
+     * already in the past.
+     */
+    private suspend fun delayUntilElapsed(targetElapsedMs: Long) {
+        val remaining = targetElapsedMs - android.os.SystemClock.elapsedRealtime()
+        if (remaining > 0) kotlinx.coroutines.delay(remaining)
+    }
+
+    /**
+     * Confirm the user wants the autoplay-induced episode to keep playing.
+     * Cancels the pending auto-pause and clears the countdown indicator.
+     * Idempotent. Called from:
+     *   - The play-button tap path during the timer ([togglePlay] above).
+     *   - The MediaSession KEYCODE_MEDIA_PLAY_PAUSE intercept when a BT or
+     *     vehicle transport press arrives while the timer is active
+     *     (wired in PlaybackService — phase 4).
+     */
+    fun confirmAutoplayContinuation() {
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
+    }
 
     /**
      * Jump to an arbitrary (episode, position). Records a jump_from checkpoint for the
@@ -701,6 +878,7 @@ class PlayerController(private val context: Context) {
                 durationSeconds = null,
                 episodeArtworkUrl = queueNext.artworkUrl
             )
+            lastPlayWasAutoplay = true
             playEpisode(ep, cached?.title ?: "", cached?.artworkUrl ?: queueNext.artworkUrl)
             return
         }
@@ -728,6 +906,7 @@ class PlayerController(private val context: Context) {
             .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
             ?: return
 
+        lastPlayWasAutoplay = true
         playEpisode(candidate, pod.title, pod.artworkUrl)
     }
 
@@ -768,8 +947,32 @@ class PlayerController(private val context: Context) {
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
         private const val STEP = 1024L
+
+        // ---- Autoplay confirmation window ----
+        // Total window from autoplay-induced play to auto-pause. User spec:
+        // beeps at 1:00 / 2:00 / 3:00, pause 10s after the last beep → 3:10.
+        // Visible countdown on the morphed play button starts at the first beep
+        // (T=60s) and runs the remaining 130s (2:10) down to zero.
+        const val AUTOPLAY_CONFIRM_FIRST_BEEP_MS = 60_000L
+        const val AUTOPLAY_CONFIRM_SECOND_BEEP_MS = 120_000L
+        const val AUTOPLAY_CONFIRM_THIRD_BEEP_MS = 180_000L
+        const val AUTOPLAY_CONFIRM_TOTAL_MS = 190_000L
     }
 }
+
+/**
+ * Snapshot of an active autoplay-confirmation window. Emitted on
+ * [PlayerController.autoplayTimer] when an autoplay-induced episode starts and
+ * cleared on confirm/expire/episode-change. The UI computes the remaining
+ * window itself by subtracting [SystemClock.elapsedRealtime] from
+ * [startedAtElapsedMs] — pulling once per frame inside Compose is cheaper than
+ * having the controller emit a tick per second.
+ */
+data class AutoplayTimerState(
+    val episodeGuid: String,
+    val startedAtElapsedMs: Long,
+    val totalDurationMs: Long,
+)
 
 data class PlayerState(
     val isPlaying: Boolean = false,

@@ -49,6 +49,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val theme by settings.theme.collectAsState(initial = LofiTheme.LOWLIGHT)
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
     val autoPlayNextInFeed by settings.autoPlayNextInFeed.collectAsState(initial = true)
+    val autoplayConfirmEnabled by settings.autoplayConfirmEnabled.collectAsState(initial = true)
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val textScale by settings.textScale.collectAsState(initial = 1.0f)
@@ -102,6 +103,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                 subtitle = "When the queue is empty, advance to the next published " +
                     "episode of the same podcast at the end of one.",
                 onCheckedChange = { v -> scope.launch { settings.setAutoPlayNextInFeed(v) } }
+            )
+            SwitchRow(
+                checked = autoplayConfirmEnabled,
+                title = "Confirm autoplay continues",
+                subtitle = "Beep at 1, 2, and 3 minutes into each auto-played episode " +
+                    "and pause at 3:10 unless you tap the play button (or a Bluetooth " +
+                    "play/pause press) to confirm. Stops indefinite background playback.",
+                onCheckedChange = { v -> scope.launch { settings.setAutoplayConfirmEnabled(v) } }
             )
             SwitchRow(
                 checked = showPlayedInList,

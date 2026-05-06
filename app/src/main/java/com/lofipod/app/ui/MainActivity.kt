@@ -415,19 +415,38 @@ private fun MiniPlayer(
                         modifier = Modifier.size(28.dp)
                     )
                 }
+                val autoplayTimer by controller.autoplayTimer.collectAsState()
+                val countdown = com.lofipod.app.ui.screens
+                    .rememberAutoplayCountdown(autoplayTimer)
                 Box(contentAlignment = Alignment.Center) {
                     IconButton(onClick = { controller.togglePlay() }) {
-                        Icon(
-                            if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = "Play/Pause",
-                            modifier = Modifier.size(36.dp)
-                        )
+                        if (countdown != null) {
+                            // Hide the regular icon — the countdown overlay
+                            // sits on top of the IconButton's hit area.
+                            Spacer(Modifier.size(36.dp))
+                        } else {
+                            Icon(
+                                if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
                     }
-                    // Subtle buffering ring on the mini-player play button —
-                    // gives the user the same "I'm trying" signal the full
-                    // player shows, without taking extra vertical space.
-                    if (state.isBuffering) {
-                        CircularProgressIndicator(
+                    when {
+                        // Mini-surface mirror of the autoplay-confirmation
+                        // morph on PlayerScreen — same widget, smaller ring.
+                        countdown != null -> com.lofipod.app.ui.screens
+                            .AutoplayCountdownContent(
+                                info = countdown,
+                                ringSize = 40.dp,
+                                textStyle = MaterialTheme.typography.labelMedium,
+                            )
+                        // Subtle buffering ring on the mini-player play
+                        // button — gives the user the same "I'm trying"
+                        // signal the full player shows, without taking extra
+                        // vertical space. Suppressed during the countdown so
+                        // the two indicators don't stack.
+                        state.isBuffering -> CircularProgressIndicator(
                             modifier = Modifier.size(48.dp),
                             strokeWidth = 2.dp,
                         )
