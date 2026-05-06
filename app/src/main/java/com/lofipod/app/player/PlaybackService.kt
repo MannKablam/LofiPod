@@ -127,6 +127,12 @@ class PlaybackService : MediaSessionService() {
             }
 
             sharedEq.setGainDb(settings.gainDb.first())
+
+            // Master "Audio enhancement" enable. PlayerController.applyEqOverrideFor
+            // re-evaluates this on every track transition and ANDs it with the
+            // per-episode eqDisabled flag, so this initial value matters only
+            // for the (rare) window before the first item transition fires.
+            sharedEq.setEnabled(settings.audioEnhancementEnabled.first())
         }
 
         // Notification tap target: route through MainActivity with a custom

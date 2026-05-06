@@ -2,6 +2,41 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Buffering layout shift + Audio-enhancement toggle wiring
+
+Two fixes targeting bugs that landed after v0.4.4.
+
+**Player layout no longer shifts on rewind.** The "Buffering…" text under
+the transport row was bouncing the speed chip and tabs every time a
+rewind transiently kicked the player into STATE_BUFFERING. Removed the
+text — the CircularProgressIndicator ring around the play button is
+already the buffering signal, and a redundant text below was the only
+thing causing the shift. The error chip stays in the same slot (errors
+are persistent, not transient, so the one-time appearance is fine).
+
+**Audio-enhancement master toggle now lockstep with the per-episode
+override.** The "Audio enhancement" switch on the EQ screen was
+local-only Compose state (`remember { mutableStateOf(true) }`) that
+desynced from the actual processor on screen revisit AND was silently
+overwritten by `applyEqOverrideFor` on every track transition (which
+only knew about the per-episode `eqDisabled` flag). Two writers, one
+boolean, last-wins → fights. Result: toggling the master switch did
+nothing predictable and the user had to fight skip-silence to recover
+playback.
+
+Fix: `Settings.audioEnhancementEnabled` is the persisted master flag.
+`PlayerController.applyEqOverrideFor` is now the single source of truth
+for the effective enabled state — it reads BOTH the global flag and
+the per-episode `eqDisabled`, sets `sharedEq.enabled = global &&
+!episodeDisabled`. Three writers (master toggle, per-episode toggle,
+track transitions) all funnel through it. The EQ screen's switch
+collects from the Settings flow (no more desync) and writes through
+to Settings + immediate re-apply for the currently playing episode.
+
+`PlaybackService.onCreate` rehydrates the master flag alongside the
+existing band/gain/skip-silence rehydration so the very first track
+(before any item-transition fires) starts with the right enabled state.
+
 ## Download status on PlayerScreen + auto-download for live plays
 
 PlayerScreen now surfaces the same five-state download affordance the
