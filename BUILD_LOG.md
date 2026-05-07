@@ -2,6 +2,37 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Limiter window-max via monotonic deque + per-buffer processing-time telemetry
+
+Symptom that triggered this: with audio enhancement on and the phone in
+a pocket, BT-headphone playback developed intermittent artifacts that
+disappeared the moment the phone came out of the pocket — and that the
+audio enhancement off case never reproduced. Strong fingerprint of
+thermal / power-saver CPU throttling pushing the audio thread past its
+buffer deadline.
+
+**Limiter peak detector: brute-force scan -> monotonic deque.** The
+sliding-window max in `Limiter.processFrame` was scanning the whole
+[lookAheadSamples]-long peak window every frame (~440 compares per
+frame at LA=5ms × 88.2k oversampled rate, ~39M ops/sec). Replaced with
+a monotonic deque (head -> tail non-increasing), so peak retrieval is
+O(1) amortized. Bit-exact same windowed max as the prior version — no
+audible change to the signal — but ~8× cheaper for the limiter alone
+and ~50% off the total chain CPU at 44.1k stereo. This is the headroom
+that lets us survive a throttled core.
+
+**Per-buffer timing telemetry.** New `recordBufferTiming(processingNs,
+audioNs)` on `AudioChainTelemetry`, called once per DSP buffer from
+`EqAudioProcessor.queueInput`. Tracks last/avg/p95/max processing time
+plus avg/max load factor (= processing/audio-time) over a rolling
+ring of the last 64 buffers. Surfaced on the Audio diagnostics screen
+under a new "Performance" section. Load factor near 0% = healthy
+headroom; approaching 100% = audio thread is saturated and underruns
+are imminent. The Performance section is the diagnostic surface for
+"is the chain still keeping up while the phone is in my pocket?"
+
+ai_contamination: true # claude opus 4.7
+
 ## Topical back-stack + autoplay direction + per-episode EQ override + piezo beeps + audio-diagnostics help
 
 Bundle of UX work that touches navigation, the EQ surfacing of per-episode
