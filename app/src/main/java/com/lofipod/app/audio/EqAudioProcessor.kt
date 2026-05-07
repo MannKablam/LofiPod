@@ -107,10 +107,24 @@ class EqAudioProcessor : BaseAudioProcessor() {
     private var lim0Frame: DoubleArray = DoubleArray(0)
     private var lim1Frame: DoubleArray = DoubleArray(0)
 
-    fun setBands(newBands: List<EqBand>) { bands = newBands; dirty = true }
+    fun setBands(newBands: List<EqBand>) {
+        bands = newBands
+        dirty = true
+        // Counter increments per call; the actual cross-fade only fires inside
+        // ensureCoefficients (where we also log the breadcrumb event). Cheap
+        // enough to call from the UI thread on every slider tick.
+        AudioChainTelemetry.incBandChanges()
+    }
     fun setGainDb(db: Float) { gainDb = db.coerceIn(-12f, 12f) }
-    fun setEnabled(on: Boolean) { enabled = on }
-    fun setDcBlockerEnabled(on: Boolean) { dcBlocker = on }
+    fun setEnabled(on: Boolean) {
+        enabled = on
+        AudioChainTelemetry.enabled = on
+    }
+    fun setDcBlockerEnabled(on: Boolean) {
+        dcBlocker = on
+        AudioChainTelemetry.dcBlockerEnabled = on
+        AudioChainTelemetry.logEvent("dc_blocker", if (on) "on" else "off")
+    }
 
     /**
      * True when the chain would have no audible effect — every band is at 0 dB,
@@ -138,6 +152,10 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
             throw UnhandledAudioFormatException(inputAudioFormat)
         }
+        // Record the format change as a breadcrumb BEFORE updating sampleRate
+        // so the event log reads "44100/2 -> 48000/2" with both sides intact.
+        val priorRate = sampleRate
+        val priorChannels = channelCount
         sampleRate = inputAudioFormat.sampleRate
         channelCount = inputAudioFormat.channelCount
         // Allocate filter matrix + the parallel "old" matrix used during
@@ -169,6 +187,33 @@ class EqAudioProcessor : BaseAudioProcessor() {
         lim0Frame = DoubleArray(channelCount)
         lim1Frame = DoubleArray(channelCount)
         dirty = true
+
+        // Diagnostic snapshot: chain config + counters + breadcrumb. Logged
+        // here so UI can read the spec even before the first audio buffer
+        // arrives, and so format changes mid-session leave a trace.
+        AudioChainTelemetry.sampleRate = sampleRate
+        AudioChainTelemetry.channelCount = channelCount
+        AudioChainTelemetry.encoding = "PCM_16BIT"
+        AudioChainTelemetry.dcBlockerEnabled = dcBlocker
+        AudioChainTelemetry.firTaps = oversampler.firTaps
+        AudioChainTelemetry.lookAheadSamples2x = limiter.drainFrameCount
+        AudioChainTelemetry.thresholdDbfs = limiter.thresholdDbfs
+        AudioChainTelemetry.totalLatencyFrames1x =
+            oversampler.totalDelayFrames1x + limiter.drainFrameCount / 2
+        AudioChainTelemetry.enabled = enabled
+        AudioChainTelemetry.configurePeakDecay(sampleRate)
+        AudioChainTelemetry.incConfigures()
+        if (priorRate != 0 && (priorRate != sampleRate || priorChannels != channelCount)) {
+            AudioChainTelemetry.logEvent(
+                "format_change",
+                "$priorRate/$priorChannels -> $sampleRate/$channelCount"
+            )
+        } else {
+            AudioChainTelemetry.logEvent(
+                "configure",
+                "$sampleRate Hz, $channelCount ch, PCM_16BIT"
+            )
+        }
         return inputAudioFormat   // we output the same format
     }
 
@@ -189,6 +234,8 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // continuing a fade across a seek would mix stale state into the
         // new audio.
         fadeRemaining = 0
+        AudioChainTelemetry.incFlushes()
+        AudioChainTelemetry.logEvent("flush")
     }
 
     override fun onReset() {
@@ -230,6 +277,8 @@ class EqAudioProcessor : BaseAudioProcessor() {
                 }
             }
             fadeRemaining = FADE_LENGTH_SAMPLES
+            AudioChainTelemetry.incCrossFades()
+            AudioChainTelemetry.logEvent("xfade", "${newBands.size} bands")
         }
         // Install the new coefficients into the live filters. State (z1, z2)
         // is preserved — only the coefficient block is overwritten by
@@ -272,16 +321,35 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // path triggers.
         if (!enabled || channelCount == 0 || isPassthroughEffective()) {
             val src = inputBuffer.order(ByteOrder.nativeOrder())
-            val out = replaceOutputBuffer(src.remaining()).order(ByteOrder.nativeOrder())
+            val byteCount = src.remaining()
+            val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
             while (src.hasRemaining()) {
                 out.putShort(src.short)
             }
             out.flip()
+            // Telemetry: mark this buffer as a passthrough hit. The transition
+            // from DSP -> passthrough is logged as an event (one-time) in the
+            // breadcrumb log; per-buffer counts go through the cheap atomic.
+            if (!AudioChainTelemetry.passthrough) {
+                AudioChainTelemetry.passthrough = true
+                AudioChainTelemetry.logEvent("passthrough", "enter")
+            }
+            AudioChainTelemetry.incPassthroughBuffers()
+            if (channelCount > 0) {
+                AudioChainTelemetry.addFrames(byteCount / (2 * channelCount))
+            }
             return
         }
 
         val frameCount = inputBuffer.remaining() / (2 * channelCount)
         if (frameCount == 0) return
+
+        if (AudioChainTelemetry.passthrough) {
+            AudioChainTelemetry.passthrough = false
+            AudioChainTelemetry.logEvent("passthrough", "exit")
+        }
+        AudioChainTelemetry.incDspBuffers()
+        AudioChainTelemetry.addFrames(frameCount)
 
         val out = replaceOutputBuffer(inputBuffer.remaining()).order(ByteOrder.nativeOrder())
         val src = inputBuffer.order(ByteOrder.nativeOrder())
@@ -354,6 +422,17 @@ class EqAudioProcessor : BaseAudioProcessor() {
                 frameInput[ch] = mixed * gainLinear
             }
 
+            // Linked-stereo peak of the post-EQ/gain frame, fed to the input
+            // meter. Cheap (max across channels) and only computed in the
+            // DSP path; the limiter's own peak detection lives downstream
+            // of this, after the upsample.
+            var inFramePeak = 0.0
+            for (ch in 0 until channelCount) {
+                val a = if (frameInput[ch] >= 0) frameInput[ch] else -frameInput[ch]
+                if (a > inFramePeak) inFramePeak = a
+            }
+            AudioChainTelemetry.pushInputSample(inFramePeak)
+
             // 2x oversampling envelope around the limiter:
             //   1) upsample 1x→2x (anti-imaging FIR)
             //   2) limiter processes both 2x frames (linked-stereo GR sees
@@ -376,11 +455,18 @@ class EqAudioProcessor : BaseAudioProcessor() {
             // dominated by sub-LSB filter rounding — dithering THAT would
             // amplify the residual into audible noise.)
             val ditherEnabled = limiter.lastReductionDb < 0.0
+            var outFramePeak = 0.0
             for (ch in 0 until channelCount) {
                 val y = if (ditherEnabled) frameOutput[ch] + dither.next() else frameOutput[ch]
+                val a = if (y >= 0) y else -y
+                if (a > outFramePeak) outFramePeak = a
                 val outI = (y * invDrive).toInt().coerceIn(-32768, 32767)
                 out.putShort(outI.toShort())
             }
+            AudioChainTelemetry.pushOutputSample(outFramePeak)
+            AudioChainTelemetry.reductionDb = limiter.lastReductionDb
+            AudioChainTelemetry.fading = fading
+            AudioChainTelemetry.ditherActive = ditherEnabled
 
             if (fading) fadeRemaining--
         }
@@ -413,8 +499,11 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // played) or in passthrough — the chain has no buffered audio in
         // either case, so the default no-op (no output buffer set) is correct.
         if (channelCount == 0 || !enabled || isPassthroughEffective()) {
+            AudioChainTelemetry.logEvent("eos", "skipped (passthrough or unconfigured)")
             return
         }
+        AudioChainTelemetry.incDrains()
+        AudioChainTelemetry.logEvent("eos_drain", "${limiter.drainFrameCount / 2} frames @1x")
         // Total chain delay at 1x rate. limiter.drainFrameCount is in 2x-rate
         // frames (LA window in 2x samples); divide by 2 for 1x equivalent.
         // Add the oversampler's combined up+down FIR group delay at 1x.

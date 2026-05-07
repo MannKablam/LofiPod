@@ -44,7 +44,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SettingsScreen(controller: PlayerController, onBack: () -> Unit) {
+fun SettingsScreen(
+    controller: PlayerController,
+    onBack: () -> Unit,
+    onOpenAudioDiagnostics: () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
@@ -186,7 +190,15 @@ fun SettingsScreen(controller: PlayerController, onBack: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
             SectionHeader("Audio diagnostics")
+            // Inline mini-summary kept as a teaser; the full view (live
+            // meters, counters, event log, copy-to-clipboard) lives on its
+            // own screen so it can use the full vertical budget. Tap "Open"
+            // to navigate.
             AudioDiagnosticsRow(controller)
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onOpenAudioDiagnostics) {
+                Text("Open full audio diagnostics")
+            }
 
             Spacer(Modifier.height(20.dp))
             SectionHeader("About")

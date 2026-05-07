@@ -82,6 +82,10 @@ class Oversampler {
     val totalDelayFrames1x: Int
         get() = (FIR_TAPS - 1) / 2  // (N-1)/2 at 2x = (N-1)/4 at 1x, ×2 for both stages = (N-1)/2 at 1x
 
+    /** Number of FIR taps per stage, exposed for diagnostics. */
+    val firTaps: Int
+        get() = FIR_TAPS
+
     fun configure(sampleRate: Int, channelCount: Int) {
         this.sampleRate = sampleRate
         this.channelCount = channelCount

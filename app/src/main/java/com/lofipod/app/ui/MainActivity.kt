@@ -282,6 +282,14 @@ private fun AppNav(
             composable("settings") {
                 SettingsScreen(
                     controller = controller,
+                    onBack = { nav.popBackStack() },
+                    onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
+                )
+            }
+
+            composable("audioDiagnostics") {
+                AudioDiagnosticsScreen(
+                    controller = controller,
                     onBack = { nav.popBackStack() }
                 )
             }

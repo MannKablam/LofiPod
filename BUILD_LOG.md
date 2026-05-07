@@ -2,6 +2,44 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Audio diagnostics: live readouts + breadcrumb event log + dedicated screen
+
+Settings → Audio diagnostics now has a full-screen view with:
+
+- **Chain spec** — input format, FIR taps per stage, look-ahead window in
+  samples + ms, brick-wall threshold, total chain latency, DC-blocker on/off,
+  master enable. One-shot at configure; verifies the chain is wired the way
+  the code claims.
+- **Live readouts** — decayed peak meter at chain input (post-EQ, post-gain,
+  pre-upsample) and at chain output (post-downsample, pre-truncate), limiter
+  gain reduction in dB, and state flags (passthrough / cross-fade in flight /
+  TPDF dither active / DC blocker on). Polled every 250 ms.
+- **Counters** — configures, flushes, cross-fades, band changes, EOS drains,
+  passthrough vs DSP buffer hits with %, total frames processed. Lets you
+  spot pathological churn (e.g. cross-fades firing every buffer = upstream
+  setBands bug).
+- **Player state + last error** — same source as the inline panel that lived
+  in Settings; kept here because audio diagnosis usually needs both chain and
+  player state in one view.
+- **Recent events** — last 50 chain events with timestamps: configure / flush
+  / cross-fade / passthrough toggle / EOS drain / DC blocker on/off / format
+  change. Breadcrumb log for "what happened just before things sounded weird?"
+- **Copy-to-clipboard** — dumps the whole readout as plain text for pasting
+  into bug reports. Counters/events also resettable.
+
+Implementation: new `AudioChainTelemetry` singleton holds @Volatile readouts
+for the audio thread to write cheaply, AtomicInteger/Long counters, and a
+fixed-capacity ring buffer for events guarded by a small mutex (event
+logging is cold-path only — never per-frame, so contention is negligible).
+`EqAudioProcessor` writes into telemetry on every configure/flush/preset
+change and updates peak readouts + GR + flags inside the per-frame loop
+(no allocations, just @Volatile writes). New `AudioDiagnosticsScreen`
+renders the snapshot; `SettingsScreen` keeps its inline mini-panel and
+adds an "Open full audio diagnostics" button. Nav route
+`audioDiagnostics` added.
+
+ai_contamination: true # claude opus 4.7
+
 ## Oversampler cutoff fix — EQ presets audible again
 
 v0.4.9 shipped the Phase A audiophile chain with the oversampler's
