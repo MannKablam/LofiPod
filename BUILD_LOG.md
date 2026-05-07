@@ -2,6 +2,17 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Autoplay beep: drop volume from 0.85 -> 0.5 amplitude
+
+User feedback: confirmation beeps read too hot vs. typical podcast
+loudness. Cut the synthesized-tone amplitude from 0.85 to 0.5 in
+`BeepPlayer.synthesizePiezoTone` — about a 41% reduction in linear
+peak, ~-4.6 dB. The square-wave character + 2.7 kHz fundamental are
+unchanged, so the piezo "alarm clock" timbre still cuts through
+speech; it just doesn't startle.
+
+ai_contamination: true # claude opus 4.7
+
 ## DSP Phase B2: Press-and-hold A/B bypass button on the EQ screen
 
 Reframed B2 from "another bit-perfect bypass toggle" (which would have
