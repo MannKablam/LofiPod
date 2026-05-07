@@ -3,6 +3,7 @@ package com.lofipod.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,8 +16,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
@@ -29,9 +33,12 @@ import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
 import androidx.compose.ui.platform.LocalContext
+import com.lofipod.app.audio.AudioChainTelemetry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.log10
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +59,32 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     // transitions. Writes go through Settings + applyEqOverrideFor (single
     // source of truth for the effective enabled state).
     val audioEnhancementEnabled by settings.audioEnhancementEnabled.collectAsState(initial = true)
+    // Pre-EQ DC blocker. Persisted globally; toggle pushes BOTH to Settings
+    // (survives restart) and to the live processor (takes effect immediately
+    // without a track transition). Mirrors the diagnostics screen's reset path.
+    val dcBlockerEnabled by settings.dcBlockerEnabled.collectAsState(initial = false)
+
+    // 250 ms poll for the live level meters. Same pattern as
+    // AudioDiagnosticsScreen: audio thread updates @Volatile fields on every
+    // frame; we sample them periodically so the UI doesn't recompose 44k
+    // times a second. LaunchedEffect's coroutine cancels when the composable
+    // leaves composition, so navigating away kills the polling.
+    var meterTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(250L)
+            meterTick++
+        }
+    }
+    // Triple of (inputPeakLinear, outputPeakLinear, reductionDb). Captured
+    // once per tick so the three meters share a consistent snapshot.
+    val meterSnap = remember(meterTick) {
+        Triple(
+            AudioChainTelemetry.inputPeak,
+            AudioChainTelemetry.outputPeak,
+            AudioChainTelemetry.reductionDb,
+        )
+    }
 
     // Per-episode state for the currently-playing episode. Drives the two
     // per-episode toggles below (disable / one-off EQ) AND the override-color
@@ -196,7 +229,47 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = dcBlockerEnabled, onCheckedChange = { v ->
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setDcBlockerEnabled(v) }
+                        // Push to the live processor too. Settings persistence
+                        // alone wouldn't take effect until next configure / track
+                        // transition; this makes the toggle audible immediately.
+                        eq.setDcBlockerEnabled(v)
+                    }
+                })
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("DC blocker", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Removes DC offset from poorly-encoded sources before the EQ amplifies it. Default off.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             Spacer(Modifier.height(16.dp))
+
+            // ---- Hold to A/B button ----
+            // Press-and-hold flips the live processor to passthrough for the
+            // duration of the press; releasing restores the chain to its prior
+            // effective state. Pure transient — never writes to Settings or
+            // per-episode state, so a forgotten release can't strand the user
+            // in bypass mode. Lives directly under the global toggles because
+            // it's a sibling affordance: master toggle = persistent off; this
+            // = momentary off for A/B.
+            HoldToBypassButton(
+                effectiveChainEnabled = audioEnhancementEnabled && !eqDisabledForEpisode,
+                onPress = { eq.setEnabled(false) },
+                // Restore to TRUE because the button is only enabled when the
+                // chain is currently effectively on (see effectiveChainEnabled
+                // gate). If master or per-episode disable were on, the button
+                // would have been inert in the first place — race-free.
+                onRelease = { eq.setEnabled(true) },
+            )
+            Spacer(Modifier.height(20.dp))
 
             // ---- Per-episode controls. Both rows are inert when no episode
             // is currently loaded. The override toggle re-tints the EQ
@@ -318,6 +391,45 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(20.dp))
+
+            // ---- Live levels ----
+            // Three small bar meters fed by AudioChainTelemetry's @Volatile
+            // peak/GR fields. Updated on the 250 ms tick. When the chain is
+            // in passthrough (audio enhancement off, or FLAT + 0 dB + DC
+            // blocker off) the audio thread doesn't update these, so the
+            // bars sit at whatever the chain last saw — typically zero after
+            // the half-life decay. Harmless.
+            Text("Levels", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "IN: post-EQ + gain. OUT: chain output. GR: limiter gain reduction.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                LevelMeter(
+                    label = "IN",
+                    db = peakToDb(meterSnap.first),
+                    kind = MeterKind.PEAK,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                LevelMeter(
+                    label = "OUT",
+                    db = peakToDb(meterSnap.second),
+                    kind = MeterKind.PEAK,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                LevelMeter(
+                    label = "GR",
+                    db = meterSnap.third,
+                    kind = MeterKind.GR,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             Spacer(Modifier.height(20.dp))
 
             // ---- Skip silence ----
@@ -591,6 +703,169 @@ private fun BandRow(band: EqBand, sliderColors: SliderColors, onChange: (Float) 
 
 private fun formatHz(hz: Float): String =
     if (hz >= 1000) "${(hz / 1000).toInt()}kHz" else "${hz.toInt()}Hz"
+
+/**
+ * Press-and-hold A/B compare button. While held, the audio chain runs in
+ * passthrough so the user can hear raw source vs. shaped output without
+ * losing their settings. Release returns the chain to its prior state.
+ *
+ * **Why momentary instead of a toggle.** A toggle persists across releases
+ * and the user can forget which way is which after a few flips. The
+ * audiophile A/B workflow is "hold, listen, release, listen" — a momentary
+ * affordance maps to it directly. Settings stay untouched (no DataStore
+ * writes), so accidentally lifting a finger never strands the chain in an
+ * unintended state.
+ *
+ * **Why detectTapGestures + awaitRelease and not Modifier.combinedClickable.**
+ * `combinedClickable.onLongClick` requires holding for ~500 ms before firing
+ * — wrong for our use case (we want INSTANT bypass on press-down).
+ * `detectTapGestures.onPress` runs synchronously on press; awaitRelease()
+ * suspends until release, and try/finally guarantees [onRelease] runs even
+ * if the gesture is cancelled (drag-off, screen rotation, parent recompose).
+ *
+ * **Disabled state.** When the chain is already off (master toggle off, or
+ * per-episode "Disable EQ" override on), pressing this button would be a
+ * no-op (passthrough → passthrough). We gray it out + dim the label rather
+ * than hide it, so the affordance stays discoverable on revisit.
+ */
+@Composable
+private fun HoldToBypassButton(
+    effectiveChainEnabled: Boolean,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val haptics = LocalHapticFeedback.current
+    var pressed by remember { mutableStateOf(false) }
+
+    val bg = when {
+        !effectiveChainEnabled -> colors.surfaceVariant.copy(alpha = 0.4f)
+        pressed -> colors.primary
+        else -> colors.surfaceVariant
+    }
+    val borderAlpha = if (effectiveChainEnabled) 0.6f else 0.2f
+    val labelColor = when {
+        !effectiveChainEnabled -> colors.onSurface.copy(alpha = 0.4f)
+        pressed -> colors.onPrimary
+        else -> colors.onSurfaceVariant
+    }
+    val labelText = when {
+        !effectiveChainEnabled -> "Hold to A/B (chain already off)"
+        pressed -> "BYPASSED"
+        else -> "Hold to A/B"
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, colors.outline.copy(alpha = borderAlpha), RoundedCornerShape(8.dp))
+            // pointerInput's key list controls when the gesture handler
+            // restarts. Re-key on effectiveChainEnabled so toggling the
+            // master mid-press reattaches a fresh handler with the new
+            // gate (in practice the user can't toggle the master while
+            // holding this, but the re-key is cheap and guards the edge).
+            .pointerInput(effectiveChainEnabled) {
+                if (!effectiveChainEnabled) return@pointerInput
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        onPress()
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        AudioChainTelemetry.logEvent("ab_bypass", "press")
+                        try {
+                            awaitRelease()
+                        } finally {
+                            // Runs on both clean release AND gesture cancel
+                            // (drag-off, parent recompose). Without this, a
+                            // dragged-off gesture would leave the chain in
+                            // bypass forever.
+                            onRelease()
+                            AudioChainTelemetry.logEvent("ab_bypass", "release")
+                            pressed = false
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            labelText,
+            color = labelColor,
+            style = MaterialTheme.typography.titleMedium,
+        )
+    }
+}
+
+private enum class MeterKind { PEAK, GR }
+
+/**
+ * Single labeled bar meter — used three times in the Levels row (IN/OUT/GR).
+ * Layout per meter: small label on top, bar in the middle (10 dp tall), dB
+ * value on the bottom. The bar fills left→right as a fraction of the relevant
+ * dB range. Color depends on [kind]: PEAK uses the primary accent; GR uses
+ * the error color so active limiting visually alarms the user.
+ *
+ * Mapping:
+ *  - PEAK: [-60, 0] dBFS → [0, 1] fill. Below -60 dB shows "-inf".
+ *  - GR:   [0, -20] dB   → [0, 1] fill. 0 dB GR = empty bar (limiter idle);
+ *                                       -20 dB GR = full bar (heavy attenuation).
+ */
+@Composable
+private fun LevelMeter(
+    label: String,
+    db: Double,
+    kind: MeterKind,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val (fraction, valueText, fillColor) = when (kind) {
+        MeterKind.PEAK -> {
+            val frac = ((db + 60.0) / 60.0).coerceIn(0.0, 1.0).toFloat()
+            val text = if (db <= -60.0) "-inf" else "%+.1f dB".format(db)
+            Triple(frac, text, colors.primary)
+        }
+        MeterKind.GR -> {
+            val frac = ((-db) / 20.0).coerceIn(0.0, 1.0).toFloat()
+            val text = "%.1f dB".format(db)
+            Triple(frac, text, colors.error)
+        }
+    }
+    Column(modifier = modifier) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(2.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(colors.surfaceVariant)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .fillMaxHeight()
+                    .background(fillColor)
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            valueText,
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant,
+        )
+    }
+}
+
+/** Linear-amplitude peak (0..1) → dBFS, with a -60 dB floor for log10(0). */
+private fun peakToDb(peak: Double): Double =
+    if (peak < 1e-6) -60.0 else 20.0 * log10(peak)
 
 /**
  * Reverse-derive which preset (if any) the EQ is currently set to by comparing

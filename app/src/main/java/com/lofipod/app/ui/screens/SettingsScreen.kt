@@ -48,6 +48,7 @@ fun SettingsScreen(
     controller: PlayerController,
     onBack: () -> Unit,
     onOpenAudioDiagnostics: () -> Unit = {},
+    onOpenAudiophileNotes: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -198,6 +199,12 @@ fun SettingsScreen(
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = onOpenAudioDiagnostics) {
                 Text("Open full audio diagnostics")
+            }
+            // Sister page to diagnostics: design notes vs live state. Opens
+            // the AudiophileNotesScreen with the full chain spec, latency
+            // math, CPU footprint, and license attribution.
+            TextButton(onClick = onOpenAudiophileNotes) {
+                Text("Notes for audiophiles")
             }
 
             Spacer(Modifier.height(20.dp))

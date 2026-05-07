@@ -2,6 +2,102 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## DSP Phase B2: Press-and-hold A/B bypass button on the EQ screen
+
+Reframed B2 from "another bit-perfect bypass toggle" (which would have
+been a pure rename of the existing Audio enhancement toggle) into a
+genuine new affordance: a press-and-hold button that instantly
+bypasses the entire DSP chain while held, then restores it on release.
+The audiophile A/B workflow ("hold, listen, release, listen") maps
+directly to a momentary button — toggles persist across releases and
+the user can lose track of which way is which after a few flips.
+
+**Behaviour.** `pointerInput` + `detectTapGestures.onPress { ... }`. On
+press: `eq.setEnabled(false)` + haptic feedback + telemetry event. The
+suspending `onPress` lambda calls `awaitRelease()` inside try/finally,
+so the restore (`eq.setEnabled(true)`) runs on both clean release AND
+gesture cancel (drag-off, parent recompose). No DataStore writes — pure
+transient state, so a forgotten release can't strand the chain in
+bypass.
+
+**Why not Modifier.combinedClickable.onLongClick.** That requires
+holding for ~500 ms before firing — wrong for our use case, where we
+want INSTANT bypass on press-down. detectTapGestures is the correct
+primitive for momentary "while held" affordances.
+
+**Disabled state.** When the chain is already off (master toggle off,
+or per-episode "Disable EQ" override on), pressing the button would be
+a no-op (passthrough → passthrough). Grayed out with explanatory label
+"Hold to A/B (chain already off)" so the affordance stays visible on
+revisit.
+
+Also documented in `AudiophileNotesScreen` under "Verifying the chain
+is live" — the by-ear method now sits alongside the by-telemetry
+method.
+
+ai_contamination: true # claude opus 4.7
+
+## DSP Phase B4: Notes for audiophiles screen
+
+New static reference screen at route `audiophileNotes` (sibling to
+`audioDiagnostics` under Settings). Documents the chain design: signal
+flow, Float64 rationale, DC blocker, biquad EQ + cross-fade, master
+gain, 2x oversampling, look-ahead limiter (LA window, soft knee,
+linked stereo, monotonic-deque peak detector), TPDF dither + truncation,
+total latency math (~5.7 ms), CPU footprint, an explicit "what this
+chain does NOT do" list (no exciter, no widening, no spatializer), and
+license attribution (all original code; algorithmic credits only —
+RBJ cookbook, Lipshitz/Wannamaker/Vanderkooy 1992, Vaidyanathan,
+Kaiser+Schafer 1980; planned JTransforms is BSD-2; no GPL).
+
+Sister page to the Audio diagnostics screen — diagnostics shows the
+LIVE state, this page documents the DESIGN. Body wrapped in
+`SelectionContainer` so spec values are copy-paste-able. Chain spec
+strings live as file-level `private const val`s grouped at the bottom
+of the file so the wording can be edited without touching the layout.
+
+Wired up the navigation: new `NESTED_PARENTS` entry mapping the route
+back to `settings`, new `composable("audiophileNotes")` block in
+`AppNav`, new `onOpenAudiophileNotes` param on `SettingsScreen`, new
+`TextButton` link below the audio-diagnostics link in the Settings
+"Audio diagnostics" section.
+
+ai_contamination: true # claude opus 4.7
+
+## DSP Phase B: DC blocker UI toggle + live level meters in Audio screen
+
+First slice of Phase B work surfacing the audiophile chain in the EQ
+screen. Two tightly-scoped additions, both in `EqScreen.kt`.
+
+**B1 — DC blocker toggle.** New `Switch` row directly under the master
+"Audio enhancement" toggle, mirroring its visual pattern. Wired to
+`Settings.setDcBlockerEnabled` (persists across restart) AND
+`PlaybackService.sharedEq.setDcBlockerEnabled` (takes effect immediately
+without waiting for a track transition). Subtitle wording: "Removes DC
+offset from poorly-encoded sources before the EQ amplifies it. Default
+off." The processor's `isPassthroughEffective()` already returns false
+when DC blocker is on, so the toggle isn't a no-op for FLAT users — it
+forces the DSP path so the blocker actually runs.
+
+**B3 — Level meters.** New "Levels" section below the master gain slider:
+three small horizontal bar meters (IN / OUT / GR) reading the
+existing `@Volatile` telemetry fields (`inputPeak`, `outputPeak`,
+`reductionDb`). 250 ms `LaunchedEffect` polling tick, same pattern as
+the Audio diagnostics screen. Per-meter mapping: PEAK uses the primary
+accent and maps [-60, 0] dBFS → [0, 1] fill; GR uses the error color
+and maps [0, -20] dB → [0, 1] fill so active limiting reads as a
+visible alarm. Floor at -60 dBFS via a 1e-6 amplitude threshold so the
+"-inf" case stays readable. Decay is already half-life'd at 500 ms in
+the audio thread, so 250 ms sampling integrates cleanly. When the chain
+is in passthrough (master off, or FLAT + 0 dB + DC blocker off), the
+audio thread doesn't update these fields — bars freeze at zero post-
+decay, which is the right "no signal" UX.
+
+Phase B2 (bit-perfect bypass) and B4 (audiophile-notes page) still
+pending; Phase C unchanged.
+
+ai_contamination: true # claude opus 4.7
+
 ## Limiter window-max via monotonic deque + per-buffer processing-time telemetry
 
 Symptom that triggered this: with audio enhancement on and the phone in
