@@ -109,6 +109,94 @@ object AudioChainTelemetry {
     internal fun incDspBuffers() { dspBuffers.incrementAndGet() }
     internal fun addFrames(n: Int) { framesProcessed.addAndGet(n.toLong()) }
 
+    // ---- Per-buffer processing time (wallclock around queueInput's DSP path) ----
+    /**
+     * Wallclock nanoseconds spent in the DSP path for the most recent buffer.
+     * Read together with [lastBufferAudioNs] to compute a load factor — values
+     * close to 1.0 mean the audio thread is barely keeping up with real time
+     * (= imminent underrun if the OS throttles further).
+     */
+    @Volatile var lastBufferProcessingNs: Long = 0L
+    /** Wallclock duration of audio represented by the most recent buffer, ns. */
+    @Volatile var lastBufferAudioNs: Long = 0L
+    /** Maximum DSP-path wallclock observed since the last counters reset. */
+    @Volatile var maxBufferProcessingNs: Long = 0L
+
+    private const val BUFFER_TIMING_RING_SIZE = 64
+    private val recentBufferProcessingNs = LongArray(BUFFER_TIMING_RING_SIZE)
+    private val recentBufferAudioNs = LongArray(BUFFER_TIMING_RING_SIZE)
+    private var recentBufferPos = 0
+    private var recentBufferCount = 0
+    private val recentBufferLock = Any()
+
+    /**
+     * Record one buffer's DSP-path wallclock + audio duration. Called once
+     * per buffer (not per frame) — overhead is one synchronized block on a
+     * tiny lock plus a few @Volatile writes, contention with the UI thread's
+     * [computeBufferTimingStats] reads is rare.
+     */
+    fun recordBufferTiming(processingNs: Long, audioNs: Long) {
+        lastBufferProcessingNs = processingNs
+        lastBufferAudioNs = audioNs
+        if (processingNs > maxBufferProcessingNs) maxBufferProcessingNs = processingNs
+        synchronized(recentBufferLock) {
+            recentBufferProcessingNs[recentBufferPos] = processingNs
+            recentBufferAudioNs[recentBufferPos] = audioNs
+            recentBufferPos = (recentBufferPos + 1) % BUFFER_TIMING_RING_SIZE
+            if (recentBufferCount < BUFFER_TIMING_RING_SIZE) recentBufferCount++
+        }
+    }
+
+    /** Aggregated buffer-timing snapshot for the diagnostics screen. */
+    data class BufferTimingStats(
+        val sampleCount: Int,
+        val avgProcessingNs: Long,
+        val p95ProcessingNs: Long,
+        val maxProcessingNs: Long,
+        val avgLoadFactor: Double,
+        val maxLoadFactor: Double,
+    )
+
+    /**
+     * Aggregate stats over the last ~[BUFFER_TIMING_RING_SIZE] buffers. Called
+     * only from the UI thread on the diagnostics screen's 250 ms tick —
+     * allocates a small copy + sort, never runs on the audio thread.
+     */
+    fun computeBufferTimingStats(): BufferTimingStats {
+        synchronized(recentBufferLock) {
+            val n = recentBufferCount
+            if (n == 0) return BufferTimingStats(0, 0L, 0L, 0L, 0.0, 0.0)
+            val proc = LongArray(n)
+            val audio = LongArray(n)
+            for (i in 0 until n) {
+                val src = (recentBufferPos - 1 - i + BUFFER_TIMING_RING_SIZE) % BUFFER_TIMING_RING_SIZE
+                proc[i] = recentBufferProcessingNs[src]
+                audio[i] = recentBufferAudioNs[src]
+            }
+            val sortedProc = proc.copyOf().apply { sort() }
+            val sumProc = sortedProc.sum()
+            var sumLoad = 0.0
+            var maxLoad = 0.0
+            for (i in 0 until n) {
+                val a = audio[i]
+                if (a > 0) {
+                    val load = proc[i].toDouble() / a
+                    sumLoad += load
+                    if (load > maxLoad) maxLoad = load
+                }
+            }
+            val p95Idx = ((n - 1) * 0.95).toInt().coerceIn(0, n - 1)
+            return BufferTimingStats(
+                sampleCount = n,
+                avgProcessingNs = sumProc / n,
+                p95ProcessingNs = sortedProc[p95Idx],
+                maxProcessingNs = sortedProc.last(),
+                avgLoadFactor = sumLoad / n,
+                maxLoadFactor = maxLoad,
+            )
+        }
+    }
+
     // ---- Event log (recent breadcrumbs) ----
     /** One captured event in the ring buffer. */
     data class Event(val timestampMs: Long, val kind: String, val detail: String)
@@ -158,10 +246,15 @@ object AudioChainTelemetry {
         passthroughBuffers.set(0)
         dspBuffers.set(0)
         framesProcessed.set(0)
+        maxBufferProcessingNs = 0L
         synchronized(eventLock) {
             eventBuffer.fill(null)
             eventWritePos = 0
             eventTotal = 0
+        }
+        synchronized(recentBufferLock) {
+            recentBufferPos = 0
+            recentBufferCount = 0
         }
     }
 }

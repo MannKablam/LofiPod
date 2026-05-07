@@ -88,6 +88,7 @@ fun AudioDiagnosticsScreen(
     // Snapshot the volatile fields once per tick so the rendering below sees
     // a consistent set of values within a single recomposition.
     val snap = remember(tick) { TelemetrySnapshot.capture() }
+    val timing = remember(tick) { AudioChainTelemetry.computeBufferTimingStats() }
     val events = remember(tick) { AudioChainTelemetry.snapshotEvents() }
     val eq = PlaybackService.sharedEq
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
@@ -135,6 +136,10 @@ fun AudioDiagnosticsScreen(
                     Spacer(Modifier.height(12.dp))
                     SectionLabel("Live")
                     Text(formatLive(snap), style = MaterialTheme.typography.bodySmall)
+
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("Performance")
+                    Text(formatPerformance(snap, timing), style = MaterialTheme.typography.bodySmall)
 
                     Spacer(Modifier.height(12.dp))
                     SectionLabel("Counters")
@@ -195,6 +200,7 @@ fun AudioDiagnosticsScreen(
                 TextButton(onClick = {
                     val text = buildClipboardDump(
                         snap = snap,
+                        timing = timing,
                         bands = bandsLabel,
                         gainDb = gainDb,
                         audioEnhancement = audioEnhancement,
@@ -318,6 +324,12 @@ private val HELP_TEXT: String = """
       passthrough_bufs vs dsp_bufs: how many input buffers went through the fast passthrough vs the full DSP path.
       frames_processed total 1x-rate frames that have moved through queueInput.
 
+    Performance — wallclock measurements around the DSP path's queueInput. Read these to see if the audio thread is keeping up with real time, especially in pocket / screen-off / thermal-throttled conditions.
+      last_proc       processing time of the most recent buffer.
+      avg_proc / p95  rolling stats over the last ~64 buffers.
+      max_proc        peak observed since last counters reset.
+      load_factor     processing / audio-time, as a percentage. 5% means the chain finished in 5% of the audio's duration (95% headroom). Values approaching 100% mean the audio thread is saturated and underruns are imminent.
+
     EQ / Player / Last error — same data the inline panel in Settings shows, kept here so a screenshot of this screen captures the full picture.
 
     Recent events — circular log of the last ~50 chain transitions. Read newest first; "ago" is wall-clock time since the event.
@@ -366,6 +378,9 @@ private data class TelemetrySnapshot(
     val passthroughBuffers: Long,
     val dspBuffers: Long,
     val framesProcessed: Long,
+    val lastBufferProcessingNs: Long,
+    val lastBufferAudioNs: Long,
+    val maxBufferProcessingNs: Long,
 ) {
     companion object {
         fun capture(): TelemetrySnapshot = with(AudioChainTelemetry) {
@@ -394,6 +409,9 @@ private data class TelemetrySnapshot(
                 passthroughBuffers = passthroughBufferCount(),
                 dspBuffers = dspBufferCount(),
                 framesProcessed = framesProcessedCount(),
+                lastBufferProcessingNs = lastBufferProcessingNs,
+                lastBufferAudioNs = lastBufferAudioNs,
+                maxBufferProcessingNs = maxBufferProcessingNs,
             )
         }
     }
@@ -449,6 +467,30 @@ private fun formatCounters(s: TelemetrySnapshot): String {
     }
 }
 
+private fun formatPerformance(
+    s: TelemetrySnapshot,
+    timing: AudioChainTelemetry.BufferTimingStats,
+): String {
+    if (timing.sampleCount == 0 || s.lastBufferAudioNs == 0L) {
+        return "  (no DSP buffers processed yet)"
+    }
+    fun nsToMs(ns: Long): String = "%.2f ms".format(ns / 1_000_000.0)
+    fun pct(d: Double): String = "%.1f%%".format(d * 100.0)
+    val lastLoad = if (s.lastBufferAudioNs > 0) {
+        s.lastBufferProcessingNs.toDouble() / s.lastBufferAudioNs
+    } else 0.0
+    return buildString {
+        append("  last_proc       = ${nsToMs(s.lastBufferProcessingNs)} for ${nsToMs(s.lastBufferAudioNs)} of audio\n")
+        append("  avg_proc        = ${nsToMs(timing.avgProcessingNs)}\n")
+        append("  p95_proc        = ${nsToMs(timing.p95ProcessingNs)}\n")
+        append("  max_proc        = ${nsToMs(s.maxBufferProcessingNs)}  (since last reset)\n")
+        append("  last_load       = ${pct(lastLoad)}  (processing / audio-time)\n")
+        append("  avg_load        = ${pct(timing.avgLoadFactor)}\n")
+        append("  max_load        = ${pct(timing.maxLoadFactor)}\n")
+        append("  samples         = ${timing.sampleCount} buffers in window")
+    }
+}
+
 private fun formatEvents(events: List<AudioChainTelemetry.Event>): String {
     val now = System.currentTimeMillis()
     return events.joinToString("\n") { e ->
@@ -480,6 +522,7 @@ private fun formatPlayerLine(p: com.lofipod.app.player.PlayerState): String {
  *  lines so paste targets (issue trackers, chat) render readably. */
 private fun buildClipboardDump(
     snap: TelemetrySnapshot,
+    timing: AudioChainTelemetry.BufferTimingStats,
     bands: String,
     gainDb: Float,
     audioEnhancement: Boolean,
@@ -496,6 +539,9 @@ private fun buildClipboardDump(
     appendLine()
     appendLine("[Live]")
     appendLine(formatLive(snap))
+    appendLine()
+    appendLine("[Performance]")
+    appendLine(formatPerformance(snap, timing))
     appendLine()
     appendLine("[Counters]")
     appendLine(formatCounters(snap))

@@ -351,6 +351,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
         AudioChainTelemetry.incDspBuffers()
         AudioChainTelemetry.addFrames(frameCount)
 
+        // Wallclock the DSP path so the diagnostics screen can show how close
+        // each buffer is to its real-time deadline (= load factor). This
+        // catches thermal/power-saver throttling — when the phone goes in
+        // a pocket and the OS clamps CPU, the load factor climbs toward 1.0
+        // and underruns become likely.
+        val dspStartNs = System.nanoTime()
         val out = replaceOutputBuffer(inputBuffer.remaining()).order(ByteOrder.nativeOrder())
         val src = inputBuffer.order(ByteOrder.nativeOrder())
 
@@ -471,6 +477,17 @@ class EqAudioProcessor : BaseAudioProcessor() {
             if (fading) fadeRemaining--
         }
         out.flip()
+
+        // Push wallclock + audio-time to telemetry. Audio time is derived from
+        // frameCount + sampleRate; processing time is the elapsed nanos since
+        // [dspStartNs]. The diagnostics screen reads these to surface load
+        // factor (= processing/audio): values close to 1.0 mean the audio
+        // thread is saturated and underruns are likely.
+        val dspElapsedNs = System.nanoTime() - dspStartNs
+        val audioNs = if (sampleRate > 0) {
+            frameCount.toLong() * 1_000_000_000L / sampleRate
+        } else 0L
+        AudioChainTelemetry.recordBufferTiming(dspElapsedNs, audioNs)
     }
 
     /**
