@@ -2,6 +2,30 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Oversampler cutoff fix — EQ presets audible again
+
+v0.4.9 shipped the Phase A audiophile chain with the oversampler's
+anti-image FIR cutoff incorrectly set to 0.5 (the filter's Nyquist
+itself), which means the filter wasn't filtering at all. Symptom on
+device: every EQ preset sounded the same and "jumbled" — the alias
+copy of the upsampled signal was surviving through the limiter and
+folding back into the audible band, masking whatever the EQ was doing.
+
+Fix: set `Oversampler.FIR_CUTOFF` to 0.25, which is the correct
+normalized cutoff for a 2x oversampler — half of the filter's Nyquist,
+exactly at the boundary between the original signal band and the image
+band introduced by zero-stuffing. With this, the FIR properly attenuates
+the imaging artifacts and the chain becomes transparent for in-band
+audio.
+
+Also corrected the docstring's claimed transition width (was off by
+~3.5×) and clarified the cutoff semantics in inline comments. No other
+behavior change; the rest of the Phase A chain (Float64 DSP, DC blocker,
+biquad cross-fade, look-ahead limiter, gated TPDF dither) is unchanged
+and was correct.
+
+ai_contamination: true # claude opus 4.7
+
 ## Audiophile-grade audio chain — Phase A (Float64, DC blocker, cross-fade, look-ahead limiter, 2x oversampling, gated dither)
 
 Foundational rebuild of the EQ audio chain for mastering-grade processing.
