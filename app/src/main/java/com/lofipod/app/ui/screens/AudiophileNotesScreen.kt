@@ -61,6 +61,7 @@ fun AudiophileNotesScreen(onBack: () -> Unit) {
                     Section("Float64 throughout", FLOAT64)
                     Section("DC blocker (optional)", DC_BLOCKER)
                     Section("Parametric EQ", EQ)
+                    Section("Phase modes (Minimum / Linear)", PHASE_MODES)
                     Section("Cross-fade on band changes", CROSSFADE)
                     Section("Master gain", GAIN)
                     Section("2x polyphase oversampling", OVERSAMPLING)
@@ -152,6 +153,36 @@ end-to-end.
 
 Direct-Form II Transposed topology. Per-channel state, per-band coefficients
 (coefficients are shared across channels for a given band; state is not).
+"""
+
+private const val PHASE_MODES = """
+The EQ stage can run in either of two modes, selectable from the Audio
+screen.
+
+Minimum-phase (default). The biquad cascade described above: ~5.7 ms total
+chain latency, low CPU, transparent for almost all listeners. Like every
+analog EQ ever made and most digital ones, it introduces frequency-dependent
+group delay — different frequencies are delayed by different amounts. The
+ear can't resolve sub-millisecond group delay differences, so for normal
+music or speech this is inaudible.
+
+Linear-phase. The biquad cascade's MAGNITUDE response is sampled at 8192
+frequency points; the phase is set to zero; an inverse FFT produces a
+4096-tap symmetric FIR kernel that's then convolved against the audio
+stream via overlap-add. Every frequency is delayed by EXACTLY the same
+amount (group delay = (kernel length - 1) / 2 = ~46 ms). The original
+signal's transient waveform shape is preserved verbatim — useful for
+audiophile-grade A/B testing where you want to verify a recording's
+transient response without the EQ smearing it.
+
+Tradeoff. Linear phase costs ~52 ms total chain latency (vs. ~5.7 ms for
+minimum phase) and ~3-5x more CPU. For podcast playback both numbers are
+fine on modern hardware; the latency is far below conversational thresholds
+and the CPU is still well under one core.
+
+The kernel synthesis runs on a worker coroutine on band changes; the audio
+thread sees a single atomic reference swap when a new kernel is ready, so
+slider drags don't stall the audio path.
 """
 
 private const val CROSSFADE = """
@@ -296,9 +327,8 @@ Algorithmic credits (math, not code):
     (Vaidyanathan, "Multirate Systems and Filter Banks").
   - Kaiser window: Kaiser & Schafer 1980.
 
-A planned linear-phase EQ option will pull in JTransforms (BSD-2-Clause,
-pure JVM) for its FFT primitive. No GPL code is or will be linked into
-the audio chain.
+The linear-phase EQ option uses JTransforms (BSD-2-Clause, pure JVM) for
+its FFT primitive. No GPL code is linked into the audio chain.
 """
 
 private const val VERIFY = """

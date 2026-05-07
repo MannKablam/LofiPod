@@ -154,4 +154,13 @@ dependencies {
 
     // --- WorkManager (auto-backup scheduler) ---
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    // --- DSP (linear-phase EQ via FFT convolution) ---
+    // JTransforms 3.1 — BSD-2-Clause, pure JVM, no JNI. Used by the
+    // optional linear-phase EQ path (Phase C of the audiophile DSP
+    // overhaul) for forward/inverse real FFTs at synthesis time
+    // (per-band-change kernel) and runtime (per-buffer overlap-add
+    // convolution). Pulls in pl.edu.icm:JLargeArrays as a transitive,
+    // also BSD-2.
+    implementation("com.github.wendykierp:JTransforms:3.1")
 }
