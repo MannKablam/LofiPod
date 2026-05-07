@@ -268,14 +268,36 @@ class PlayerController(private val context: Context) {
      */
     fun applyEqOverrideFor(guid: String) {
         scope.launch {
-            val episodeDisabled = withContext(Dispatchers.IO) {
-                dao.get(guid)?.eqDisabled ?: false
-            }
-            val globalEnabled = com.lofipod.app.data.Settings(context)
-                .audioEnhancementEnabled.first()
+            val state = withContext(Dispatchers.IO) { dao.get(guid) }
+            val episodeDisabled = state?.eqDisabled ?: false
+            val episodeOverrideCsv = state?.eqBandsCsvOverride
+            val settings = com.lofipod.app.data.Settings(context)
+            val globalEnabled = settings.audioEnhancementEnabled.first()
             // setEnabled is volatile-safe; no need to bounce back to main.
             PlaybackService.sharedEq.setEnabled(globalEnabled && !episodeDisabled)
+
+            // Per-episode EQ override: when the user has dialed in custom band
+            // gains for this episode, apply them in place of the global preset.
+            // When no override exists (CSV is null), reapply the global bands
+            // — this matters on track transitions where the previous episode
+            // had an override and we need to swap back to the global tuning.
+            val targetCsv = episodeOverrideCsv ?: settings.eqBandsCsv.first()
+            val parsed = parseEqBandsCsv(targetCsv)
+            if (parsed != null) {
+                PlaybackService.sharedEq.setBands(parsed)
+            }
         }
+    }
+
+    /** Parse a CSV of dB band gains into a band list using the standard ISO
+     *  centers + Q. Returns null if the CSV count doesn't match the default
+     *  band layout (likely a corrupt or truncated string). */
+    private fun parseEqBandsCsv(csv: String): List<com.lofipod.app.audio.EqBand>? {
+        if (csv.isBlank()) return null
+        val gains = csv.split(',').mapNotNull { it.trim().toFloatOrNull() }
+        val template = com.lofipod.app.audio.EqPresets.DEFAULT_BANDS
+        if (gains.size != template.size) return null
+        return template.mapIndexed { i, band -> band.copy(gainDb = gains[i]) }
     }
 
     private fun pushState() {
@@ -908,7 +930,8 @@ class PlayerController(private val context: Context) {
 
         // Queue empty — fall back to the next episode in the same feed if the
         // user has the setting on.
-        val enabled = com.lofipod.app.data.Settings(app).autoPlayNextInFeed.first()
+        val settings = com.lofipod.app.data.Settings(app)
+        val enabled = settings.autoPlayNextInFeed.first()
         if (!enabled || excluding == null) return
 
         val finishedFeedUrl = withContext(Dispatchers.IO) { dao.get(excluding)?.feedUrl }
@@ -924,10 +947,35 @@ class PlayerController(private val context: Context) {
                 .map { it.guid }
                 .toSet()
         }
-        val candidate = pod.episodes
-            .filter { it.guid != excluding && it.guid !in playedGuids }
-            .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
-            ?: return
+
+        // Direction-aware "next adjacent" walk. Episode list in the UI is
+        // sorted newest-first by pubDate, so:
+        //   directionUp = true  → look for the immediately-newer unplayed episode
+        //                         (smallest pubDate strictly greater than the
+        //                         finished one). If none, autoplay stops.
+        //   directionUp = false → look for the immediately-older unplayed episode
+        //                         (largest pubDate strictly less than the
+        //                         finished one). If none, autoplay stops.
+        // This deliberately avoids wrapping around the ends of the list — when
+        // the listener reaches a boundary, we let them choose what to do next.
+        val directionUp = settings.autoplayDirectionUp.first()
+        val finished = pod.episodes.firstOrNull { it.guid == excluding }
+        val finishedPub = finished?.pubDateMillis
+        val unplayed = pod.episodes.filter { it.guid != excluding && it.guid !in playedGuids }
+        val candidate = if (finishedPub == null) {
+            // Source has no pubDate for the finished episode — fall back to the
+            // pre-direction default (absolute newest unplayed) so we don't just
+            // refuse to advance on broken metadata.
+            unplayed.maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+        } else if (directionUp) {
+            unplayed
+                .filter { (it.pubDateMillis ?: Long.MIN_VALUE) > finishedPub }
+                .minByOrNull { it.pubDateMillis ?: Long.MAX_VALUE }
+        } else {
+            unplayed
+                .filter { (it.pubDateMillis ?: Long.MAX_VALUE) < finishedPub }
+                .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+        } ?: return
 
         lastPlayWasAutoplay = true
         playEpisode(candidate, pod.title, pod.artworkUrl)

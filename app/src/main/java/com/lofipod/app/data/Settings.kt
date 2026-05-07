@@ -63,6 +63,22 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Direction the feed-fallback autoplay walks the episode list when the
+     * queue is empty. Default `true` (= "up the list" = newer episodes), to
+     * match the pre-toggle behaviour. `false` walks downward — older episodes
+     * — useful for working through a backlog of older content chronologically.
+     *
+     * Only relevant when [autoPlayNextInFeed] is true AND the queue is empty;
+     * an in-queue advance always honours the queue order.
+     */
+    val autoplayDirectionUp: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_AUTOPLAY_DIRECTION_UP] ?: true }
+
+    suspend fun setAutoplayDirectionUp(v: Boolean) {
+        context.dataStore.edit { it[KEY_AUTOPLAY_DIRECTION_UP] = v }
+    }
+
+    /**
      * Require user confirmation to keep playing autoplay-induced episodes.
      * When true, every autoplay (queue-next or feed-next) starts a 3:10
      * confirmation window: at 1:00 / 2:00 / 3:00 the app emits 1/2/3 short
@@ -263,6 +279,8 @@ class Settings(private val context: Context) {
         private val KEY_THEME = androidx.datastore.preferences.core.stringPreferencesKey("theme")
         private val KEY_AUTO_PLAY_NEXT_FEED =
             androidx.datastore.preferences.core.booleanPreferencesKey("auto_play_next_feed")
+        private val KEY_AUTOPLAY_DIRECTION_UP =
+            androidx.datastore.preferences.core.booleanPreferencesKey("autoplay_direction_up")
         private val KEY_AUTOPLAY_CONFIRM =
             androidx.datastore.preferences.core.booleanPreferencesKey("autoplay_confirm_enabled")
         private val KEY_TEXT_SCALE =

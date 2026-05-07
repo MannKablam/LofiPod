@@ -38,7 +38,16 @@ data class EpisodeStateEntity(
      * sets this for played episodes whose lastPlayedMillis is older than the
      * configured grace period.
      */
-    val archivedAt: Long = 0L
+    val archivedAt: Long = 0L,
+    /**
+     * Per-episode EQ override bands (CSV of band gains in dB). Null = no
+     * override; the global Settings.eqBandsCsv applies. Set non-null when the
+     * user enables the "Use a one-off EQ for this episode" toggle in the
+     * audio settings screen. Independent of [eqDisabled] — that flag mutes
+     * the chain entirely; this one swaps in different band gains while still
+     * letting the chain run.
+     */
+    val eqBandsCsvOverride: String? = null
 )
 
 object FavoriteTier {
