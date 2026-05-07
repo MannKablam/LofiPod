@@ -281,10 +281,15 @@ class PlayerController(private val context: Context) {
             // When no override exists (CSV is null), reapply the global bands
             // — this matters on track transitions where the previous episode
             // had an override and we need to swap back to the global tuning.
-            val targetCsv = episodeOverrideCsv ?: settings.eqBandsCsv.first()
-            val parsed = parseEqBandsCsv(targetCsv)
-            if (parsed != null) {
-                PlaybackService.sharedEq.setBands(parsed)
+            // settings.eqBandsCsv.first() can be null (Settings stores it as
+            // a nullable String) which is fine — we just skip applying bands
+            // and leave the processor on whatever it had configured.
+            val targetCsv: String? = episodeOverrideCsv ?: settings.eqBandsCsv.first()
+            if (targetCsv != null) {
+                val parsed = parseEqBandsCsv(targetCsv)
+                if (parsed != null) {
+                    PlaybackService.sharedEq.setBands(parsed)
+                }
             }
         }
     }
@@ -962,20 +967,22 @@ class PlayerController(private val context: Context) {
         val finished = pod.episodes.firstOrNull { it.guid == excluding }
         val finishedPub = finished?.pubDateMillis
         val unplayed = pod.episodes.filter { it.guid != excluding && it.guid !in playedGuids }
-        val candidate = if (finishedPub == null) {
-            // Source has no pubDate for the finished episode — fall back to the
-            // pre-direction default (absolute newest unplayed) so we don't just
-            // refuse to advance on broken metadata.
-            unplayed.maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
-        } else if (directionUp) {
-            unplayed
+        // Wrapped in parens so `?: return` binds to the whole when-result;
+        // without them, Kotlin parses the elvis as part of the last branch.
+        val candidate = (when {
+            finishedPub == null -> {
+                // Source has no pubDate for the finished episode — fall back
+                // to the pre-direction default (absolute newest unplayed) so
+                // we don't just refuse to advance on broken metadata.
+                unplayed.maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+            }
+            directionUp -> unplayed
                 .filter { (it.pubDateMillis ?: Long.MIN_VALUE) > finishedPub }
                 .minByOrNull { it.pubDateMillis ?: Long.MAX_VALUE }
-        } else {
-            unplayed
+            else -> unplayed
                 .filter { (it.pubDateMillis ?: Long.MAX_VALUE) < finishedPub }
                 .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
-        } ?: return
+        }) ?: return
 
         lastPlayWasAutoplay = true
         playEpisode(candidate, pod.title, pod.artworkUrl)
