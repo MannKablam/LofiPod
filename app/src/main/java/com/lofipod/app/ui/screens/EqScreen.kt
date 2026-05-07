@@ -63,6 +63,10 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     // (survives restart) and to the live processor (takes effect immediately
     // without a track transition). Mirrors the diagnostics screen's reset path.
     val dcBlockerEnabled by settings.dcBlockerEnabled.collectAsState(initial = false)
+    // EQ phase mode. False (default) = minimum-phase biquad cascade,
+    // ~5.7 ms latency. True = linear-phase 4096-tap FIR convolution,
+    // ~52 ms latency, preserves transient waveform shape exactly.
+    val phaseModeLinear by settings.phaseModeLinear.collectAsState(initial = false)
 
     // 250 ms poll for the live level meters. Same pattern as
     // AudioDiagnosticsScreen: audio thread updates @Volatile fields on every
@@ -251,6 +255,54 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(16.dp))
+
+            // ---- Phase mode (Minimum / Linear) ----
+            // Switches the EQ stage between the default minimum-phase biquad
+            // cascade and the linear-phase FIR convolution. Distinct from
+            // the master toggle: that turns the chain off entirely; this
+            // chooses HOW the EQ shaping is implemented when the chain is
+            // on. Mid-playback switches have a brief audible artifact
+            // (~50 ms) at the transition since the two paths have different
+            // group delays. Could be smoothed with a parallel cross-fade
+            // later; acceptable for a manual-mode-switch affordance.
+            Text("Phase mode", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Minimum: ~5.7 ms latency, transparent for nearly all listeners (default). " +
+                    "Linear: ~52 ms latency, preserves transient waveform shape exactly. " +
+                    "Higher CPU; opt-in for audiophile-grade A/B testing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row {
+                FilterChip(
+                    selected = !phaseModeLinear,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseModeLinear(false)
+                            }
+                            eq.setPhaseModeLinear(false)
+                        }
+                    },
+                    label = { Text("Minimum") }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = phaseModeLinear,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseModeLinear(true)
+                            }
+                            eq.setPhaseModeLinear(true)
+                        }
+                    },
+                    label = { Text("Linear") }
+                )
+            }
+            Spacer(Modifier.height(20.dp))
 
             // ---- Hold to A/B button ----
             // Press-and-hold flips the live processor to passthrough for the

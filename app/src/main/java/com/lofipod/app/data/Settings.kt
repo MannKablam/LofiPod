@@ -176,6 +176,22 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_DC_BLOCKER_ENABLED] = v }
     }
 
+    /**
+     * EQ phase-mode toggle. False (default) = minimum-phase biquad cascade
+     * (~5.7 ms total chain latency); true = linear-phase 4096-tap FIR
+     * convolution (~52 ms total). Linear preserves transient waveform shape
+     * exactly at the cost of higher CPU + latency. Default minimum because
+     * it's transparent for almost all listeners and the existing latency
+     * budget assumes it; opt-in for audiophiles who specifically want
+     * preserved transient response.
+     */
+    val phaseModeLinear: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_PHASE_MODE_LINEAR] ?: false }
+
+    suspend fun setPhaseModeLinear(v: Boolean) {
+        context.dataStore.edit { it[KEY_PHASE_MODE_LINEAR] = v }
+    }
+
     // ---- Auto-backup ----
 
     /** Tree URI (SAF) the user picked as the backup folder; null = unset. */
@@ -295,6 +311,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
         private val KEY_DC_BLOCKER_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
+        private val KEY_PHASE_MODE_LINEAR =
+            androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
         private val KEY_BACKUP_TREE_URI =
             androidx.datastore.preferences.core.stringPreferencesKey("backup_tree_uri")
         private val KEY_BACKUP_INTERVAL_HOURS =

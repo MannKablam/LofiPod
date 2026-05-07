@@ -140,6 +140,13 @@ class PlaybackService : MediaSessionService() {
             // chain is otherwise passthrough. Off by default; users with
             // DC-offset-y feeds can flip it on.
             sharedEq.setDcBlockerEnabled(settings.dcBlockerEnabled.first())
+
+            // EQ phase mode (Phase C). False = minimum-phase biquad (default,
+            // ~5.7 ms latency); true = linear-phase FIR convolution (~52 ms).
+            // Rehydrated here so the user's preference survives a process
+            // restart — without this, the chain would always start in
+            // minimum-phase regardless of the saved setting.
+            sharedEq.setPhaseModeLinear(settings.phaseModeLinear.first())
         }
 
         // Notification tap target: route through MainActivity with a custom

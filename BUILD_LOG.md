@@ -2,6 +2,76 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## DSP Phase C: linear-phase EQ via FFT overlap-add convolution
+
+Optional linear-phase EQ mode that preserves transient waveform shape
+exactly, at the cost of ~46 ms additional latency. Default stays
+minimum-phase (the existing biquad cascade); users opt in via the new
+chip row on the Audio screen.
+
+**JTransforms dependency.** BSD-2-Clause, pure JVM, no JNI. Pulls
+JLargeArrays as a transitive (also BSD-2). Added under a new "DSP"
+section in `app/build.gradle.kts`.
+
+**Kernel synthesis (`LinearPhaseEq.synthesizeKernelSync`).** Sample the
+biquad cascade's magnitude response at 8192 frequency points, set
+phase to zero, IFFT to get an acausal symmetric impulse response,
+circular-shift by FFT_SIZE/2 to make it causal, truncate to 4096 taps
+centered on the peak, FFT to get the convolution-time spectrum.
+Synthesis runs on `Dispatchers.Default` via a per-instance
+`workerScope`; rapid slider drags cancel any in-flight synth so only
+the latest band set actually computes. The audio thread sees a single
+`@Volatile` reference swap when a new kernel is ready — no locks, no
+torn reads.
+
+**Overlap-add convolution (`LinearPhaseEq.processChunk`).** 1024-sample
+input chunks zero-padded to FFT_SIZE=8192, FFT'd, complex-multiplied
+against the kernel spectrum (full 4-multiply per bin to handle the
+linear-phase imaginary parts), IFFT'd. First 1024 samples of the
+result mix with the saved overlap-tail; the next 4095 samples become
+the new tail. Per-channel `DoubleFFT_1D` instances + workspaces; no
+allocation in the hot loop.
+
+**Integration with `EqAudioProcessor`.** New `phaseModeLinear`
+@Volatile flag + `setPhaseModeLinear(on)` setter. New
+`queueInputLinearPhase(...)` helper called from `queueInput` when the
+flag is set; the post-gain chain (oversampler ↔ limiter ↔
+downsampler ↔ dither ↔ truncate) is shared between modes. EOS drain
+extended with a linear-phase pre-stage that pushes 3 chunks of zeros
+into `linearPhaseEq` to flush the accumulator + group delay before
+running the standard post-gain drain. `onFlush` resets the
+linearPhaseEq state; `onReset` releases its worker scope. Exiting
+passthrough in linear mode resets the linearPhaseEq output queue too,
+so the Hold-to-A/B button doesn't emit ~50 ms of stale pre-bypass
+audio on release.
+
+**UI.** New chip row on the Audio screen between the DC blocker
+toggle and the Hold-to-A/B button: `[Minimum] [Linear]`.
+Material3 `FilterChip` with selected-state coloring. Toggling writes
+to both `Settings.setPhaseModeLinear` and `eq.setPhaseModeLinear`,
+so the change is both persisted and live without a track transition.
+
+**Settings rehydration.** `PlaybackService.onCreate` now reads
+`settings.phaseModeLinear.first()` and applies it to `sharedEq` so
+the user's mode preference survives a process restart.
+
+**Audiophile notes screen.** New "Phase modes (Minimum / Linear)"
+section between "Parametric EQ" and "Cross-fade on band changes".
+Updated the LICENSES section: linear-phase EQ + JTransforms is no
+longer "planned," it's shipping.
+
+Known limitations:
+- No cross-fade between modes — switching mid-playback has a brief
+  (< 50 ms) audible artifact at the transition. Acceptable for
+  manual mode switches; could be smoothed with a parallel-output
+  cross-fade later.
+- Linear-phase truncation uses a rectangular window. High-Q bands
+  could in principle show audible ripple from the truncation; should
+  be inaudible at the default Q (~1.41) but worth verifying. Adding
+  a Kaiser window is a one-line change if it's a problem.
+
+ai_contamination: true # claude opus 4.7
+
 ## Autoplay beep: drop volume from 0.85 -> 0.5 amplitude
 
 User feedback: confirmation beeps read too hot vs. typical podcast
