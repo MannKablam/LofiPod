@@ -98,6 +98,10 @@ class Limiter {
     val drainFrameCount: Int
         get() = lookAheadSamples
 
+    /** Brick-wall threshold in dBFS, exposed for diagnostics. */
+    val thresholdDbfs: Double
+        get() = THRESHOLD_DB
+
     fun configure(sampleRate: Int, channelCount: Int) {
         this.sampleRate = sampleRate
         this.channelCount = channelCount
