@@ -134,6 +134,12 @@ class PlaybackService : MediaSessionService() {
             // per-episode eqDisabled flag, so this initial value matters only
             // for the (rare) window before the first item transition fires.
             sharedEq.setEnabled(settings.audioEnhancementEnabled.first())
+
+            // DC blocker is independent of the master enable — it's a
+            // pre-EQ source-conditioning stage that runs even when the EQ
+            // chain is otherwise passthrough. Off by default; users with
+            // DC-offset-y feeds can flip it on.
+            sharedEq.setDcBlockerEnabled(settings.dcBlockerEnabled.first())
         }
 
         // Notification tap target: route through MainActivity with a custom

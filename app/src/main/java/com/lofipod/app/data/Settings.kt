@@ -146,6 +146,20 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_AUDIO_ENHANCEMENT_ENABLED] = v }
     }
 
+    /**
+     * Run a one-pole high-pass at ~5 Hz on the signal *before* the EQ chain.
+     * Removes any DC offset that source material may carry — common in
+     * low-bitrate MP3 sermons. Default false because well-mastered podcasts
+     * have no DC and this is pure CPU for them; users who notice
+     * headroom-stealing in their feeds can flip it on.
+     */
+    val dcBlockerEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_DC_BLOCKER_ENABLED] ?: false }
+
+    suspend fun setDcBlockerEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_DC_BLOCKER_ENABLED] = v }
+    }
+
     // ---- Auto-backup ----
 
     /** Tree URI (SAF) the user picked as the backup folder; null = unset. */
@@ -261,6 +275,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("skip_silence_level")
         private val KEY_AUDIO_ENHANCEMENT_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
+        private val KEY_DC_BLOCKER_ENABLED =
+            androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
         private val KEY_BACKUP_TREE_URI =
             androidx.datastore.preferences.core.stringPreferencesKey("backup_tree_uri")
         private val KEY_BACKUP_INTERVAL_HOURS =

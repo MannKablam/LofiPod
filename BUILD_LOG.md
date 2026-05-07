@@ -2,6 +2,111 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Audiophile-grade audio chain — Phase A (Float64, DC blocker, cross-fade, look-ahead limiter, 2x oversampling, gated dither)
+
+Foundational rebuild of the EQ audio chain for mastering-grade processing.
+The signal flow is now:
+
+```
+int16 PCM in
+  -> Float64                          (zero-error int -> double conversion)
+  -> [DC blocker]                     (toggleable, off by default)
+  -> per-channel biquad chain         (parallel cross-fade on band change)
+  -> master gain
+  -> 2x polyphase upsample            (anti-imaging FIR)
+  -> look-ahead brick-wall limiter    (linked-stereo, ~5 ms LA, soft knee, runs at 2x)
+  -> 2x polyphase downsample          (anti-aliasing FIR)
+  -> [TPDF dither when limiter engaged]
+  -> int16 PCM out
+```
+
+**What changed and why.**
+
+- **Float64 throughout.** The biquads at 31/62 Hz were numerically marginal
+  in Float32 — RBJ cookbook math multiplies quantities that cancel to ~1e-7
+  of full magnitude, and Float32 has only ~7 decimal digits of precision.
+  Float64 has ~16 and the precision problem vanishes. CPU cost on modern
+  ARM is identical for scalar Double vs Float; pure precision win, no perf
+  hit. `Biquad.kt` rewritten end-to-end; denormal flush at 1e-15 prevents
+  ARM FPU's slow path during long silences.
+
+- **DC blocker (optional, off by default).** New `DcBlocker.kt` — single-pole
+  HPF at ~5 Hz to remove DC bias from poorly-encoded sources before the EQ
+  amplifies it and steals limiter headroom. Per-channel x_prev/y_prev state.
+  Cheap (one comparison + flush-to-zero); rehydrated from Settings on
+  service start. Still needs UI toggle (Phase B1).
+
+- **Parallel-filter cross-fade on band change.** When an EQ band changes,
+  the previous coefficients + state are snapshotted into a parallel "old"
+  filter chain that runs alongside the live chain for 2048 samples (~46 ms
+  at 44.1k). Outputs are mixed via half-cosine equal-power weights
+  (zero derivative at both ends — inaudibly smooth). No coefficient
+  interpolation: poles can briefly leave the unit circle during interp =
+  momentary instability = pop. Two stable filters in parallel + mixing is
+  bulletproof. ~2x CPU during the fade only; zero rest of the time.
+
+- **Look-ahead brick-wall limiter** (`Limiter.kt`). Replaces the tanh
+  waveshaper that was generating odd-order harmonics on every loud sample.
+  ~5 ms LA window with brute-force windowed-max peak detection (linked
+  stereo: max(|L|,|R|) per frame, applied to both channels so the stereo
+  image stays put). 3 dB quadratic soft knee centered on -1 dBFS; one-pole
+  envelope follower with 1 ms attack / 50 ms release.
+  `lastReductionDb` exposed for dither gating + a future GR meter.
+
+- **2x oversampling around the limiter** (`Oversampler.kt`). The biquad EQ
+  is linear and doesn't need oversampling, but the limiter is time-varying
+  gain (multiplication = convolution in frequency domain = spectrum
+  spreading), so it can produce aliasing at the 16-bit Nyquist. Running it
+  at 2x sample rate pushes the alias products above the original Nyquist
+  where the downsample FIR removes them. 64-tap Kaiser-windowed sinc FIR
+  (β=9 → ~90 dB stopband, ~0.05 transition width). Polyphase up (even/odd
+  phase split, ×2 amplitude scaling) and polyphase-style down (single
+  delay line at 2x rate, full FIR scan once per 1x output).
+
+- **TPDF dither, gated.** `Dither.kt` — sum-of-two-uniforms triangular
+  noise at ±1 LSB peak before the int16 truncation. Decorrelates
+  quantization error from the signal — converts harmonic distortion into
+  broadband noise floor (~-90 dBFS RMS for 16-bit), which sounds like
+  analog hiss instead of digital crunch. Applied ONLY when
+  `limiter.lastReductionDb < 0.0` so we don't add noise to bit-passthrough
+  output (a noise-floor regression vs the FLAT fast-path).
+
+- **End-of-stream drain.** Media3's `BaseAudioProcessor.queueEndOfStream`
+  is final; the override hook is `protected onQueueEndOfStream`. Ours
+  pushes zero 1x frames through the entire post-gain chain (oversampler ↔
+  limiter ↔ oversampler) for `oversampler.totalDelayFrames1x +
+  limiter.drainFrameCount/2` ≈ 251 frames at 1x ≈ 5.7 ms. Without this,
+  the last bit of every track gets silently eaten as buffered audio sits
+  in the chain when Media3 stops calling `queueInput`.
+
+**Latency.** ~5.7 ms total chain delay (5 ms limiter LA + ~0.7 ms FIR
+group delay across both oversampling stages). Below the audible threshold
+for casual listening; well below the perceptual A/V sync threshold for
+podcast playback.
+
+**CPU footprint.** A few percent of one core for stereo at 44.1 kHz. Most
+of the cost is in the oversampler (~22M MAC/sec) and the limiter's
+windowed-max scan (~9.7M ops/sec). Both negligible on any modern phone.
+
+**Licensing.** All original code, no third-party DSP libraries (yet —
+JTransforms arrives in Phase C for linear-phase mode). Apache 2.0 / BSD /
+MIT only; no GPL, no patent encumbrance.
+
+**Files affected.**
+- `app/src/main/java/com/lofipod/app/audio/Biquad.kt` (rewritten)
+- `app/src/main/java/com/lofipod/app/audio/EqAudioProcessor.kt` (modified)
+- `app/src/main/java/com/lofipod/app/audio/DcBlocker.kt` (new)
+- `app/src/main/java/com/lofipod/app/audio/Dither.kt` (new)
+- `app/src/main/java/com/lofipod/app/audio/Limiter.kt` (new)
+- `app/src/main/java/com/lofipod/app/audio/Oversampler.kt` (new)
+- `app/src/main/java/com/lofipod/app/data/Settings.kt` (new `dcBlockerEnabled` key)
+- `app/src/main/java/com/lofipod/app/player/PlaybackService.kt` (rehydrate dcBlocker on service start)
+
+Phases B (UI toggles + meters + audiophile-notes page) and C
+(linear-phase convolution mode) still pending.
+
+ai_contamination: true # claude opus 4.7
+
 ## Audio enhancement no-playback fix + diagnostics panel
 
 The bug that's been around since pre-v0.4.0 is finally pinned: with the
