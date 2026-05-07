@@ -6,14 +6,19 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -85,6 +90,7 @@ fun AudioDiagnosticsScreen(
     val snap = remember(tick) { TelemetrySnapshot.capture() }
     val events = remember(tick) { AudioChainTelemetry.snapshotEvents() }
     val eq = PlaybackService.sharedEq
+    var helpExpanded by rememberSaveable { mutableStateOf(false) }
     val gainDb = remember(playerState, tick) { eq.currentGainDb() }
     val bands = remember(playerState, tick) { eq.currentBands() }
     val bandsLabel = remember(bands) {
@@ -115,6 +121,12 @@ fun AudioDiagnosticsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
+            HelpCard(
+                expanded = helpExpanded,
+                onToggle = { helpExpanded = !helpExpanded }
+            )
+            Spacer(Modifier.height(12.dp))
+
             SelectionContainer {
                 Column(Modifier.fillMaxWidth()) {
                     SectionLabel("Chain spec")
@@ -233,6 +245,95 @@ private fun SectionLabel(text: String) {
         color = MaterialTheme.colorScheme.primary
     )
 }
+
+/**
+ * Collapsible help card that explains every metric on the diagnostics screen.
+ * Lives at the top of the scroll. Closed by default — opens on first tap to
+ * a one-line definition per field. Using a card + expand toggle instead of
+ * per-row tooltips because the rest of the screen is wrapped in
+ * [SelectionContainer]; long-press tooltips would fight the text-selection
+ * gesture.
+ */
+@Composable
+private fun HelpCard(expanded: Boolean, onToggle: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "What do these mean?",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand"
+                )
+            }
+            if (expanded) {
+                Spacer(Modifier.height(8.dp))
+                Text(HELP_TEXT, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+/**
+ * Single string with one-line definitions for every field on the screen,
+ * grouped by section. Plain text so it's selectable + copyable. Kept as a
+ * file-level const so the wording can be updated without recompiling the
+ * composable layout.
+ */
+private val HELP_TEXT: String = """
+    Chain spec — one-shot snapshot taken when the audio sink is configured.
+      input          source format (sample rate / channels / encoding) feeding the chain.
+      fir_taps       length of the polyphase FIR used by the 2x oversampler. Longer = sharper transition, more CPU.
+      la_window_2x   look-ahead buffer length the limiter holds before output emerges. Tradeoff: longer LA = more pre-warning of peaks, more total chain latency.
+      threshold      brick-wall threshold the limiter aims to keep peaks under (in dBFS).
+      total_latency  sum of FIR group delay + limiter LA, expressed in 1x-rate frames and ms.
+      dc_blocker     pre-EQ ~5 Hz HPF that removes DC offset from broken sources. Off by default.
+      master_enabled overall audio-enhancement switch. When false, the chain is full passthrough.
+
+    Live — sampled every 250 ms while the screen is open.
+      in_peak     decayed peak meter post-EQ + master gain, pre-upsample. What the limiter actually sees.
+      out_peak    decayed peak meter at the chain output, post-downsample. With the limiter behaving, this should not exceed the threshold.
+      limiter_GR  current gain reduction in dB. 0 = limiter doing nothing; negative = actively attenuating peaks.
+      flags       compact state badges:
+                    passthrough = chain bypassed (FLAT EQ + 0 dB gain + DC blocker off)
+                    xfade       = EQ band cross-fade window in flight (~46 ms after a band change)
+                    dither      = TPDF dither active (only when limiter > 0 dB GR)
+                    dcblock     = DC blocker engaged
+                    DISABLED    = master switch is off
+
+    Counters — cumulative since process start (or last "Reset counters" tap).
+      configures       audio sink configurations the processor has seen. Bumps on each new track if format differs.
+      flushes          flushes (typically seeks). Each one zeroes the limiter + oversampler state.
+      cross_fades      band-change cross-fades initiated. High frequency = upstream is firing setBands too often.
+      band_changes     setBands calls (broader: includes calls that did not actually start a fade).
+      eos_drains       end-of-stream drain runs.
+      passthrough_bufs vs dsp_bufs: how many input buffers went through the fast passthrough vs the full DSP path.
+      frames_processed total 1x-rate frames that have moved through queueInput.
+
+    EQ / Player / Last error — same data the inline panel in Settings shows, kept here so a screenshot of this screen captures the full picture.
+
+    Recent events — circular log of the last ~50 chain transitions. Read newest first; "ago" is wall-clock time since the event.
+      configure       audio format set up.
+      flush           processor flushed (seek or similar).
+      xfade           band cross-fade started.
+      passthrough     "enter" / "exit" — chain switched between fast and DSP path.
+      eos_drain       end-of-stream drain ran (with frame count).
+      dc_blocker      DC blocker toggled.
+      format_change   sample rate or channel count changed mid-session.
+
+    Actions:
+      Copy to clipboard       dumps every section above as plain text.
+      Reset counters          zeroes the counters + clears the event log. Useful before reproducing an issue.
+      Reset audio to defaults FLAT EQ, 0 dB gain, skip-silence off, DC blocker off, audio enhancement on.
+""".trimIndent()
 
 /**
  * Sampled values from [AudioChainTelemetry]. Captured at one moment so the

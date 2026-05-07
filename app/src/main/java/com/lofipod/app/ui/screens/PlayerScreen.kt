@@ -26,6 +26,7 @@ import com.lofipod.app.data.model.Episode
 import com.lofipod.app.data.model.Podcast
 import com.lofipod.app.player.PlayerController
 import com.lofipod.app.ui.theme.ThemedArtwork
+import com.lofipod.app.util.shareEnclosure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.map
@@ -122,7 +123,8 @@ fun PlayerScreen(
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
 
-    val app = LocalContext.current.applicationContext as LofiPodApp
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
     // Per-episode download state for the inline DownloadButton. Recomposes
     // automatically as downloads progress / change state.
@@ -295,6 +297,29 @@ fun PlayerScreen(
                                 text = { Text("Playback history") },
                                 onClick = { menuExpanded = false; onOpenHistory() },
                                 leadingIcon = { Icon(Icons.Filled.History, null) }
+                            )
+                            // Share lives in the overflow (under "Playback
+                            // history" per the player's existing ordering):
+                            // resolves the audio URL via the cached feed for
+                            // the current episode, then hands off to the
+                            // standard enclosure share intent. Disabled if no
+                            // episode is loaded.
+                            val shareGuid = state.currentEpisodeGuid
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                enabled = shareGuid != null,
+                                onClick = {
+                                    menuExpanded = false
+                                    if (shareGuid == null) return@DropdownMenuItem
+                                    val pod = app.repo.allCached().firstOrNull { p ->
+                                        p.episodes.any { it.guid == shareGuid }
+                                    }
+                                    val ep = pod?.episodes?.firstOrNull { it.guid == shareGuid }
+                                    if (ep != null) {
+                                        ctx.shareEnclosure(ep.audioUrl, ep.title)
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Filled.Share, null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Settings") },
@@ -923,16 +948,13 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
         return
     }
     val app = LocalContext.current.applicationContext as LofiPodApp
-    val scope = rememberCoroutineScope()
     var details by remember(episodeGuid) { mutableStateOf<EpisodeDetails?>(null) }
-    var eqDisabled by remember(episodeGuid) { mutableStateOf(false) }
     var kabodMeta by remember(episodeGuid) { mutableStateOf<com.lofipod.app.data.db.EpisodeKabodEntity?>(null) }
 
     LaunchedEffect(episodeGuid) {
         val state = withContext(Dispatchers.IO) { app.db.episodeStateDao().get(episodeGuid) }
         val pod = state?.let { app.repo.cached(it.feedUrl) }
         val ep = pod?.episodes?.find { it.guid == episodeGuid }
-        eqDisabled = state?.eqDisabled ?: false
         kabodMeta = withContext(Dispatchers.IO) { app.db.episodeKabodDao().get(episodeGuid) }
         details = EpisodeDetails(
             episode = ep,
@@ -990,33 +1012,9 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        // Per-episode EQ override. Useful when an episode features a guest whose
-        // voice doesn't match the host's EQ profile. Applies immediately to the
-        // shared EQ; persists in episode_state.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(
-                checked = eqDisabled,
-                onCheckedChange = { v ->
-                    eqDisabled = v
-                    scope.launch {
-                        withContext(Dispatchers.IO) {
-                            app.db.episodeStateDao().setEqDisabled(episodeGuid, v)
-                        }
-                        controller.applyEqOverrideFor(episodeGuid)
-                    }
-                }
-            )
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text("Disable EQ for this episode", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "Useful when guests' voices don't match the host's tuning.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+        // Per-episode EQ controls (Disable / one-off override) live on the
+        // EQ screen now — that's where they belong alongside the chain. Tap
+        // the EQ icon in the player's top bar to find them.
 
         Spacer(Modifier.height(12.dp))
         if (ep == null) {

@@ -44,6 +44,10 @@ interface EpisodeStateDao {
     @Query("UPDATE episode_state SET eqDisabled = :disabled WHERE guid = :guid")
     suspend fun setEqDisabled(guid: String, disabled: Boolean)
 
+    /** Set or clear the per-episode EQ band override (CSV of dB gains, or null). */
+    @Query("UPDATE episode_state SET eqBandsCsvOverride = :csv WHERE guid = :guid")
+    suspend fun setEqBandsCsvOverride(guid: String, csv: String?)
+
     @Query("UPDATE episode_state SET archivedAt = :archivedAt WHERE guid = :guid")
     suspend fun setArchivedAt(guid: String, archivedAt: Long)
 
@@ -257,7 +261,7 @@ interface PodcastStateDao {
         EpisodeKabodEntity::class,
         EpisodeTranscriptEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -519,6 +523,24 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v12 → v13: per-episode EQ override. Adds `eqBandsCsvOverride`
+         * (nullable comma-separated list of band gains in dB). When non-null,
+         * the [com.lofipod.app.player.PlayerController] applies these bands to
+         * the live EQ for that episode instead of the global Settings preset.
+         * Default null = no override (global EQ applies). Distinct from the
+         * existing `eqDisabled` flag — disabled-for-episode and override-bands
+         * are independent, so a user can disable EQ per-episode AND have a
+         * standby override that re-enables only when they flip eqDisabled off.
+         */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE episode_state ADD COLUMN eqBandsCsvOverride TEXT"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -529,7 +551,8 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
                     .build().also { instance = it }
             }

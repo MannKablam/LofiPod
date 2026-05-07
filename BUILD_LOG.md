@@ -2,6 +2,89 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Topical back-stack + autoplay direction + per-episode EQ override + piezo beeps + audio-diagnostics help
+
+Bundle of UX work that touches navigation, the EQ surfacing of per-episode
+controls, and the autoplay-confirmation beep character.
+
+**Smart back navigation.** System back gesture and every top-bar back button
+now route through a single `smartBack(nav, currentRoute)` helper in
+`MainActivity`:
+  - **Primary chain** (`catalog` → `episodes/{feed}` → `player` /
+    `player/preview/{guid}`): pop normally. Catalog is the practical top —
+    back from it exits the app.
+  - **Nested secondaries**: `audioDiagnostics` → `settings`,
+    `notes/{guid}` → `notesBrowser`. Back lands on the parent, not the
+    most recent primary, so the natural drill-down hierarchy stays intact.
+  - **Flat secondaries** (`settings`, `mylists`, `eq`, `metrics`,
+    `history`, `notesBrowser`, `search`, `transcript`): back walks past
+    any intermediate secondaries and lands on the most recent primary
+    in the back stack. Stops the historical "I went to settings, then
+    mylists, then back lands on settings instead of player" walk.
+  Implemented via `BackHandler` at the `AppNav` level (only enabled on
+  non-primary routes — primary's default popBackStack is already correct
+  and intercepting on catalog would swallow the activity-finish back).
+
+**Autoplay direction toggle.** `Settings.autoplayDirectionUp` (default
+`true`) controls which way the feed-fallback autoplay walks the episode
+list when the queue is empty. Up = newer episodes (closer to today, the
+existing pre-toggle behaviour); down = older episodes (chronological
+backlog walk). `PlayerController.advanceToNextInQueue` now picks the
+*adjacent* unplayed episode in the chosen direction relative to the
+finished episode's pubDate, instead of the absolute newest. Stops at the
+end of the list rather than wrapping.
+
+In `EpisodesScreen`, each episode card got a compact direction indicator
+(arrow up / arrow down, tinted primary). Tap toggles the global setting
+and shows a Snackbar ("Autoplay: next newer episode (up the list)" /
+"...next older episode (down the list)") for ~3 s. To make room, share
++ archive moved into the per-row overflow menu — the visible row is now
+download / queue / direction / overflow / heart.
+
+**Player overflow share.** `PlayerScreen`'s top-bar overflow menu
+(previously: Playback history → Settings) now has a Share entry slotted
+between the two. Resolves the audio URL via the cached feed for the
+current episode and hands off to the standard enclosure share intent.
+Disabled when no episode is loaded.
+
+**Per-episode EQ override.** "Disable EQ for this episode" moved off the
+Player Details tab and onto the EQ screen, alongside a new "Use a one-off
+EQ for this episode" toggle. When override is on:
+  - Slider movements save to `episode_state.eqBandsCsvOverride` (new
+    nullable column added in DB migration 12 → 13) instead of the global
+    `Settings.eqBandsCsv`. Master volume boost stays global on purpose
+    so perceived loudness doesn't change when comparing override vs
+    default.
+  - The band sliders, master gain slider, and the override toggle itself
+    re-tint to `MaterialTheme.colorScheme.tertiary` so the user has a
+    persistent visual reminder that they're shaping a per-episode preset.
+  - `PlayerController.applyEqOverrideFor` reads the override on track
+    transitions and pushes the right bands into the live EQ; falls back
+    to global Settings bands when the override is null.
+
+EQ screen also gained an explanatory line under Audio enhancement
+clarifying that EQ + master gain are global, with the per-episode
+toggles below for one-off shaping.
+
+**Piezo autoplay beeps.** `BeepPlayer` rewritten to render its own
+square-wave-with-soft-edges PCM via `AudioTrack` instead of using
+`ToneGenerator`'s mid-frequency `TONE_PROP_BEEP`. New tone is 2.7 kHz
+(piezo-buzzer territory — well above voice fundamentals and sibilance,
+cuts through podcast playback the way a kitchen-timer alarm does),
+sustained for 500 ms per strike with 500 ms between strikes. 5 ms
+linear attack/release ramps avoid click artifacts at start/stop; a
+small sine blend on each square half-cycle's leading edge keeps the
+buzz character without scraping your ears off.
+
+**Audio diagnostics help section.** `AudioDiagnosticsScreen` got a
+collapsible "What do these mean?" card at the top of the scroll. One
+tap expands a single text block with one-line definitions for every
+field on the screen, grouped by section. Long-press tooltips would have
+fought with the existing `SelectionContainer`, so a single help card
+sits above it instead.
+
+ai_contamination: true # claude opus 4.7
+
 ## Audio diagnostics: live readouts + breadcrumb event log + dedicated screen
 
 Settings → Audio diagnostics now has a full-screen view with:

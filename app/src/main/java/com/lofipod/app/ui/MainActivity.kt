@@ -8,8 +8,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.navigation.NavController
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -129,6 +131,73 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Routes that count as "primary" — the catalog -> episodes -> player chain.
+ * Back inside this set walks down the chain (episodes -> catalog -> exit).
+ *
+ * The "feed refresh" state the user mentions is the loading state inside
+ * Catalog itself, not a separate route, so catalog is the practical top.
+ */
+private val PRIMARY_ROUTES = setOf(
+    "catalog",
+    "episodes/{feed}",
+    "player",
+    "player/preview/{guid}",
+)
+
+/**
+ * Routes that are "nested" under a specific parent secondary, so back from
+ * them goes to the parent rather than skipping straight to a primary. Map
+ * value is the parent route template.
+ *
+ * Anything NOT in this map and NOT in [PRIMARY_ROUTES] is a flat secondary
+ * — back from it goes to the most recent primary in the back stack.
+ */
+private val NESTED_PARENTS = mapOf(
+    "audioDiagnostics" to "settings",
+    "notes/{guid}" to "notesBrowser",
+)
+
+/**
+ * Single back-handler used by every screen + the system back gesture so the
+ * stack walks the right way regardless of the historical navigation order.
+ *
+ * Behaviour:
+ *   - **Primary**: pop normally (episodes -> catalog -> exit, player -> episodes).
+ *   - **Nested secondary**: pop up to the named parent (audioDiagnostics ->
+ *     settings, notes/{guid} -> notesBrowser).
+ *   - **Flat secondary**: pop up to the most recent primary in the back
+ *     stack (settings -> last primary, eq -> last primary, etc.). If for
+ *     some reason no primary is in the stack, fall back to a normal pop.
+ */
+private fun smartBack(nav: NavController, currentRoute: String?) {
+    if (currentRoute == null) {
+        nav.popBackStack()
+        return
+    }
+    when {
+        currentRoute in PRIMARY_ROUTES -> {
+            nav.popBackStack()
+        }
+        currentRoute in NESTED_PARENTS -> {
+            nav.popBackStack(NESTED_PARENTS[currentRoute]!!, inclusive = false)
+        }
+        else -> {
+            // Flat secondary. Find the most recent primary still on the stack
+            // and pop up to it. The current entry sits on top, so walk
+            // backwards skipping it and look for the first primary template.
+            val target = nav.currentBackStack.value
+                .map { it.destination.route }
+                .findLast { route -> route != null && route in PRIMARY_ROUTES }
+            if (target != null) {
+                nav.popBackStack(target, inclusive = false)
+            } else {
+                nav.popBackStack()
+            }
+        }
+    }
+}
+
 @Composable
 private fun AppNav(
     controller: PlayerController,
@@ -138,6 +207,16 @@ private fun AppNav(
     val playerState by controller.state.collectAsState()
     val backStackEntry by nav.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+
+    // System back gesture goes through the same smart router as the visible
+    // top-bar back buttons. Only intercept for non-primary routes — primary
+    // back behavior (player -> episodes -> catalog -> activity finish) is
+    // already what we want by default, and intercepting on catalog (the
+    // start destination) would swallow the back press that should otherwise
+    // exit the app.
+    BackHandler(enabled = currentRoute != null && currentRoute !in PRIMARY_ROUTES) {
+        smartBack(nav, currentRoute)
+    }
 
     // Route to the Player whenever the system media notification (or any other
     // out-of-Compose source) asks us to. launchSingleTop avoids stacking
@@ -195,7 +274,7 @@ private fun AppNav(
             composable("search") {
                 EpisodeSearchScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() },
+                    onBack = { smartBack(nav, "search") },
                     onOpenPlayer = {
                         nav.navigate("player") { launchSingleTop = true }
                     }
@@ -208,7 +287,7 @@ private fun AppNav(
                 EpisodesScreen(
                     feedUrl = feedUrl,
                     controller = controller,
-                    onBack = { nav.popBackStack() },
+                    onBack = { smartBack(nav, "episodes/{feed}") },
                     onPlay = { ep, pod ->
                         controller.playEpisode(ep, pod.title, pod.artworkUrl)
                         nav.navigate("player")
@@ -223,7 +302,7 @@ private fun AppNav(
             composable("player") {
                 PlayerScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() },
+                    onBack = { smartBack(nav, "player") },
                     onOpenEq = { nav.navigate("eq") },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
@@ -241,7 +320,7 @@ private fun AppNav(
                 TranscriptScreen(
                     guid = guid,
                     controller = controller,
-                    onBack = { nav.popBackStack() }
+                    onBack = { smartBack(nav, "player/transcript/{guid}") }
                 )
             }
 
@@ -255,7 +334,7 @@ private fun AppNav(
                 val guid = URLDecoder.decode(encoded, "UTF-8")
                 PlayerScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() },
+                    onBack = { smartBack(nav, "player/preview/{guid}") },
                     onOpenEq = { nav.navigate("eq") },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
@@ -271,18 +350,18 @@ private fun AppNav(
             composable("eq") {
                 EqScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() }
+                    onBack = { smartBack(nav, "eq") }
                 )
             }
 
             composable("metrics") {
-                MetricsScreen(onBack = { nav.popBackStack() })
+                MetricsScreen(onBack = { smartBack(nav, "metrics") })
             }
 
             composable("settings") {
                 SettingsScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() },
+                    onBack = { smartBack(nav, "settings") },
                     onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
                 )
             }
@@ -290,7 +369,7 @@ private fun AppNav(
             composable("audioDiagnostics") {
                 AudioDiagnosticsScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() }
+                    onBack = { smartBack(nav, "audioDiagnostics") }
                 )
             }
 
@@ -301,7 +380,7 @@ private fun AppNav(
                         val encoded = URLEncoder.encode(guid, "UTF-8")
                         nav.navigate("notes/$encoded")
                     },
-                    onBack = { nav.popBackStack() }
+                    onBack = { smartBack(nav, "notesBrowser") }
                 )
             }
 
@@ -311,21 +390,21 @@ private fun AppNav(
                 NotesScreen(
                     episodeGuid = guid,
                     controller = controller,
-                    onBack = { nav.popBackStack() }
+                    onBack = { smartBack(nav, "notes/{guid}") }
                 )
             }
 
             composable("history") {
                 HistoryScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() }
+                    onBack = { smartBack(nav, "history") }
                 )
             }
 
             composable("mylists") {
                 MyListsScreen(
                     controller = controller,
-                    onBack = { nav.popBackStack() },
+                    onBack = { smartBack(nav, "mylists") },
                     onPlayEntity = { entity ->
                         playEntity(controller, entity)
                         nav.navigate("player")
