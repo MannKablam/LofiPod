@@ -67,6 +67,7 @@ fun EpisodesScreen(
     val settings = remember { com.lofipod.app.data.Settings(app) }
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
+    val autoplayDirectionUp by settings.autoplayDirectionUp.collectAsState(initial = true)
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
@@ -202,12 +203,29 @@ fun EpisodesScreen(
                     download = downloadsByGuid[ep.guid],
                     isCurrent = isCurrent,
                     isPlaying = isCurrent && playerState.isPlaying,
+                    autoplayDirectionUp = autoplayDirectionUp,
                     onPlay = {
                         if (isCurrent) controller.togglePlay()
                         else onPlay(ep, pod)
                     },
                     onPreviewTitle = { onPreview(ep) },
                     onShare = { ctx.shareEnclosure(ep.audioUrl, ep.title) },
+                    onToggleAutoplayDirection = {
+                        val nextUp = !autoplayDirectionUp
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setAutoplayDirectionUp(nextUp)
+                            }
+                            // Snackbar dismisses on its own after ~3 seconds
+                            // (Material Short duration). Sticking to a single
+                            // line so it doesn't crowd out the cards behind.
+                            snackbarHostState.showSnackbar(
+                                if (nextUp) "Autoplay: next newer episode (up the list)"
+                                else "Autoplay: next older episode (down the list)",
+                                duration = SnackbarDuration.Short
+                            )
+                        }
+                    },
                     onCycleHeart = {
                         val next = (s.favoriteTier + 1) % 3
                         episodeStates[ep.guid] = s.copy(favoriteTier = next)
@@ -403,6 +421,7 @@ private fun EpisodeRow(
     download: Download?,
     isCurrent: Boolean,
     isPlaying: Boolean,
+    autoplayDirectionUp: Boolean,
     onPlay: () -> Unit,
     onPreviewTitle: () -> Unit,
     onShare: () -> Unit,
@@ -410,6 +429,7 @@ private fun EpisodeRow(
     onToggleDownload: () -> Unit,
     onToggleQueue: () -> Unit,
     onToggleArchive: () -> Unit,
+    onToggleAutoplayDirection: () -> Unit,
     onMarkPlayed: () -> Unit,
     onMarkUnplayed: () -> Unit,
 ) {
@@ -540,20 +560,26 @@ private fun EpisodeRow(
                         tint = if (isQueued) MaterialTheme.colorScheme.primary else LocalContentColor.current
                     )
                 }
-                IconButton(onClick = onToggleArchive) {
+                // Autoplay-direction indicator. Tap to toggle the global
+                // setting. The icon flips with the direction so a glance
+                // tells the user which way the chain will walk after the
+                // current episode finishes — only matters when the queue
+                // is empty AND the per-feed auto-advance toggle is on.
+                IconButton(onClick = onToggleAutoplayDirection) {
                     Icon(
-                        if (isArchived) Icons.Filled.Unarchive else Icons.Filled.Archive,
-                        contentDescription = if (isArchived) "Unarchive" else "Archive",
-                        tint = if (isArchived) MaterialTheme.colorScheme.primary
-                               else LocalContentColor.current
+                        if (autoplayDirectionUp) Icons.Filled.ArrowUpward
+                        else Icons.Filled.ArrowDownward,
+                        contentDescription = if (autoplayDirectionUp)
+                            "Autoplay walks toward newer episodes (tap to flip)"
+                        else "Autoplay walks toward older episodes (tap to flip)",
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
-                IconButton(onClick = onShare) {
-                    Icon(Icons.Filled.Share, contentDescription = "Share raw link")
-                }
-                // Per-row overflow — currently only "Mark played/unplayed."
-                // Future per-episode "soft" actions land here so the visible
-                // button row stays focused on the high-frequency actions.
+                // Per-row overflow. Houses the lower-frequency actions:
+                // share, archive (was previously inline — moved here to
+                // give the autoplay-direction toggle visible-row real
+                // estate), and mark-played/unplayed. Heart stays inline
+                // since it's the highest-frequency curation action.
                 Box {
                     var moreOpen by remember { mutableStateOf(false) }
                     IconButton(onClick = { moreOpen = true }) {
@@ -567,6 +593,30 @@ private fun EpisodeRow(
                         expanded = moreOpen,
                         onDismissRequest = { moreOpen = false }
                     ) {
+                        DropdownMenuItem(
+                            text = { Text(if (isArchived) "Unarchive" else "Archive") },
+                            onClick = {
+                                moreOpen = false
+                                onToggleArchive()
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    if (isArchived) Icons.Filled.Unarchive
+                                    else Icons.Filled.Archive,
+                                    null,
+                                    tint = if (isArchived) MaterialTheme.colorScheme.primary
+                                    else LocalContentColor.current
+                                )
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share raw link") },
+                            onClick = {
+                                moreOpen = false
+                                onShare()
+                            },
+                            leadingIcon = { Icon(Icons.Filled.Share, null) }
+                        )
                         if (isPlayed) {
                             DropdownMenuItem(
                                 text = { Text("Mark as unplayed") },
@@ -621,80 +671,7 @@ private fun ArchivedChip() {
     }
 }
 
-@Composable
-private fun DownloadButton(download: Download?, onClick: () -> Unit) {
-    when (download?.state) {
-        null -> {
-            IconButton(onClick = onClick) {
-                Icon(Icons.Filled.Download, contentDescription = "Download")
-            }
-        }
-        Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_RESTARTING -> {
-            // Show the percentage *next to* the spinner so progress reads even
-            // when the download finishes in a couple of seconds. Without the
-            // number, fast downloads look like the button just teleported to
-            // the checkmark state.
-            val pct = download.percentDownloaded
-            val pctLabel = when {
-                !pct.isFinite() -> "…"
-                pct < 0f -> "…"
-                else -> "${pct.toInt()}%"
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onClick) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (pct.isFinite() && pct >= 0f) {
-                            CircularProgressIndicator(
-                                progress = { pct / 100f },
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
-                        }
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = "Cancel download",
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                }
-                Text(
-                    pctLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        Download.STATE_COMPLETED -> {
-            IconButton(onClick = onClick) {
-                Icon(
-                    Icons.Filled.DownloadDone,
-                    contentDescription = "Delete download",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-        Download.STATE_FAILED -> {
-            IconButton(onClick = onClick) {
-                Icon(
-                    Icons.Filled.Refresh,
-                    contentDescription = "Retry download",
-                    tint = MaterialTheme.colorScheme.error
-                )
-            }
-        }
-        else -> {
-            IconButton(onClick = onClick) {
-                Icon(Icons.Filled.Download, contentDescription = "Download")
-            }
-        }
-    }
-}
+// DownloadButton moved to DownloadUi.kt for reuse on the Player screen.
 
 /**
  * Single-button heart tier control. One tap cycles 0 → 1 (Excellent) →

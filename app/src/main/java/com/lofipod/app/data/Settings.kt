@@ -63,6 +63,38 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Direction the feed-fallback autoplay walks the episode list when the
+     * queue is empty. Default `true` (= "up the list" = newer episodes), to
+     * match the pre-toggle behaviour. `false` walks downward — older episodes
+     * — useful for working through a backlog of older content chronologically.
+     *
+     * Only relevant when [autoPlayNextInFeed] is true AND the queue is empty;
+     * an in-queue advance always honours the queue order.
+     */
+    val autoplayDirectionUp: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_AUTOPLAY_DIRECTION_UP] ?: true }
+
+    suspend fun setAutoplayDirectionUp(v: Boolean) {
+        context.dataStore.edit { it[KEY_AUTOPLAY_DIRECTION_UP] = v }
+    }
+
+    /**
+     * Require user confirmation to keep playing autoplay-induced episodes.
+     * When true, every autoplay (queue-next or feed-next) starts a 3:10
+     * confirmation window: at 1:00 / 2:00 / 3:00 the app emits 1/2/3 short
+     * beeps, ducking playback for the duration of each beep; at 3:10 the
+     * episode auto-pauses unless the user (or a Bluetooth play/pause press)
+     * has confirmed. Prevents indefinite background autoplay when nobody's
+     * listening. Default true.
+     */
+    val autoplayConfirmEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_AUTOPLAY_CONFIRM] ?: true }
+
+    suspend fun setAutoplayConfirmEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_AUTOPLAY_CONFIRM] = v }
+    }
+
+    /**
      * UI text scale multiplier (Compose density.fontScale override). 1.0 = stock.
      * Range 0.85 .. 1.4. Stored as float; clamped on read.
      */
@@ -112,6 +144,36 @@ class Settings(private val context: Context) {
 
     suspend fun setSkipSilenceLevel(level: Int) {
         context.dataStore.edit { it[KEY_SKIP_SILENCE_LEVEL] = level.coerceIn(0, 3) }
+    }
+
+    /**
+     * Master "Audio enhancement" toggle from the EQ screen. Default true.
+     * Distinct from the per-episode `episode_state.eqDisabled` override —
+     * both feed into [com.lofipod.app.player.PlayerController.applyEqOverrideFor],
+     * which applies effective enabled = (global && !episodeDisabled). Persisting
+     * here means the global toggle survives navigation and isn't silently
+     * overwritten by per-episode overrides on track transition (the bug it
+     * was added to fix).
+     */
+    val audioEnhancementEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_AUDIO_ENHANCEMENT_ENABLED] ?: true }
+
+    suspend fun setAudioEnhancementEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_AUDIO_ENHANCEMENT_ENABLED] = v }
+    }
+
+    /**
+     * Run a one-pole high-pass at ~5 Hz on the signal *before* the EQ chain.
+     * Removes any DC offset that source material may carry — common in
+     * low-bitrate MP3 sermons. Default false because well-mastered podcasts
+     * have no DC and this is pure CPU for them; users who notice
+     * headroom-stealing in their feeds can flip it on.
+     */
+    val dcBlockerEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_DC_BLOCKER_ENABLED] ?: false }
+
+    suspend fun setDcBlockerEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_DC_BLOCKER_ENABLED] = v }
     }
 
     // ---- Auto-backup ----
@@ -217,6 +279,10 @@ class Settings(private val context: Context) {
         private val KEY_THEME = androidx.datastore.preferences.core.stringPreferencesKey("theme")
         private val KEY_AUTO_PLAY_NEXT_FEED =
             androidx.datastore.preferences.core.booleanPreferencesKey("auto_play_next_feed")
+        private val KEY_AUTOPLAY_DIRECTION_UP =
+            androidx.datastore.preferences.core.booleanPreferencesKey("autoplay_direction_up")
+        private val KEY_AUTOPLAY_CONFIRM =
+            androidx.datastore.preferences.core.booleanPreferencesKey("autoplay_confirm_enabled")
         private val KEY_TEXT_SCALE =
             androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
         private val KEY_SHOW_PLAYED =
@@ -225,6 +291,10 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
         private val KEY_SKIP_SILENCE_LEVEL =
             androidx.datastore.preferences.core.intPreferencesKey("skip_silence_level")
+        private val KEY_AUDIO_ENHANCEMENT_ENABLED =
+            androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
+        private val KEY_DC_BLOCKER_ENABLED =
+            androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
         private val KEY_BACKUP_TREE_URI =
             androidx.datastore.preferences.core.stringPreferencesKey("backup_tree_uri")
         private val KEY_BACKUP_INTERVAL_HOURS =

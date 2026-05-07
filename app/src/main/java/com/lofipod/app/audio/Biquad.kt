@@ -1,42 +1,60 @@
 package com.lofipod.app.audio
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.sin
-import kotlin.math.sinh
-import kotlin.math.sqrt
 
 /**
  * Direct-Form II Transposed biquad filter.
  * One instance per channel per band; coefficients shared across channels per band.
  *
  * Coefficient formulas come from RBJ's audio EQ cookbook (peaking EQ).
+ *
+ * **Float64 throughout.** Biquads at low center frequencies (31 / 62 Hz) are
+ * numerically marginal in Float32 — the cookbook formulas multiply quantities
+ * that cancel to ~1e-7 of full magnitude, and Float32 has only ~7 decimal
+ * digits of precision. Result: sub-bass DC offset, frequency-response error
+ * at the low extremes. Float64 has ~16 decimal digits and the problem
+ * vanishes. CPU cost on modern ARM is identical for scalar Double vs Float
+ * arithmetic (the Float case wasn't being SIMD'd anyway); this change is
+ * pure precision win, no perf hit.
+ *
+ * **Denormal flush.** Biquad state (`z1`, `z2`) decays exponentially during
+ * silence. At Float64 the values cross into denormal range (~1e-308) after a
+ * few hundred ms of zero input, and ARM cores that don't have flush-to-zero
+ * mode set in the FPU control register fall off into per-op slow path
+ * (~30x slowdown). We don't have that mode set here (it's per-thread and not
+ * universally honored on Android), so the safety belt is to manually clamp
+ * `z1`/`z2` to zero whenever they fall below the audible threshold (~1e-15
+ * in normalized [-1, 1) range, well above denormal range and well below
+ * 16-bit quantization noise). One comparison per process() call; immeasurable
+ * cost.
  */
 class Biquad {
-    // Coefficients
-    private var b0 = 1f; private var b1 = 0f; private var b2 = 0f
-    private var a1 = 0f; private var a2 = 0f
-    // State (per channel — created externally)
-    private var z1 = 0f; private var z2 = 0f
+    // Coefficients (Float64)
+    private var b0 = 1.0; private var b1 = 0.0; private var b2 = 0.0
+    private var a1 = 0.0; private var a2 = 0.0
+    // State (per channel — created externally) (Float64)
+    private var z1 = 0.0; private var z2 = 0.0
 
-    fun reset() { z1 = 0f; z2 = 0f }
+    fun reset() { z1 = 0.0; z2 = 0.0 }
 
     /** Configure as a peaking EQ band. */
     fun setPeaking(sampleRate: Int, centerHz: Float, gainDb: Float, q: Float) {
-        val a = 10.0.pow((gainDb / 40.0)).toFloat()
-        val w0 = 2f * PI.toFloat() * centerHz / sampleRate
+        val a = 10.0.pow(gainDb / 40.0)
+        val w0 = 2.0 * PI * centerHz / sampleRate
         val cosW0 = cos(w0)
         val sinW0 = sin(w0)
-        val alpha = sinW0 / (2f * q)
+        val alpha = sinW0 / (2.0 * q)
 
-        val b0p = 1f + alpha * a
-        val b1p = -2f * cosW0
-        val b2p = 1f - alpha * a
-        val a0  = 1f + alpha / a
-        val a1p = -2f * cosW0
-        val a2p = 1f - alpha / a
+        val b0p = 1.0 + alpha * a
+        val b1p = -2.0 * cosW0
+        val b2p = 1.0 - alpha * a
+        val a0  = 1.0 + alpha / a
+        val a1p = -2.0 * cosW0
+        val a2p = 1.0 - alpha / a
 
         b0 = b0p / a0
         b1 = b1p / a0
@@ -45,11 +63,35 @@ class Biquad {
         a2 = a2p / a0
     }
 
+    /**
+     * Copy [other]'s coefficients AND state into this filter. Used by the
+     * cross-fade machinery to spawn a fresh "old" filter that picks up
+     * exactly where the in-place filter left off, while the in-place filter
+     * gets reconfigured with new coefficients. Two filters then run in
+     * parallel for the duration of the fade.
+     */
+    fun copyFrom(other: Biquad) {
+        b0 = other.b0; b1 = other.b1; b2 = other.b2
+        a1 = other.a1; a2 = other.a2
+        z1 = other.z1; z2 = other.z2
+    }
+
     /** Process one sample. */
-    fun process(sample: Float): Float {
+    fun process(sample: Double): Double {
         val out = b0 * sample + z1
         z1 = b1 * sample - a1 * out + z2
         z2 = b2 * sample - a2 * out
+        // Flush to zero when state has decayed below audible. Prevents
+        // denormal-range Doubles from triggering ARM FPU's slow path during
+        // long silences. 1e-15 is ~6 orders of magnitude below 16-bit
+        // quantization noise (~1.5e-5) so it's inaudible; ~290 orders of
+        // magnitude above the denormal cliff (~1e-308) so it's effective.
+        if (abs(z1) < DENORMAL_CUTOFF) z1 = 0.0
+        if (abs(z2) < DENORMAL_CUTOFF) z2 = 0.0
         return out
+    }
+
+    companion object {
+        private const val DENORMAL_CUTOFF = 1e-15
     }
 }

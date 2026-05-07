@@ -46,12 +46,51 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
 
     var bands by remember { mutableStateOf(eq.currentBands()) }
     var gainDb by remember { mutableStateOf(eq.currentGainDb()) }
-    var enabled by remember { mutableStateOf(true) }
+    // Master "Audio enhancement" toggle, persisted in Settings so it doesn't
+    // desync from the processor on screen revisit and isn't silently
+    // overwritten by the per-episode eqDisabled override on track
+    // transitions. Writes go through Settings + applyEqOverrideFor (single
+    // source of truth for the effective enabled state).
+    val audioEnhancementEnabled by settings.audioEnhancementEnabled.collectAsState(initial = true)
+
+    // Per-episode state for the currently-playing episode. Drives the two
+    // per-episode toggles below (disable / one-off EQ) AND the override-color
+    // tinting that signals "you're editing the per-episode preset, not the
+    // global one." When no episode is loaded, the flow yields null forever
+    // and the toggles stay disabled.
+    val currentEpisodeGuid = playerState.currentEpisodeGuid
+    val episodeStateFlow = remember(currentEpisodeGuid) {
+        if (currentEpisodeGuid == null) {
+            kotlinx.coroutines.flow.flowOf<com.lofipod.app.data.db.EpisodeStateEntity?>(null)
+        } else {
+            app.db.episodeStateDao().observe(currentEpisodeGuid)
+        }
+    }
+    val episodeState by episodeStateFlow.collectAsState(initial = null)
+    val eqDisabledForEpisode = episodeState?.eqDisabled ?: false
+    val episodeOverrideOn = (episodeState?.eqBandsCsvOverride != null)
+
+    // When override is active, controls re-tint to the override color so the
+    // user has a visible reminder that slider movement is shaping a per-
+    // episode preset, not the global one. Tertiary is distinct enough from
+    // primary that it reads at a glance while still feeling part of the
+    // palette.
+    val overrideColor = MaterialTheme.colorScheme.tertiary
+    val accentColor = if (episodeOverrideOn) overrideColor
+                      else MaterialTheme.colorScheme.primary
+    val sliderColors = SliderDefaults.colors(
+        thumbColor = accentColor,
+        activeTrackColor = accentColor,
+    )
 
     // Active preset + its current level. activeLevel == 0 means flat / no preset
     // currently lit. Tapping a different preset switches and starts at level 1.
-    var activePreset by remember { mutableStateOf<PresetId?>(null) }
-    var activeLevel by remember { mutableStateOf(0) }
+    // Derived from current bands so navigating away and back lands on the same
+    // highlight the audio is actually playing — without this the screen showed
+    // "Flat" while the EQ was still applying e.g. Voice L2.
+    val initialPreset = remember { derivePresetFromBands(bands) }
+    var activePreset by remember { mutableStateOf(initialPreset.first) }
+    var activeLevel by remember { mutableStateOf(initialPreset.second) }
 
     // Scroll plumbing: capture the y-offset of the Graphic EQ header so any
     // preset tap can scroll it into view. Without this, the band sliders sit
@@ -67,14 +106,24 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     }
 
     /**
-     * Persist the current band gains as a CSV (one float per ISO band, in
-     * order). Centers + Q come from `EqPresets.DEFAULT_BANDS` and are not
-     * stored — only the user-controlled gain values need to round-trip.
+     * Persist the current band gains. When the per-episode override is active
+     * for the currently-playing episode, writes go to that episode's row in
+     * `episode_state.eqBandsCsvOverride`; otherwise they go to the global
+     * `Settings.eqBandsCsv`. In both cases the CSV format is one float per
+     * ISO band (gain in dB), in band order. Centers + Q come from
+     * `EqPresets.DEFAULT_BANDS` so only user-controlled gains round-trip.
      */
     fun persistBands(latest: List<EqBand>) {
         val csv = latest.joinToString(",") { it.gainDb.toString() }
+        val routeToOverride = episodeOverrideOn && currentEpisodeGuid != null
         composeScope.launch {
-            withContext(Dispatchers.IO) { settings.setEqBandsCsv(csv) }
+            withContext(Dispatchers.IO) {
+                if (routeToOverride) {
+                    app.db.episodeStateDao().setEqBandsCsvOverride(currentEpisodeGuid!!, csv)
+                } else {
+                    settings.setEqBandsCsv(csv)
+                }
+            }
         }
     }
 
@@ -126,12 +175,100 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 .verticalScroll(scrollState)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = enabled, onCheckedChange = {
-                    enabled = it
-                    eq.setEnabled(it)
+                Switch(checked = audioEnhancementEnabled, onCheckedChange = { v ->
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setAudioEnhancementEnabled(v) }
+                        // Re-apply against the currently playing episode so the
+                        // change takes effect immediately (instead of waiting
+                        // for the next track transition).
+                        playerState.currentEpisodeGuid?.let {
+                            controller.applyEqOverrideFor(it)
+                        }
+                    }
                 })
                 Spacer(Modifier.width(12.dp))
                 Text("Audio enhancement", style = MaterialTheme.typography.titleMedium)
+            }
+            Text(
+                "EQ + master gain are global — they apply to every podcast and " +
+                    "every episode. For one-off shaping, use the toggles below " +
+                    "while an episode is playing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Per-episode controls. Both rows are inert when no episode
+            // is currently loaded. The override toggle re-tints the EQ
+            // controls below in the override color so the user has a
+            // persistent visual reminder that slider movement is shaping a
+            // per-episode preset rather than the global one. ----
+            Text("For this episode", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            val episodeControlsEnabled = currentEpisodeGuid != null
+            val perEpisodeSwitchColors = SwitchDefaults.colors(
+                checkedThumbColor = overrideColor,
+                checkedTrackColor = overrideColor.copy(alpha = 0.5f),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = eqDisabledForEpisode,
+                    enabled = episodeControlsEnabled,
+                    onCheckedChange = { v ->
+                        val guid = currentEpisodeGuid ?: return@Switch
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                app.db.episodeStateDao().setEqDisabled(guid, v)
+                            }
+                            controller.applyEqOverrideFor(guid)
+                        }
+                    },
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Disable EQ for this episode", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Useful when guests' voices don't match the host's tuning. Forces full passthrough for this one episode.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = episodeOverrideOn,
+                    enabled = episodeControlsEnabled,
+                    colors = perEpisodeSwitchColors,
+                    onCheckedChange = { v ->
+                        val guid = currentEpisodeGuid ?: return@Switch
+                        val seedCsv = if (v) bands.joinToString(",") { it.gainDb.toString() }
+                                      else null
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                app.db.episodeStateDao()
+                                    .setEqBandsCsvOverride(guid, seedCsv)
+                            }
+                            // Re-evaluate the live processor: when seeding,
+                            // it'll pick up the new override; when clearing,
+                            // it'll fall back to global Settings bands.
+                            controller.applyEqOverrideFor(guid)
+                            // After clearing, sync the visible bands to whatever
+                            // the global value is so the screen doesn't keep
+                            // showing the (now-stale) override values.
+                            if (!v) bands = eq.currentBands()
+                        }
+                    },
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Use a one-off EQ for this episode", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Slider changes save to this episode only. The override color marks the EQ controls while it's on.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Spacer(Modifier.height(20.dp))
 
@@ -163,10 +300,16 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 onValueChangeFinished = {
                     // Persist on release rather than every drag tick — DataStore
                     // writes coalesce in practice, but no reason to thrash.
+                    // Note: master gain stays GLOBAL even when the per-episode
+                    // override is on. Only the band gains are part of the
+                    // per-episode profile; treating the boost as global keeps
+                    // perceived loudness consistent across an
+                    // override-vs-default A/B without surprising the user.
                     composeScope.launch {
                         withContext(Dispatchers.IO) { settings.setGainDb(gainDb) }
                     }
                 },
+                colors = sliderColors,
                 valueRange = 0f..12f,
                 steps = 23
             )
@@ -242,7 +385,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
             bands.forEachIndexed { idx, band ->
-                BandRow(band) { newGain ->
+                BandRow(band, sliderColors) { newGain ->
                     val newBands = bands.toMutableList()
                     newBands[idx] = band.copy(gainDb = newGain)
                     bands = newBands
@@ -420,7 +563,7 @@ private fun PresetButton(
 }
 
 @Composable
-private fun BandRow(band: EqBand, onChange: (Float) -> Unit) {
+private fun BandRow(band: EqBand, sliderColors: SliderColors, onChange: (Float) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
@@ -435,6 +578,7 @@ private fun BandRow(band: EqBand, onChange: (Float) -> Unit) {
             onValueChange = onChange,
             valueRange = -12f..12f,
             steps = 23,
+            colors = sliderColors,
             modifier = Modifier.weight(1f)
         )
         Text(
@@ -447,3 +591,22 @@ private fun BandRow(band: EqBand, onChange: (Float) -> Unit) {
 
 private fun formatHz(hz: Float): String =
     if (hz >= 1000) "${(hz / 1000).toInt()}kHz" else "${hz.toInt()}Hz"
+
+/**
+ * Reverse-derive which preset (if any) the EQ is currently set to by comparing
+ * gain values. Preset gains are whole-integer dB (-12..+12), each exactly
+ * representable as Float, so == on the gain list is safe.
+ *
+ * Returns (null, 0) for FLAT, (null, 0) for any custom hand-tuned curve that
+ * doesn't match a known preset level. Returns (preset, levelIndex+1) otherwise.
+ */
+private fun derivePresetFromBands(bands: List<EqBand>): Pair<PresetId?, Int> {
+    val cur = bands.map { it.gainDb }
+    if (cur == EqPresets.FLAT.map { it.gainDb }) return null to 0
+    for (preset in PresetId.values()) {
+        for ((i, levelBands) in preset.levels.withIndex()) {
+            if (cur == levelBands.map { it.gainDb }) return preset to (i + 1)
+        }
+    }
+    return null to 0
+}

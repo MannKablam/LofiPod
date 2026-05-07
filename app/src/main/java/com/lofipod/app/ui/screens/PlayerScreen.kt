@@ -26,6 +26,7 @@ import com.lofipod.app.data.model.Episode
 import com.lofipod.app.data.model.Podcast
 import com.lofipod.app.player.PlayerController
 import com.lofipod.app.ui.theme.ThemedArtwork
+import com.lofipod.app.util.shareEnclosure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.map
@@ -118,11 +119,16 @@ fun PlayerScreen(
 ) {
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
+    val autoplayTimer by controller.autoplayTimer.collectAsState()
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
 
-    val app = LocalContext.current.applicationContext as LofiPodApp
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
+    // Per-episode download state for the inline DownloadButton. Recomposes
+    // automatically as downloads progress / change state.
+    val downloadsByGuid by app.downloadsApi.byId.collectAsState()
 
     // Resolve preview data once per [previewGuid]. Loaded async because we
     // hit the DB; stays null until ready (we render a brief loading state
@@ -292,6 +298,29 @@ fun PlayerScreen(
                                 onClick = { menuExpanded = false; onOpenHistory() },
                                 leadingIcon = { Icon(Icons.Filled.History, null) }
                             )
+                            // Share lives in the overflow (under "Playback
+                            // history" per the player's existing ordering):
+                            // resolves the audio URL via the cached feed for
+                            // the current episode, then hands off to the
+                            // standard enclosure share intent. Disabled if no
+                            // episode is loaded.
+                            val shareGuid = state.currentEpisodeGuid
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                enabled = shareGuid != null,
+                                onClick = {
+                                    menuExpanded = false
+                                    if (shareGuid == null) return@DropdownMenuItem
+                                    val pod = app.repo.allCached().firstOrNull { p ->
+                                        p.episodes.any { it.guid == shareGuid }
+                                    }
+                                    val ep = pod?.episodes?.firstOrNull { it.guid == shareGuid }
+                                    if (ep != null) {
+                                        ctx.shareEnclosure(ep.audioUrl, ep.title)
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Filled.Share, null) }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Settings") },
                                 onClick = { menuExpanded = false; onOpenSettings() },
@@ -369,11 +398,44 @@ fun PlayerScreen(
                     style = MaterialTheme.typography.titleLarge,
                     maxLines = 2
                 )
-                Text(
-                    displayedArtist,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // Artist line + per-episode download status. The download
+                // button mirrors the EpisodesScreen affordance (download,
+                // cancel, delete, retry) and surfaces the same Media3
+                // Download object — auto-download in playEpisode means a
+                // fresh live play almost always lands here on QUEUED →
+                // DOWNLOADING → COMPLETED, while preview lets the user kick
+                // it off explicitly before committing to playing.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        displayedArtist,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (displayedGuid != null) {
+                        val download = downloadsByGuid[displayedGuid]
+                        DownloadButton(
+                            download = download,
+                            onClick = {
+                                val d = downloadsByGuid[displayedGuid]
+                                if (d == null || d.state == androidx.media3.exoplayer.offline.Download.STATE_FAILED) {
+                                    // Start. Preview has full Episode in
+                                    // hand; live looks up via episode_state.
+                                    if (isPreview) {
+                                        previewData?.episode?.let { app.downloadsApi.start(it) }
+                                    } else {
+                                        controller.startDownloadForCurrent(displayedGuid)
+                                    }
+                                } else {
+                                    app.downloadsApi.remove(displayedGuid)
+                                }
+                            }
+                        )
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 val frac = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
                 Slider(
@@ -401,7 +463,7 @@ fun PlayerScreen(
                     // a single big Play button.
                     if (!isPreview) {
                         IconButton(
-                            onClick = { controller.seekRelative(-15_000) },
+                            onClick = { controller.seekBack() },
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
@@ -412,6 +474,9 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(16.dp))
                     }
+                    val countdown = rememberAutoplayCountdown(
+                        if (isPreview) null else autoplayTimer
+                    )
                     Box(contentAlignment = Alignment.Center) {
                         FilledIconButton(
                             onClick = {
@@ -428,25 +493,47 @@ fun PlayerScreen(
                                         )
                                     }
                                 } else {
+                                    // togglePlay short-circuits to
+                                    // confirmAutoplayContinuation when the timer
+                                    // is active and the player is playing — so a
+                                    // tap on the countdown morph above naturally
+                                    // confirms continuation here.
                                     controller.togglePlay()
                                 }
                             },
                             modifier = Modifier.size(88.dp),
                             enabled = !isPreview || previewData != null,
                         ) {
-                            Icon(
-                                if (state.isPlaying && !isPreview) Icons.Filled.Pause
-                                else Icons.Filled.PlayArrow,
-                                contentDescription = if (isPreview) "Play" else "Play/Pause",
-                                modifier = Modifier.size(48.dp)
-                            )
+                            if (countdown != null) {
+                                // Hide the regular icon while the morph overlays
+                                // the button — the FilledIconButton's tonal
+                                // background still sits behind the ring + text.
+                                Spacer(Modifier.size(48.dp))
+                            } else {
+                                Icon(
+                                    if (state.isPlaying && !isPreview) Icons.Filled.Pause
+                                    else Icons.Filled.PlayArrow,
+                                    contentDescription = if (isPreview) "Play" else "Play/Pause",
+                                    modifier = Modifier.size(48.dp)
+                                )
+                            }
                         }
-                        // Buffering ring — drawn on top of the play button when
-                        // the player is in BUFFERING with playWhenReady=true. Tells
-                        // the user "I heard your tap, I'm trying" rather than
-                        // letting them wonder if the button is dead.
-                        if (state.isBuffering && !isPreview) {
-                            CircularProgressIndicator(
+                        when {
+                            // Autoplay-confirmation morph: drainable progress
+                            // ring + digital "M:SS" replaces the Pause icon
+                            // from T=60s onward (rememberAutoplayCountdown
+                            // returns null before the first beep).
+                            countdown != null -> AutoplayCountdownContent(
+                                info = countdown,
+                                ringSize = 88.dp,
+                            )
+                            // Buffering ring — drawn on top of the play button
+                            // when the player is in BUFFERING with
+                            // playWhenReady=true. Tells the user "I heard your
+                            // tap, I'm trying" rather than letting them wonder
+                            // if the button is dead. Suppressed during the
+                            // countdown so the two indicators don't stack.
+                            state.isBuffering && !isPreview -> CircularProgressIndicator(
                                 modifier = Modifier.size(88.dp),
                                 strokeWidth = 3.dp,
                             )
@@ -455,7 +542,7 @@ fun PlayerScreen(
                     if (!isPreview) {
                         Spacer(Modifier.width(16.dp))
                         IconButton(
-                            onClick = { controller.seekRelative(30_000) },
+                            onClick = { controller.seekForward() },
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
@@ -466,37 +553,35 @@ fun PlayerScreen(
                         }
                     }
                 }
-                // Status line: buffering text under the transport, OR error
-                // chip if the player just failed. Both are live-only — preview
-                // mode has nothing to buffer or fail at.
-                if (!isPreview) {
-                    if (state.errorMessage != null) {
-                        Spacer(Modifier.height(8.dp))
-                        AssistChip(
-                            onClick = {
-                                // Retry. togglePlay will re-prepare from IDLE
-                                // or seek-to-0 from ENDED, so this works
-                                // regardless of which terminal state the
-                                // error left the player in.
-                                controller.togglePlay()
-                            },
-                            label = { Text("Failed: ${state.errorMessage} — tap to retry") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.ErrorOutline,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        )
-                    } else if (state.isBuffering) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Buffering…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                // Error chip if the player just failed (live only). The
+                // buffering signal lives on the play button itself (the
+                // CircularProgressIndicator ring around it) — a separate text
+                // line below was bouncing the speed chip and tabs every time
+                // a rewind transiently hit STATE_BUFFERING.
+                if (!isPreview && state.errorMessage != null) {
+                    Spacer(Modifier.height(8.dp))
+                    AssistChip(
+                        onClick = {
+                            // Retry via a fresh setMediaItem cycle through
+                            // playEpisode — stronger than togglePlay's plain
+                            // prepare()+play() because any in-memory player
+                            // state that was confused by the original
+                            // failure gets reset alongside a fresh
+                            // MediaItem. If the source URL itself is bad,
+                            // retry will re-fail with the same chip — that's
+                            // correct, it tells the user the source is the
+                            // problem, not a transient hiccup.
+                            controller.retryCurrentEpisode()
+                        },
+                        label = { Text("Failed: ${state.errorMessage} — tap to retry") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
                 }
 
                 // Speed chip is a live-playback tweak — the per-podcast
@@ -701,19 +786,22 @@ private fun NotesTab(
         .collectAsState(initial = emptyList())
 
     var addOpen by remember { mutableStateOf(false) }
+    var editEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var deleteEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var resumeAfterDialog by remember { mutableStateOf(false) }
 
-    fun openAdd() {
+    fun pauseIfWanted() {
         if (pauseOnNote && controller.state.value.isPlaying) {
             resumeAfterDialog = true
             controller.pause()
         }
-        addOpen = true
     }
 
-    fun closeAdd() {
+    fun openAdd() { pauseIfWanted(); addOpen = true }
+
+    fun closeDialog() {
         addOpen = false
+        editEntry = null
         if (resumeAfterDialog) {
             controller.play()
             resumeAfterDialog = false
@@ -773,10 +861,11 @@ private fun NotesTab(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(entries, key = { it.createdAt }) { entry ->
-                    InlineNoteCard(
+                    NoteCard(
                         entry = entry,
                         onJump = { controller.jumpToNotePosition(entry) },
-                        onDelete = { deleteEntry = entry }
+                        onEdit = { pauseIfWanted(); editEntry = entry },
+                        onDelete = { deleteEntry = entry },
                     )
                 }
             }
@@ -786,9 +875,11 @@ private fun NotesTab(
     if (addOpen) {
         val nowMs = remember { System.currentTimeMillis() }
         val posMs = remember { controller.currentPositionMs() }
-        InlineNoteDialog(
+        NoteEditorDialog(
             citation = citationOf(nowMs, posMs),
-            onDismiss = { closeAdd() },
+            initialText = "",
+            confirmLabel = "Save",
+            onDismiss = { closeDialog() },
             onConfirm = { text ->
                 scope.launch {
                     withContext(Dispatchers.IO) {
@@ -802,7 +893,24 @@ private fun NotesTab(
                         )
                     }
                 }
-                closeAdd()
+                closeDialog()
+            }
+        )
+    }
+
+    editEntry?.let { entry ->
+        NoteEditorDialog(
+            citation = citationOf(entry.createdAt, entry.playbackPosMs),
+            initialText = entry.text,
+            confirmLabel = "Save",
+            onDismiss = { closeDialog() },
+            onConfirm = { text ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        app.db.episodeNoteEntryDao().upsert(entry.copy(text = text))
+                    }
+                }
+                closeDialog()
             }
         )
     }
@@ -829,78 +937,9 @@ private fun NotesTab(
     }
 }
 
-@Composable
-private fun InlineNoteCard(
-    entry: EpisodeNoteEntryEntity,
-    onJump: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(Modifier.padding(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    citationOf(entry.createdAt, entry.playbackPosMs),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = onJump, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        Icons.Filled.PlayCircle,
-                        contentDescription = "Jump",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = "Delete",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            Text(entry.text, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun InlineNoteDialog(
-    citation: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var text by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(citation, style = MaterialTheme.typography.bodyMedium) },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp),
-                placeholder = { Text("Your thoughts on this moment…") },
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                    imeAction = ImeAction.Default
-                )
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(text.trim()) },
-                enabled = text.trim().isNotEmpty()
-            ) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
+// InlineNoteCard / InlineNoteDialog merged into the shared NoteCard /
+// NoteEditorDialog in NoteUi.kt — used by both this Notes tab and the
+// per-episode Notes screen so the play/edit/delete row stays in lockstep.
 
 @Composable
 private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
@@ -909,16 +948,13 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
         return
     }
     val app = LocalContext.current.applicationContext as LofiPodApp
-    val scope = rememberCoroutineScope()
     var details by remember(episodeGuid) { mutableStateOf<EpisodeDetails?>(null) }
-    var eqDisabled by remember(episodeGuid) { mutableStateOf(false) }
     var kabodMeta by remember(episodeGuid) { mutableStateOf<com.lofipod.app.data.db.EpisodeKabodEntity?>(null) }
 
     LaunchedEffect(episodeGuid) {
         val state = withContext(Dispatchers.IO) { app.db.episodeStateDao().get(episodeGuid) }
         val pod = state?.let { app.repo.cached(it.feedUrl) }
         val ep = pod?.episodes?.find { it.guid == episodeGuid }
-        eqDisabled = state?.eqDisabled ?: false
         kabodMeta = withContext(Dispatchers.IO) { app.db.episodeKabodDao().get(episodeGuid) }
         details = EpisodeDetails(
             episode = ep,
@@ -976,33 +1012,9 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        // Per-episode EQ override. Useful when an episode features a guest whose
-        // voice doesn't match the host's EQ profile. Applies immediately to the
-        // shared EQ; persists in episode_state.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(
-                checked = eqDisabled,
-                onCheckedChange = { v ->
-                    eqDisabled = v
-                    scope.launch {
-                        withContext(Dispatchers.IO) {
-                            app.db.episodeStateDao().setEqDisabled(episodeGuid, v)
-                        }
-                        controller.applyEqOverrideFor(episodeGuid)
-                    }
-                }
-            )
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text("Disable EQ for this episode", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "Useful when guests' voices don't match the host's tuning.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+        // Per-episode EQ controls (Disable / one-off override) live on the
+        // EQ screen now — that's where they belong alongside the chain. Tap
+        // the EQ icon in the player's top bar to find them.
 
         Spacer(Modifier.height(12.dp))
         if (ep == null) {

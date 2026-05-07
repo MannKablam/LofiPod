@@ -59,7 +59,48 @@ class PlayerController(private val context: Context) {
     private val _pendingReturn = MutableStateFlow<PendingReturn?>(null)
     val pendingReturn: StateFlow<PendingReturn?> = _pendingReturn.asStateFlow()
 
+    /**
+     * Captured args of a [playEpisode] call that arrived while [controller]
+     * was still null (the MediaController is built async; until the future
+     * fires we have nothing to forward commands to). Drained in [connect]'s
+     * listener once the controller is live. Last-wins: a second tap before
+     * connect overwrites the first, which is the right UX (whatever the user
+     * most recently asked for is what plays).
+     *
+     * Without this queue, a fast-tap-on-fresh-install lost the race against
+     * the cold service bind and the play was silently dropped — which is
+     * what produced the "tap Play, nothing happens, then toggling skip
+     * silence makes it work" symptom. Skip silence wasn't the fix; the
+     * 2–5 seconds of detour just gave the controller time to connect.
+     */
+    @Volatile private var pendingPlay: PendingPlay? = null
+
+    /**
+     * Flips to true inside [advanceToNextInQueue] right before each
+     * [playEpisode] call so the receiving [playEpisode] knows the play was
+     * autoplay-induced (vs. a manual user tap). Consumed + cleared at the
+     * top of every [playEpisode] invocation, so a stale flag from a long-
+     * since-bypassed autoplay can't latch onto a later manual play.
+     */
+    @Volatile private var lastPlayWasAutoplay = false
+
+    /**
+     * State of the autoplay-confirmation window started inside [playEpisode]
+     * when a play is autoplay-induced (see [lastPlayWasAutoplay] +
+     * [maybeStartAutoplayTimer]). Non-null while the timer is counting; the
+     * UI (PlayerScreen / MiniPlayer) reads this to morph the play button into
+     * a countdown after the first beep. Cleared on confirmation, expiry,
+     * episode change, or release.
+     */
+    private val _autoplayTimer = MutableStateFlow<AutoplayTimerState?>(null)
+    val autoplayTimer: StateFlow<AutoplayTimerState?> = _autoplayTimer.asStateFlow()
+    private var autoplayTimerJob: kotlinx.coroutines.Job? = null
+
     fun connect(onReady: () -> Unit) {
+        // Pin this controller as the autoplay-confirm target for any
+        // service-side media-button intercept (BT, vehicle, system-
+        // notification play/pause). Unpinned in [release].
+        AutoplayConfirmBridge.bind(this)
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         future.addListener({
@@ -68,6 +109,22 @@ class PlayerController(private val context: Context) {
                 pushState()
             }
             onReady()
+            // Drain any play attempt the user fired while we were still
+            // binding to the service. Posted via scope.launch so the replay
+            // lands on Main.immediate (same as everything else here), not on
+            // whatever thread the future completed on. Short settle delay
+            // first: hammering setMediaItem/prepare/play onto a controller
+            // the same beat its future resolved was producing
+            // ERROR_CODE_FAILED_RUNTIME_CHECK from inside ExoPlayer on
+            // fresh installs (the session-side player needs a moment for
+            // its initial state sync before it can accept commands cleanly).
+            scope.launch {
+                val p = pendingPlay ?: return@launch
+                kotlinx.coroutines.delay(150)
+                if (controller == null) return@launch
+                pendingPlay = null
+                playEpisode(p.ep, p.podcastTitle, p.podcastArt, p.forcedStartMs)
+            }
             // Belt-and-suspenders: when the activity is recreated against a
             // still-running service (cold launch with audio playing), the
             // MediaController syncs its state from the session over a few
@@ -88,10 +145,15 @@ class PlayerController(private val context: Context) {
     }
 
     fun release() {
+        AutoplayConfirmBridge.unbind(this)
         controller?.removeListener(listener)
         controller?.release()
         controller = null
         _pendingReturn.value = null
+        pendingPlay = null
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
         scope.cancel()
     }
 
@@ -100,6 +162,18 @@ class PlayerController(private val context: Context) {
      *  state (BUFFERING or READY) — error chips disappear automatically once
      *  the user retries successfully. */
     @Volatile private var lastError: String? = null
+
+    /**
+     * Full unclipped error string for the diagnostics panel: code name +
+     * message + cause class + cause message, no length cap. Mirrors what we
+     * log to logcat under tag "LofiPodPlayer". The chip on PlayerScreen still
+     * uses [lastError] (clipped for one-line display); this is what the
+     * Settings → Audio diagnostics panel surfaces so the user can copy the
+     * full failure when reporting bugs. Reset alongside [lastError]. */
+    @Volatile private var lastErrorVerbose: String? = null
+
+    /** Snapshot of [lastErrorVerbose] for UI consumption. Read-only. */
+    val lastErrorDetails: String? get() = lastErrorVerbose
 
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = pushState()
@@ -116,6 +190,7 @@ class PlayerController(private val context: Context) {
             if (playbackState == Player.STATE_BUFFERING ||
                 playbackState == Player.STATE_READY) {
                 lastError = null
+                lastErrorVerbose = null
             }
             pushState()
             if (playbackState == Player.STATE_ENDED) {
@@ -125,15 +200,48 @@ class PlayerController(private val context: Context) {
             }
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Always log the full exception to logcat so the user can grab
+            // diagnostics with `adb logcat -s LofiPodPlayer:* *:E` when the
+            // chip alone isn't enough to figure out what broke.
+            android.util.Log.w(
+                "LofiPodPlayer",
+                "Player error: code=${error.errorCodeName} msg=${error.message} " +
+                    "cause=${error.cause?.javaClass?.simpleName}: ${error.cause?.message}",
+                error
+            )
             // Surface a short, human-readable message. ExoPlayer's
             // PlaybackException.errorCodeName is stable across versions and
             // prints things like "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED" —
             // that's actionable for the user (network) without dragging in
-            // a full stack trace.
-            lastError = error.errorCodeName.removePrefix("ERROR_CODE_")
+            // a full stack trace. Append the cause's class name when present
+            // so opaque codes like FAILED_RUNTIME_CHECK still hint at the
+            // actual underlying exception type, and a clipped cause message
+            // when present — IllegalArgumentException's message often names
+            // the bad input (e.g. "Invalid Uri scheme:" / "Range start is
+            // beyond …"), which the class name alone hides.
+            val codeName = error.errorCodeName.removePrefix("ERROR_CODE_")
                 .replace('_', ' ')
                 .lowercase()
                 .replaceFirstChar { it.uppercase() }
+            val causeName = error.cause?.javaClass?.simpleName
+            val causeMsg = error.cause?.message?.takeIf { it.isNotBlank() }
+                ?.let { if (it.length > 80) it.substring(0, 77) + "…" else it }
+            val tail = when {
+                causeName != null && causeMsg != null -> " ($causeName: $causeMsg)"
+                causeName != null -> " ($causeName)"
+                else -> ""
+            }
+            lastError = "$codeName$tail"
+            // Verbose form for the Settings → Audio diagnostics panel — full
+            // cause message (no 80-char clip) so a user reporting a bug can
+            // copy the same string we logged under "LofiPodPlayer".
+            val fullCauseMsg = error.cause?.message?.takeIf { it.isNotBlank() }
+            val verboseTail = when {
+                causeName != null && fullCauseMsg != null -> " ($causeName: $fullCauseMsg)"
+                causeName != null -> " ($causeName)"
+                else -> ""
+            }
+            lastErrorVerbose = "${error.errorCodeName}: $codeName$verboseTail"
             pushState()
         }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
@@ -146,16 +254,55 @@ class PlayerController(private val context: Context) {
     }
 
     /**
-     * Re-evaluate the global EQ enabled flag based on the current episode's
-     * eqDisabled override. Called on item transitions and after the user toggles
-     * the override from the Player UI.
+     * Re-evaluate the EQ enabled flag for [guid]. Effective state is the AND of
+     * the master "Audio enhancement" toggle (Settings.audioEnhancementEnabled)
+     * and the inverse of the per-episode override (episode_state.eqDisabled).
+     *
+     * Called on item transitions, after the user toggles the per-episode
+     * override on PlayerScreen, and after the user flips the master toggle on
+     * the EQ screen — three writers, one source of truth (this method) so the
+     * processor's enabled flag doesn't get clobbered by whichever path ran
+     * last. Earlier bug: master toggle and per-episode override both wrote
+     * directly to `sharedEq.enabled`, so a track transition would silently
+     * undo a user's master-off toggle.
      */
     fun applyEqOverrideFor(guid: String) {
         scope.launch {
-            val disabled = withContext(Dispatchers.IO) { dao.get(guid)?.eqDisabled ?: false }
+            val state = withContext(Dispatchers.IO) { dao.get(guid) }
+            val episodeDisabled = state?.eqDisabled ?: false
+            val episodeOverrideCsv = state?.eqBandsCsvOverride
+            val settings = com.lofipod.app.data.Settings(context)
+            val globalEnabled = settings.audioEnhancementEnabled.first()
             // setEnabled is volatile-safe; no need to bounce back to main.
-            PlaybackService.sharedEq.setEnabled(!disabled)
+            PlaybackService.sharedEq.setEnabled(globalEnabled && !episodeDisabled)
+
+            // Per-episode EQ override: when the user has dialed in custom band
+            // gains for this episode, apply them in place of the global preset.
+            // When no override exists (CSV is null), reapply the global bands
+            // — this matters on track transitions where the previous episode
+            // had an override and we need to swap back to the global tuning.
+            // settings.eqBandsCsv.first() can be null (Settings stores it as
+            // a nullable String) which is fine — we just skip applying bands
+            // and leave the processor on whatever it had configured.
+            val targetCsv: String? = episodeOverrideCsv ?: settings.eqBandsCsv.first()
+            if (targetCsv != null) {
+                val parsed = parseEqBandsCsv(targetCsv)
+                if (parsed != null) {
+                    PlaybackService.sharedEq.setBands(parsed)
+                }
+            }
         }
+    }
+
+    /** Parse a CSV of dB band gains into a band list using the standard ISO
+     *  centers + Q. Returns null if the CSV count doesn't match the default
+     *  band layout (likely a corrupt or truncated string). */
+    private fun parseEqBandsCsv(csv: String): List<com.lofipod.app.audio.EqBand>? {
+        if (csv.isBlank()) return null
+        val gains = csv.split(',').mapNotNull { it.trim().toFloatOrNull() }
+        val template = com.lofipod.app.audio.EqPresets.DEFAULT_BANDS
+        if (gains.size != template.size) return null
+        return template.mapIndexed { i, band -> band.copy(gainDb = gains[i]) }
     }
 
     private fun pushState() {
@@ -193,7 +340,24 @@ class PlayerController(private val context: Context) {
         podcastArt: String?,
         forcedStartMs: Long? = null
     ) {
-        val c = controller ?: return
+        val c = controller
+        if (c == null) {
+            // Controller still building — queue and bail. The drain in
+            // [connect]'s listener replays this call once we're live.
+            pendingPlay = PendingPlay(ep, podcastTitle, podcastArt, forcedStartMs)
+            return
+        }
+        // Consume the autoplay-detection flag at entry. Whether or not we
+        // re-arm the timer below, any previous timer is for a different
+        // episode and must be torn down: the body uses guid identity to
+        // decide whether to pause, but the StateFlow still drives a stale
+        // countdown UI until cleared explicitly.
+        val wasAutoplay = lastPlayWasAutoplay
+        lastPlayWasAutoplay = false
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
+
         scope.launch {
             // 1. Outgoing item: persist position + (optionally) record session_end checkpoint.
             val outgoingId = c.currentMediaItem?.mediaId
@@ -264,7 +428,18 @@ class PlayerController(private val context: Context) {
                         .build()
                 )
                 .build()
-            c.setMediaItem(item, startPos)
+            // setMediaItem(item, startPos) bundles a seek into the load,
+            // which on Media3 1.4.x can race with prepare on the very first
+            // play after a cold service start (FAILED_RUNTIME_CHECK from
+            // inside ExoPlayer). When startPos is 0 there's nothing to seek
+            // to, so use the no-position overload — it skips the implicit
+            // seek entirely. Resume-from-saved-position (startPos > 0) keeps
+            // the bundled form, which is the path that's been stable.
+            if (startPos > 0L) {
+                c.setMediaItem(item, startPos)
+            } else {
+                c.setMediaItem(item)
+            }
             c.prepare()
             c.play()
 
@@ -293,7 +468,90 @@ class PlayerController(private val context: Context) {
                     FeedVisitEntity(ep.feedUrl, System.currentTimeMillis())
                 )
             }
+
+            // Auto-download episodes the user starts playing. Reasoning: by
+            // the time playback is rolling, the user is committed enough that
+            // having an offline copy for the next session is the better
+            // default. Idempotent — DownloadManager skips if the guid is
+            // already queued/downloading/completed; this check is just a
+            // cheap precheck against the in-memory snapshot to avoid the
+            // service-call round trip. Skips guids already in downloads
+            // including FAILED, so a previously-failed download isn't auto-
+            // retried on every play (the user can retry from the chip).
+            val app = context.applicationContext as LofiPodApp
+            if (!app.downloadsApi.byId.value.containsKey(ep.guid)) {
+                app.downloadsApi.start(ep)
+            }
+
+            // Autoplay confirmation window: if this play was triggered by
+            // advanceToNextInQueue (queue-next or feed-next), arm the 3:10
+            // confirmation timer. The user must confirm continuation by
+            // tapping the morphed play button or pressing play/pause on a
+            // BT/vehicle transport — otherwise we auto-pause to avoid
+            // unattended indefinite playback.
+            if (wasAutoplay) {
+                maybeStartAutoplayTimer(ep.guid)
+            }
         }
+    }
+
+    /**
+     * Start a download for [guid] using the audioUrl + feedUrl persisted in
+     * the episode_state row. Intended for the live-mode download button on
+     * PlayerScreen — the screen has the guid but not the full Episode,
+     * since the live state is driven off the MediaController. No-op if no
+     * row exists yet (shouldn't happen for an episode that's currently
+     * playing — playEpisode upserts the row before setMediaItem).
+     */
+    fun startDownloadForCurrent(guid: String) {
+        val app = context.applicationContext as LofiPodApp
+        scope.launch {
+            val ep = episodeFromState(guid) ?: return@launch
+            app.downloadsApi.start(ep)
+        }
+    }
+
+    /**
+     * Retry the currently-loaded episode by re-running the full
+     * setMediaItem/prepare/play cycle through [playEpisode], reconstructing
+     * the Episode from episode_state. Stronger than togglePlay's plain
+     * prepare()+play() — any in-memory player state that was confused by
+     * the original failure gets reset along with a fresh MediaItem. Used by
+     * the error chip's tap-to-retry on PlayerScreen.
+     *
+     * If the underlying issue is the source URL itself (the feed published
+     * a bad URL), the retry will surface the same error — that's correct
+     * behavior, the retry isn't a magic wand. The user gets one extra
+     * attempt against a transient codec / sink / decoder hiccup.
+     */
+    fun retryCurrentEpisode() {
+        val c = controller ?: return
+        val guid = c.currentMediaItem?.mediaId ?: return
+        scope.launch {
+            val ep = episodeFromState(guid) ?: return@launch
+            playEpisode(ep, podcastTitle = "", podcastArt = ep.episodeArtworkUrl)
+        }
+    }
+
+    /**
+     * Reconstruct an [Episode] from a persisted [EpisodeStateEntity]. Used
+     * by the live-mode download button and the retry chip — both have the
+     * guid but not the full Episode (the live MediaController state has the
+     * mediaId but not the audioUrl/feedUrl). Returns null if no row yet.
+     */
+    private suspend fun episodeFromState(guid: String): Episode? {
+        val state = withContext(Dispatchers.IO) { dao.get(guid) } ?: return null
+        return Episode(
+            guid = state.guid,
+            feedUrl = state.feedUrl,
+            title = state.title,
+            description = null,
+            pubDateMillis = null,
+            audioUrl = state.audioUrl,
+            audioMimeType = null,
+            durationSeconds = null,
+            episodeArtworkUrl = state.artworkUrl
+        )
     }
 
     /**
@@ -310,6 +568,16 @@ class PlayerController(private val context: Context) {
      */
     fun togglePlay() {
         val c = controller ?: return
+        // Autoplay-confirmation window: a tap while the timer is counting
+        // and the player is playing means "confirm continuation" — cancel
+        // the timer, do NOT toggle to pause. The play button is morphed
+        // into a countdown specifically to invite this tap; pausing during
+        // the timer takes a second tap (after the morph reverts), which is
+        // the intended UX from the spec.
+        if (_autoplayTimer.value != null && c.isPlaying) {
+            confirmAutoplayContinuation()
+            return
+        }
         when {
             c.isPlaying -> c.pause()
             c.playbackState == Player.STATE_IDLE -> {
@@ -334,7 +602,124 @@ class PlayerController(private val context: Context) {
             else -> c.play()
         }
     }
-    fun pause() { controller?.pause() }
+    fun pause() {
+        // Explicit pause cancels any active autoplay-confirmation window —
+        // the user is awake and pausing intentionally, so the auto-pause
+        // would be redundant and the countdown indicator should disappear.
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
+        controller?.pause()
+    }
+
+    /**
+     * Arm the autoplay-confirmation timer for [guid]. Reads the
+     * `autoplayConfirmEnabled` setting first; if disabled, the autoplay
+     * episode plays through with no timer (legacy behavior pre-v0.4.5).
+     *
+     * Schedule, anchored to [SystemClock.elapsedRealtime] at start so the
+     * marks don't drift even though each beep sequence takes hundreds of
+     * milliseconds:
+     *   - T=60s   (first beep)  — 1 ducked beep via [BeepPlayer].
+     *   - T=120s  (second beep) — 2 ducked beeps, ~333ms apart.
+     *   - T=180s  (third beep)  — 3 ducked beeps.
+     *   - T=190s  (auto-pause)  — pause if still on the same episode and
+     *                             still playing. Guid identity guards
+     *                             against a manual play having swapped the
+     *                             loaded episode mid-window; the
+     *                             [Player.isPlaying] check is belt-and-
+     *                             suspenders, since [pause] /
+     *                             [confirmAutoplayContinuation] cancel the
+     *                             job before reaching the pause line.
+     *
+     * Calling this with an existing timer job cancels the prior one — at
+     * most one autoplay timer is active at a time.
+     */
+    private fun maybeStartAutoplayTimer(guid: String) {
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = scope.launch {
+            val enabled = com.lofipod.app.data.Settings(context)
+                .autoplayConfirmEnabled.first()
+            if (!enabled) {
+                _autoplayTimer.value = null
+                return@launch
+            }
+            val started = android.os.SystemClock.elapsedRealtime()
+            val mySnapshot = AutoplayTimerState(
+                episodeGuid = guid,
+                startedAtElapsedMs = started,
+                totalDurationMs = AUTOPLAY_CONFIRM_TOTAL_MS,
+            )
+            _autoplayTimer.value = mySnapshot
+            // Scheduled against absolute elapsed-realtime targets rather than
+            // chained relative delays — keeps the strike marks pinned at
+            // 60s / 120s / 180s / 190s from autoplay start, even though the
+            // beep sequences themselves take ~0.2 / ~0.7 / ~1.3 seconds and
+            // would otherwise drift the schedule later in the window.
+            val player = controller
+            val beepPlayer = player?.let { com.lofipod.app.audio.BeepPlayer(it) }
+            try {
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_FIRST_BEEP_MS)
+                beepPlayer?.playBeeps(1)
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_SECOND_BEEP_MS)
+                beepPlayer?.playBeeps(2)
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_THIRD_BEEP_MS)
+                beepPlayer?.playBeeps(3)
+                delayUntilElapsed(started + AUTOPLAY_CONFIRM_TOTAL_MS)
+                val cc = controller
+                if (cc != null && cc.currentMediaItem?.mediaId == guid && cc.isPlaying) {
+                    // Pre-clear the timer state BEFORE issuing pause. Otherwise
+                    // [PlaybackService]'s MediaSession-callback intercept would
+                    // see the timer still active and treat our own auto-pause
+                    // command as a remote BT press → confirm + skip → playback
+                    // would not actually pause. CAS so we don't clobber a
+                    // newer timer's snapshot in the unlikely re-arm race.
+                    _autoplayTimer.compareAndSet(mySnapshot, null)
+                    android.util.Log.i(
+                        "LofiPodPlayer",
+                        "Autoplay confirmation timed out for $guid — auto-pausing"
+                    )
+                    cc.pause()
+                }
+            } finally {
+                beepPlayer?.release()
+                // CAS-clear so we only wipe state we still own. A newer timer
+                // that superseded us (cancel + relaunch from a fresh
+                // [maybeStartAutoplayTimer] / [confirmAutoplayContinuation])
+                // has already replaced [mySnapshot] with its own value, and
+                // our finally must not clobber that. compareAndSet returns
+                // false silently in that case.
+                _autoplayTimer.compareAndSet(mySnapshot, null)
+            }
+        }
+    }
+
+    /**
+     * Suspend until [SystemClock.elapsedRealtime] reaches [targetElapsedMs],
+     * computing the remaining delay each call so the schedule stays anchored
+     * to an absolute reference point even if intermediate work (beep playback,
+     * volume ducking) takes non-negligible time. No-op if the target is
+     * already in the past.
+     */
+    private suspend fun delayUntilElapsed(targetElapsedMs: Long) {
+        val remaining = targetElapsedMs - android.os.SystemClock.elapsedRealtime()
+        if (remaining > 0) kotlinx.coroutines.delay(remaining)
+    }
+
+    /**
+     * Confirm the user wants the autoplay-induced episode to keep playing.
+     * Cancels the pending auto-pause and clears the countdown indicator.
+     * Idempotent. Called from:
+     *   - The play-button tap path during the timer ([togglePlay] above).
+     *   - The MediaSession KEYCODE_MEDIA_PLAY_PAUSE intercept when a BT or
+     *     vehicle transport press arrives while the timer is active
+     *     (wired in PlaybackService — phase 4).
+     */
+    fun confirmAutoplayContinuation() {
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
+    }
 
     /**
      * Jump to an arbitrary (episode, position). Records a jump_from checkpoint for the
@@ -415,6 +800,18 @@ class PlayerController(private val context: Context) {
         val c = controller ?: return
         c.seekTo((c.currentPosition + deltaMs).coerceAtLeast(0))
     }
+
+    /**
+     * Seek back by the player's configured seekBackIncrementMs (set on the
+     * ExoPlayer in [PlaybackService]). Used by both the on-screen back button
+     * and — via MediaSession — Bluetooth headphones / vehicle media controls
+     * (KEYCODE_MEDIA_REWIND). Single source of truth so a future "adjustable
+     * skip increments" setting only has to flow into the ExoPlayer config.
+     */
+    fun seekBack() { controller?.seekBack() }
+
+    /** Forward equivalent of [seekBack]; uses seekForwardIncrementMs. */
+    fun seekForward() { controller?.seekForward() }
 
     fun seekTo(positionMs: Long) {
         controller?.seekTo(positionMs)
@@ -531,13 +928,15 @@ class PlayerController(private val context: Context) {
                 durationSeconds = null,
                 episodeArtworkUrl = queueNext.artworkUrl
             )
+            lastPlayWasAutoplay = true
             playEpisode(ep, cached?.title ?: "", cached?.artworkUrl ?: queueNext.artworkUrl)
             return
         }
 
         // Queue empty — fall back to the next episode in the same feed if the
         // user has the setting on.
-        val enabled = com.lofipod.app.data.Settings(app).autoPlayNextInFeed.first()
+        val settings = com.lofipod.app.data.Settings(app)
+        val enabled = settings.autoPlayNextInFeed.first()
         if (!enabled || excluding == null) return
 
         val finishedFeedUrl = withContext(Dispatchers.IO) { dao.get(excluding)?.feedUrl }
@@ -553,11 +952,39 @@ class PlayerController(private val context: Context) {
                 .map { it.guid }
                 .toSet()
         }
-        val candidate = pod.episodes
-            .filter { it.guid != excluding && it.guid !in playedGuids }
-            .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
-            ?: return
 
+        // Direction-aware "next adjacent" walk. Episode list in the UI is
+        // sorted newest-first by pubDate, so:
+        //   directionUp = true  → look for the immediately-newer unplayed episode
+        //                         (smallest pubDate strictly greater than the
+        //                         finished one). If none, autoplay stops.
+        //   directionUp = false → look for the immediately-older unplayed episode
+        //                         (largest pubDate strictly less than the
+        //                         finished one). If none, autoplay stops.
+        // This deliberately avoids wrapping around the ends of the list — when
+        // the listener reaches a boundary, we let them choose what to do next.
+        val directionUp = settings.autoplayDirectionUp.first()
+        val finished = pod.episodes.firstOrNull { it.guid == excluding }
+        val finishedPub = finished?.pubDateMillis
+        val unplayed = pod.episodes.filter { it.guid != excluding && it.guid !in playedGuids }
+        // Wrapped in parens so `?: return` binds to the whole when-result;
+        // without them, Kotlin parses the elvis as part of the last branch.
+        val candidate = (when {
+            finishedPub == null -> {
+                // Source has no pubDate for the finished episode — fall back
+                // to the pre-direction default (absolute newest unplayed) so
+                // we don't just refuse to advance on broken metadata.
+                unplayed.maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+            }
+            directionUp -> unplayed
+                .filter { (it.pubDateMillis ?: Long.MIN_VALUE) > finishedPub }
+                .minByOrNull { it.pubDateMillis ?: Long.MAX_VALUE }
+            else -> unplayed
+                .filter { (it.pubDateMillis ?: Long.MAX_VALUE) < finishedPub }
+                .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+        }) ?: return
+
+        lastPlayWasAutoplay = true
         playEpisode(candidate, pod.title, pod.artworkUrl)
     }
 
@@ -598,8 +1025,32 @@ class PlayerController(private val context: Context) {
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
         private const val STEP = 1024L
+
+        // ---- Autoplay confirmation window ----
+        // Total window from autoplay-induced play to auto-pause. User spec:
+        // beeps at 1:00 / 2:00 / 3:00, pause 10s after the last beep → 3:10.
+        // Visible countdown on the morphed play button starts at the first beep
+        // (T=60s) and runs the remaining 130s (2:10) down to zero.
+        const val AUTOPLAY_CONFIRM_FIRST_BEEP_MS = 60_000L
+        const val AUTOPLAY_CONFIRM_SECOND_BEEP_MS = 120_000L
+        const val AUTOPLAY_CONFIRM_THIRD_BEEP_MS = 180_000L
+        const val AUTOPLAY_CONFIRM_TOTAL_MS = 190_000L
     }
 }
+
+/**
+ * Snapshot of an active autoplay-confirmation window. Emitted on
+ * [PlayerController.autoplayTimer] when an autoplay-induced episode starts and
+ * cleared on confirm/expire/episode-change. The UI computes the remaining
+ * window itself by subtracting [SystemClock.elapsedRealtime] from
+ * [startedAtElapsedMs] — pulling once per frame inside Compose is cheaper than
+ * having the controller emit a tick per second.
+ */
+data class AutoplayTimerState(
+    val episodeGuid: String,
+    val startedAtElapsedMs: Long,
+    val totalDurationMs: Long,
+)
 
 data class PlayerState(
     val isPlaying: Boolean = false,
@@ -628,4 +1079,11 @@ data class PendingReturn(
     val guid: String,
     val positionMs: Long,
     val createdAt: Long
+)
+
+private data class PendingPlay(
+    val ep: Episode,
+    val podcastTitle: String,
+    val podcastArt: String?,
+    val forcedStartMs: Long?,
 )
