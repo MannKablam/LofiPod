@@ -3,18 +3,23 @@ package com.lofipod.app.data
 import android.content.Context
 import android.net.Uri
 import com.lofipod.app.data.model.Podcast
+import com.lofipod.app.diagnostics.StartupTimings
 import com.lofipod.app.parser.RssParser
 import com.lofipod.app.parser.SourceEntry
 import com.lofipod.app.parser.SourcesFileParser
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
 /**
@@ -47,7 +52,54 @@ class PodcastRepository(
      */
     @Volatile var kabodLoader: KabodAssetLoader? = null
 
+    /**
+     * Disk cache for parsed feeds. Wired up by [com.lofipod.app.LofiPodApp].
+     * When set, [hydrateFromDisk] populates [cache] from disk on first call,
+     * and [fetchOne] persists each successful fetch back to disk. Lets the
+     * Catalog render instantly on cold start with stale-but-valid data
+     * before the network refresh completes.
+     */
+    @Volatile var diskCache: FeedDiskCache? = null
+
     @Volatile private var cache: Map<String, Podcast> = emptyMap()
+
+    /**
+     * Resolved on first hydration attempt — even if hydration finds no disk
+     * cache (clean install), this completes so callers can stop awaiting.
+     * Subsequent calls are no-ops.
+     */
+    private val hydrationDone = CompletableDeferred<Unit>()
+    @Volatile private var hydrationStarted = false
+
+    /**
+     * Wait for the disk cache to be loaded into [cache]. Idempotent — first
+     * call kicks off the read; subsequent calls await the same Deferred.
+     * Safe to call before [diskCache] is set; in that case completes
+     * immediately without populating. Caller blocks on this before calling
+     * [cached] to ensure cold-start reads see disk-cached entries.
+     */
+    suspend fun hydrateFromDisk() {
+        if (hydrationDone.isCompleted) return
+        if (!hydrationStarted) {
+            hydrationStarted = true
+            val dc = diskCache
+            if (dc == null) {
+                hydrationDone.complete(Unit)
+                return
+            }
+            withContext(Dispatchers.IO) {
+                StartupTimings.phase("feed_disk_cache_hydrate") {
+                    val loaded = dc.readAll()
+                    if (loaded.isNotEmpty()) {
+                        cache = loaded
+                    }
+                }
+            }
+            hydrationDone.complete(Unit)
+            return
+        }
+        hydrationDone.await()
+    }
 
     suspend fun loadSourcesFile(uri: Uri): List<SourceEntry> = withContext(Dispatchers.IO) {
         context.contentResolver.openInputStream(uri)?.use { ins ->
@@ -67,24 +119,35 @@ class PodcastRepository(
         sources: List<SourceEntry>,
         onProgress: (SourceEntry, FeedStatus, errorMessage: String?) -> Unit = { _, _, _ -> }
     ): List<Podcast> = coroutineScope {
+        // Cap concurrent in-flight fetches. Without this, 16+ simultaneous
+        // TLS handshakes + parses can starve a flaky network or slow CPU
+        // (Pixel 7 reports vs Pixel 8). 8 keeps most of the parallel speedup
+        // while reducing contention for users on weaker connections.
+        val sem = Semaphore(MAX_CONCURRENT_FETCHES)
         val results = sources.map { src ->
             async(Dispatchers.IO) {
-                try {
-                    val pod = withTimeoutOrNull(60_000) { fetchOne(src) }
-                    if (pod != null) {
-                        onProgress(src, FeedStatus.OK, null)
-                    } else {
-                        onProgress(src, FeedStatus.TIMEOUT, "Timed out after 60s")
+                sem.withPermit {
+                    try {
+                        val pod = withTimeoutOrNull(60_000) { fetchOne(src) }
+                        if (pod != null) {
+                            onProgress(src, FeedStatus.OK, null)
+                        } else {
+                            onProgress(src, FeedStatus.TIMEOUT, "Timed out after 60s")
+                        }
+                        pod
+                    } catch (e: Exception) {
+                        System.err.println("Feed failed: ${src.feedUrl} -> ${e.message}")
+                        onProgress(src, FeedStatus.FAILED, e.message ?: e.javaClass.simpleName)
+                        null
                     }
-                    pod
-                } catch (e: Exception) {
-                    System.err.println("Feed failed: ${src.feedUrl} -> ${e.message}")
-                    onProgress(src, FeedStatus.FAILED, e.message ?: e.javaClass.simpleName)
-                    null
                 }
             }
         }.awaitAll().filterNotNull()
-        cache = results.associateBy { it.feedUrl }
+        // Merge fresh fetches over the existing cache (which may have
+        // disk-hydrated entries we didn't refresh). Anything missing from
+        // results stays as-is so the catalog doesn't lose feeds on
+        // network failure.
+        cache = cache + results.associateBy { it.feedUrl }
         results
     }
 
@@ -98,24 +161,46 @@ class PodcastRepository(
      * Synthetic `kabod://` URLs short-circuit to the bundled-asset loader (no HTTP).
      */
     suspend fun fetchOne(src: SourceEntry): Podcast {
+        val tStart = System.nanoTime()
+        val phaseName = feedPhaseName(src.feedUrl)
         val loader = kabodLoader
         if (loader != null && loader.isKabodFeed(src.feedUrl)) {
             val pod = loader.loadIntoCache(src.feedUrl)
                 ?: error("Kabod pack not found for ${src.feedUrl}")
-            return if (src.displayName != null) pod.copy(title = src.displayName) else pod
+            val out = if (src.displayName != null) pod.copy(title = src.displayName) else pod
+            StartupTimings.record(phaseName, tStart)
+            return out
         }
-        return runInterruptible(Dispatchers.IO) {
+        val parsed = runInterruptible(Dispatchers.IO) {
             val req = Request.Builder()
                 .url(src.feedUrl)
                 .build()    // UA is set globally by the http interceptor
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code} for ${src.feedUrl}")
                 val body = resp.body ?: error("Empty body")
-                val parsed = body.byteStream().use { RssParser.parse(src.feedUrl, it) }
-                // Override title if user provided a display name
-                if (src.displayName != null) parsed.copy(title = src.displayName) else parsed
+                body.byteStream().use { RssParser.parse(src.feedUrl, it) }
             }
         }
+        // Override title if user provided a display name
+        val out = if (src.displayName != null) parsed.copy(title = src.displayName) else parsed
+        // Persist to disk cache (best-effort; failures don't fail the fetch).
+        diskCache?.let { dc ->
+            try {
+                withContext(Dispatchers.IO) { dc.write(out) }
+            } catch (e: Exception) {
+                System.err.println("Feed disk-cache write failed for ${src.feedUrl}: ${e.message}")
+            }
+        }
+        StartupTimings.record(phaseName, tStart)
+        return out
+    }
+
+    /** Short, host-derived label for per-feed timing entries. */
+    private fun feedPhaseName(feedUrl: String): String {
+        val host = try {
+            URI(feedUrl).host?.removePrefix("www.")?.replace('.', '_')
+        } catch (e: Exception) { null } ?: "unknown"
+        return "feed_$host"
     }
 
     fun cached(feedUrl: String): Podcast? = cache[feedUrl]
@@ -131,5 +216,14 @@ class PodcastRepository(
          */
         const val BROWSER_UA =
             "Mozilla/5.0 (Linux; Android 14; LofiPod) AppleWebKit/537.36 (KHTML, like Gecko) Mobile"
+
+        /**
+         * Cap on simultaneous in-flight feed fetches. 8 is a compromise:
+         * full parallelism (16+) was causing reproducible slowness on
+         * weaker hardware (Pixel 7 reports), serial (1) leaves throughput
+         * on the table. 8 keeps connection-pool reuse healthy without
+         * saturating the network or CPU.
+         */
+        private const val MAX_CONCURRENT_FETCHES = 8
     }
 }

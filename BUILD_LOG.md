@@ -2,6 +2,45 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Feed loading: disk cache + per-feed timing + concurrency cap
+
+User report: "loading feeds is impossibly slow on Pixel 7. Pixel 8
+does not seem to have the same issue." 16 sources × parallel HTTP
+fetches + RSS parsing = a multi-second blank-Catalog stall on every
+cold start, exacerbated on hardware/network configurations weaker
+than the dev's. Three changes here.
+
+**Disk cache for parsed feeds.** New `FeedDiskCache` writes each
+successfully-fetched `Podcast` as JSON under `<filesDir>/feeds/`
+(filename = SHA-256 of feedUrl). On cold start, `PodcastRepository`
+hydrates the in-memory cache from these files in milliseconds —
+the Catalog renders immediately with stale-but-valid data while
+the network refresh runs in the background. JSON encoding is hand-
+rolled with `org.json` (already used by Backup.kt; no new deps).
+Schema-versioned so a future model change can ignore old files
+without crashing.
+
+**Stale-while-revalidate in CatalogViewModel.** `loadCanon` now
+ALWAYS shows whatever the cache has (in-memory + disk-hydrated)
+immediately, then triggers a network refresh. Even partial cache
+coverage shows what we have with `loading=true` for the missing
+sources, instead of a blank screen. On network failure, the cached
+content stays visible with the error surfaced inline.
+
+**Concurrency cap on parallel fetches.** `MAX_CONCURRENT_FETCHES = 8`
+via `Semaphore.withPermit` around each `fetchOne`. 16+ simultaneous
+TLS handshakes + RSS parses were starving slower devices; 8 keeps
+most of the parallelism while reducing contention.
+
+**Per-feed timing diagnostics.** Each `fetchOne` records to
+`StartupTimings` as `feed_<host>` (e.g., `feed_feeds_megaphone_fm`,
+`feed_ccmodesto_com`). Plus `feed_disk_cache_init` and
+`feed_disk_cache_hydrate` for the cache-side timing. Surfaced in
+the existing Startup section of the diagnostics screen so the user
+can capture which specific feed dominates on Pixel 7 vs Pixel 8.
+
+ai_contamination: true # claude opus 4.7
+
 ## Startup diagnostics + beep ducking redesign + defer auto-download until track-out
 
 Three related fixes shipped together.

@@ -6,6 +6,7 @@ import coil.ImageLoader
 import com.lofipod.app.data.BackupWorker
 import com.lofipod.app.data.DownloadHolder
 import com.lofipod.app.data.Downloads
+import com.lofipod.app.data.FeedDiskCache
 import com.lofipod.app.data.KabodAssetLoader
 import com.lofipod.app.data.PodcastRepository
 import com.lofipod.app.data.Settings
@@ -53,6 +54,14 @@ class LofiPodApp : Application() {
             KabodAssetLoader(this, db)
         }
         repo.kabodLoader = kabodLoader
+        // Disk cache for parsed feeds — wires into the repo so cold-start
+        // catalog reads hydrate from disk before re-fetching. Visible as
+        // `feed_disk_cache_hydrate` in the Startup section of the
+        // diagnostics screen, plus per-feed timing entries (one per
+        // refresh) so the slow-feed problem can be triaged on device.
+        repo.diskCache = StartupTimings.phase("feed_disk_cache_init") {
+            FeedDiskCache(this)
+        }
         transcripts = StartupTimings.phase("transcripts_init") {
             TranscriptRepository(db)
         }
