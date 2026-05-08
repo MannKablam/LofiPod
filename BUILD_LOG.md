@@ -2,6 +2,40 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix: download progress poll — UI sees real-time bytes, not frozen 0%
+
+User on v0.6.7: "downloads still do not work. Manual download appears
+downloaded only after backing out and back in. Auto-download — can't
+see the state change. All downloads appear to be infinitely in progress."
+
+Root cause: Media3's `DownloadManager.Listener.onDownloadChanged` fires
+only on STATE transitions (QUEUED → DOWNLOADING → COMPLETED / FAILED).
+It does NOT fire during DOWNLOADING for byte/percentage progress
+updates — Media3 documents this as "clients must poll for granular
+progress." Our `Downloads.kt` was wired purely off the listener, so
+the StateFlow emitted once at QUEUED→DOWNLOADING (typically with 0%
+bytes downloaded) and then went silent until COMPLETED. The progress
+arc on the DownloadButton therefore looked frozen at 0% for the whole
+download. The "have to back out and come back" symptom was the user
+forcing a fresh composition that re-read the now-COMPLETED state.
+
+Fix: a 500 ms self-pacing poll loop in `Downloads.ensureProgressPolling()`
+that re-emits `byId` from `manager.currentDownloads` while any
+download is in DOWNLOADING / QUEUED / RESTARTING, and stops when
+none are. Self-starts on `start()`, on `refreshAll()`, and on any
+listener callback (defensive). The same poll cadence picks up state
+transitions within 500 ms regardless of whether the listener's
+fan-out is delayed by Compose snapshot scheduling or Media3 handler
+throttling — so it's both a progress source and a redundancy net.
+
+Cost: ~2 reads/sec of the in-memory `currentDownloads` list while
+active, fully idle otherwise. Map equality uses reference equality
+on Download values (Media3 has no equals override), so any
+progress-field difference yields a structurally-different map and
+triggers Compose recomposition end-to-end.
+
+ai_contamination: true # claude opus 4.7
+
 ## Fix: APK update integrity — temp-file + atomic rename + ZIP magic check
 
 User reported "app will not download. 'there's a problem with the app
