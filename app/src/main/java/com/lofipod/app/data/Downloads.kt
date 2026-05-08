@@ -6,10 +6,15 @@ import android.util.Log
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
+import com.lofipod.app.data.db.AutoDownloadDao
 import com.lofipod.app.data.model.Episode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Thin wrapper around Media3's [DownloadManager] that exposes a [StateFlow] of
@@ -34,8 +39,17 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class Downloads(
     private val context: Context,
-    private val manager: DownloadManager
+    private val manager: DownloadManager,
+    private val autoDownloadDao: AutoDownloadDao,
 ) {
+
+    /**
+     * Off-thread scope for fire-and-forget DB cleanup that pairs with
+     * download operations. Uses [SupervisorJob] so a single failed cleanup
+     * (e.g. DB locked transient) doesn't cancel future cleanups.
+     */
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
 
     private val _byId = MutableStateFlow<Map<String, Download>>(emptyMap())
     val byId: StateFlow<Map<String, Download>> = _byId.asStateFlow()
@@ -98,6 +112,12 @@ class Downloads(
         } catch (t: Throwable) {
             Log.e(TAG, "removeDownload($episodeGuid) failed", t)
         }
+        // Always cleanup any auto_download row so the table doesn't accumulate
+        // stale entries — irrespective of whether this removal was a manual
+        // user action, an auto-archive sweep, or the post-finish auto-download
+        // expiration. Cheap (single-row delete) and runs off-thread so it
+        // doesn't compete with the manager's removal callback.
+        cleanupScope.launch { autoDownloadDao.delete(episodeGuid) }
     }
 
     companion object {

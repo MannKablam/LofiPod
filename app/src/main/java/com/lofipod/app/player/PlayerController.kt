@@ -44,6 +44,8 @@ class PlayerController(private val context: Context) {
         get() = (context.applicationContext as LofiPodApp).db.episodeStateDao()
     private val checkpointDao: PlaybackCheckpointDao
         get() = (context.applicationContext as LofiPodApp).db.playbackCheckpointDao()
+    private val autoDownloadDao: com.lofipod.app.data.db.AutoDownloadDao
+        get() = (context.applicationContext as LofiPodApp).db.autoDownloadDao()
     private val queueDao: QueueEntryDao
         get() = (context.applicationContext as LofiPodApp).db.queueEntryDao()
     private val podcastStateDao: com.lofipod.app.data.db.PodcastStateDao
@@ -153,6 +155,11 @@ class PlayerController(private val context: Context) {
                 if (pendingPlay != null) return@launch  // user already wants something specific
                 restoreLastEpisodeIfNeeded()
             }
+            // Reap auto-downloads whose owning episode finished playing
+            // more than [AUTO_DOWNLOAD_TTL_MS] ago. Cheap (one indexed
+            // query + at most a handful of deletes) and runs in the
+            // background of the connect cycle.
+            sweepExpiredAutoDownloads()
         }, MoreExecutors.directExecutor())
     }
 
@@ -441,6 +448,12 @@ class PlayerController(private val context: Context) {
         autoplayTimerJob = null
         _autoplayTimer.value = null
 
+        // Housekeeping: prune any auto-downloads from PRIOR episodes whose
+        // playback finished and whose 1-hour TTL has elapsed. Runs on every
+        // track change so old auto-downloads don't accumulate even in long
+        // sessions where connect() doesn't re-fire.
+        sweepExpiredAutoDownloads()
+
         scope.launch {
             // 1. Outgoing item: persist position + (optionally) record session_end checkpoint.
             val outgoingId = c.currentMediaItem?.mediaId
@@ -561,9 +574,40 @@ class PlayerController(private val context: Context) {
             // service-call round trip. Skips guids already in downloads
             // including FAILED, so a previously-failed download isn't auto-
             // retried on every play (the user can retry from the chip).
+            //
+            // Auto-flag tracking: episodes that the user didn't manually
+            // download get a row in auto_download so the periodic sweep can
+            // expire them 1 hour after playback finishes. Re-listening to
+            // an already-auto episode renews the clock; manual downloads
+            // (user pressing the download button) clear the flag and stay
+            // forever.
             val app = context.applicationContext as LofiPodApp
-            if (!app.downloadsApi.byId.value.containsKey(ep.guid)) {
+            val alreadyDownloading = app.downloadsApi.byId.value.containsKey(ep.guid)
+            if (!alreadyDownloading) {
                 app.downloadsApi.start(ep)
+                withContext(Dispatchers.IO) {
+                    autoDownloadDao.upsert(
+                        com.lofipod.app.data.db.AutoDownloadEntity(
+                            guid = ep.guid,
+                            createdAt = System.currentTimeMillis(),
+                        )
+                    )
+                }
+            } else {
+                // Existing download: only renew the auto clock if it WAS
+                // already auto. A manually-downloaded episode (no
+                // auto_download row) stays manual; we don't silently
+                // convert it to auto-with-expiry on replay.
+                withContext(Dispatchers.IO) {
+                    if (autoDownloadDao.get(ep.guid) != null) {
+                        autoDownloadDao.upsert(
+                            com.lofipod.app.data.db.AutoDownloadEntity(
+                                guid = ep.guid,
+                                createdAt = System.currentTimeMillis(),
+                            )
+                        )
+                    }
+                }
             }
 
             // Autoplay confirmation window: if this play was triggered by
@@ -591,6 +635,44 @@ class PlayerController(private val context: Context) {
         scope.launch {
             val ep = episodeFromState(guid) ?: return@launch
             app.downloadsApi.start(ep)
+            // Manual trigger — clear any prior auto-download flag so the
+            // 1-hour-after-finished sweep won't expire this download.
+            withContext(Dispatchers.IO) {
+                autoDownloadDao.delete(guid)
+            }
+        }
+    }
+
+    /**
+     * Sweep auto-downloaded episodes whose playback has finished AND whose
+     * last-played timestamp is older than [AUTO_DOWNLOAD_TTL_MS] (1 hour).
+     * Removes the download via the manager and clears the auto_download
+     * row. Called from [connect] (catches stragglers from prior sessions)
+     * and from [playEpisode] (housekeeping on every track switch).
+     *
+     * Intentionally narrow: only auto-downloads (= rows in `auto_download`)
+     * are eligible. User-triggered downloads (no row) are kept until the
+     * user manually removes them. Episodes that were started but never
+     * finished are also kept — the rule is "finished + idle 1h," not
+     * "started + idle 1h."
+     */
+    private fun sweepExpiredAutoDownloads() {
+        scope.launch {
+            val cutoff = System.currentTimeMillis() - AUTO_DOWNLOAD_TTL_MS
+            val guids = withContext(Dispatchers.IO) {
+                autoDownloadDao.expiringGuids(cutoff)
+            }
+            if (guids.isEmpty()) return@launch
+            val app = context.applicationContext as LofiPodApp
+            val have = app.downloadsApi.byId.value.keys
+            for (g in guids) {
+                if (g in have) {
+                    app.downloadsApi.remove(g)
+                }
+                withContext(Dispatchers.IO) {
+                    autoDownloadDao.delete(g)
+                }
+            }
         }
     }
 
@@ -1102,6 +1184,14 @@ class PlayerController(private val context: Context) {
     companion object {
         const val SESSION_GAP_MS = 30L * 60 * 1000        // 30 min
         const val CHECKPOINT_CAP = 200
+        /**
+         * Time after an auto-downloaded episode finishes playing before
+         * its download is eligible for removal. User spec — episodes the
+         * user didn't manually download should free up disk shortly after
+         * they're done with them, but not immediately (so a quick
+         * re-listen doesn't have to re-fetch the file).
+         */
+        const val AUTO_DOWNLOAD_TTL_MS = 60L * 60 * 1000   // 1 hour
         const val REASON_JUMP_FROM = "jump_from"
         const val REASON_SESSION_END = "session_end"
         const val REASON_PROMOTED_TO_MOST_EXCELLENT = "promoted_to_most_excellent"

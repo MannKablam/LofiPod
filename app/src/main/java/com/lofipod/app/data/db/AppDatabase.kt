@@ -258,6 +258,37 @@ interface PodcastStateDao {
     suspend fun setDefaultSpeed(feedUrl: String, speed: Float?)
 }
 
+@Dao
+interface AutoDownloadDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: AutoDownloadEntity)
+
+    @Query("SELECT * FROM auto_download WHERE guid = :guid LIMIT 1")
+    suspend fun get(guid: String): AutoDownloadEntity?
+
+    @Query("DELETE FROM auto_download WHERE guid = :guid")
+    suspend fun delete(guid: String)
+
+    /**
+     * GUIDs of auto-download rows whose corresponding episode has finished
+     * playing AND hasn't been engaged with for [cutoffMs] milliseconds.
+     * Drives the 1-hour-after-finished expiration sweep. Inner-join on
+     * episode_state so a leaked auto_download row without a matching
+     * episode_state never blocks the result (we'd never expire what we
+     * can't see).
+     */
+    @Query(
+        "SELECT a.guid FROM auto_download a " +
+            "INNER JOIN episode_state e ON a.guid = e.guid " +
+            "WHERE e.durationMs > 0 " +
+            "AND e.positionMs >= e.durationMs - 5000 " +
+            "AND e.lastPlayedMillis > 0 " +
+            "AND e.lastPlayedMillis < :cutoffMs"
+    )
+    suspend fun expiringGuids(cutoffMs: Long): List<String>
+}
+
 @Database(
     entities = [
         EpisodeStateEntity::class,
@@ -269,9 +300,10 @@ interface PodcastStateDao {
         PodcastStateEntity::class,
         KabodPackEntity::class,
         EpisodeKabodEntity::class,
-        EpisodeTranscriptEntity::class
+        EpisodeTranscriptEntity::class,
+        AutoDownloadEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -285,6 +317,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun kabodPackDao(): KabodPackDao
     abstract fun episodeKabodDao(): EpisodeKabodDao
     abstract fun episodeTranscriptDao(): EpisodeTranscriptDao
+    abstract fun autoDownloadDao(): AutoDownloadDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -551,6 +584,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v13 → v14: add auto_download table. Tracks which downloads were
+         * fired automatically by playEpisode (vs manually via the download
+         * button) so the periodic sweep can expire auto-downloads 1 hour
+         * after the episode finishes playing without touching user-triggered
+         * downloads. Empty on first migration (no historical auto-flag data
+         * to backfill — every existing download is treated as manual).
+         */
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_download (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -562,7 +616,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
-                        MIGRATION_12_13
+                        MIGRATION_12_13, MIGRATION_13_14
                     )
                     .build().also { instance = it }
             }

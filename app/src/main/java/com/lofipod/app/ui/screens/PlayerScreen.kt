@@ -424,12 +424,25 @@ fun PlayerScreen(
                                 if (d == null || d.state == androidx.media3.exoplayer.offline.Download.STATE_FAILED) {
                                     // Start. Preview has full Episode in
                                     // hand; live looks up via episode_state.
+                                    // Both paths are MANUAL — user pressed
+                                    // the download button — so any prior
+                                    // auto-download flag must be cleared
+                                    // (live path's controller.startDownloadForCurrent
+                                    // already handles its own cleanup; preview
+                                    // path needs an inline clear).
                                     if (isPreview) {
-                                        previewData?.episode?.let { app.downloadsApi.start(it) }
+                                        previewData?.episode?.let { ep ->
+                                            app.downloadsApi.start(ep)
+                                            scope.launch(Dispatchers.IO) {
+                                                app.db.autoDownloadDao().delete(ep.guid)
+                                            }
+                                        }
                                     } else {
                                         controller.startDownloadForCurrent(displayedGuid)
                                     }
                                 } else {
+                                    // remove() inside Downloads clears the auto_download
+                                    // row internally, so no extra cleanup needed.
                                     app.downloadsApi.remove(displayedGuid)
                                 }
                             }
