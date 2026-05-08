@@ -177,21 +177,101 @@ class UpdateChecker(private val context: Context) {
      * [versionCode] so concurrent / re-checked downloads don't clobber a
      * partial file — and so the same file gets reused if the user dismisses
      * and re-opens the install dialog.
+     *
+     * **Integrity discipline.** Through v0.6.6 this method wrote directly to
+     * the final filename and reused any non-empty cached file as-is. A
+     * network drop mid-download left a partial APK that subsequent retries
+     * happily reused, producing the system installer's classic "There's a
+     * problem with the app file" error indefinitely. The fix:
+     *
+     *   1. Always download to `<file>.tmp`, then atomically rename to the
+     *      final filename only after the byte stream completes. A partial
+     *      download leaves only the .tmp behind, which is never returned to
+     *      the caller.
+     *   2. Validate downloaded length against the response's `Content-Length`
+     *      header (when present). A short read = corrupt download = retry.
+     *   3. Wipe stale .tmp files at every entry so an interrupted prior run
+     *      can't leak across sessions.
+     *   4. Validate the ZIP/APK header (`PK\x03\x04` magic) before reusing a
+     *      cached file. Cheap (4-byte read) and catches the case where the
+     *      cache directory was tampered with or the file was zero-padded by
+     *      some external process.
+     *
+     * Trade-offs accepted: cache reuse still saves bandwidth on legitimate
+     * re-checks, but correctness wins over bandwidth. A user with a stuck
+     * cache can clear app storage as a last resort, but should never need to.
      */
     private fun downloadApk(apkUrl: String, versionCode: Int): File? {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val out = File(dir, "lofipod-$versionCode.apk")
-        // If we already downloaded this exact version, reuse it. Saves
-        // bandwidth on a re-check after the user dismissed the installer.
-        if (out.exists() && out.length() > 0L) return out
+        val tmp = File(dir, "lofipod-$versionCode.apk.tmp")
+
+        // Drop any leftover .tmp from a prior interrupted run. Silent —
+        // the file is by definition corrupt and we have a cleaner path now.
+        if (tmp.exists()) tmp.delete()
+
+        // Re-validate the cached file before returning it. Cheap header
+        // check rules out the "zero-byte but non-zero length" and "HTML
+        // error page got saved with .apk extension" cases.
+        if (out.exists() && out.length() > 0L && looksLikeApk(out)) {
+            return out
+        }
+        // Stale or invalid cache — purge and re-download.
+        if (out.exists()) out.delete()
 
         val req = Request.Builder().url(apkUrl).build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) return null
             val body = resp.body ?: return null
-            out.outputStream().use { os -> body.byteStream().copyTo(os) }
+            val expected = resp.header("Content-Length")?.toLongOrNull() ?: -1L
+            tmp.outputStream().use { os -> body.byteStream().copyTo(os) }
+            // Length check: short read = transport interrupted, file is not
+            // safe to install.
+            val actual = tmp.length()
+            if (expected > 0L && actual != expected) {
+                tmp.delete()
+                return null
+            }
+            // Final-form validation: open the would-be APK and confirm the
+            // header magic. Catches the rare "Content-Length matches but
+            // body is HTML" case (e.g., proxy / captive portal returning a
+            // 200 with HTML on a redirect).
+            if (!looksLikeApk(tmp)) {
+                tmp.delete()
+                return null
+            }
+            // Atomic rename. After this the consumer sees a complete,
+            // header-validated APK or no file at all — no in-between state.
+            if (!tmp.renameTo(out)) {
+                // Cross-filesystem rename can fail on some Android storage
+                // configurations. Fall back to copy+delete which preserves
+                // the all-or-nothing contract from the consumer's view.
+                tmp.copyTo(out, overwrite = true)
+                tmp.delete()
+            }
         }
         return out
+    }
+
+    /**
+     * 4-byte ZIP/APK local-file-header magic check. APK is a ZIP, and every
+     * ZIP starts with `PK\x03\x04`. If the magic doesn't match, the file is
+     * either truncated, an HTML error page disguised by Content-Type, or
+     * something else entirely — none of which the system installer will
+     * accept.
+     */
+    private fun looksLikeApk(f: File): Boolean {
+        if (f.length() < 4L) return false
+        return try {
+            f.inputStream().use { input ->
+                val b = ByteArray(4)
+                if (input.read(b) != 4) return false
+                b[0] == 0x50.toByte() && b[1] == 0x4B.toByte() &&
+                    b[2] == 0x03.toByte() && b[3] == 0x04.toByte()
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     companion object {

@@ -2,6 +2,38 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix: APK update integrity — temp-file + atomic rename + ZIP magic check
+
+User reported "app will not download. 'there's a problem with the app
+file'" when installing v0.6.6 via the in-app updater. The release
+artifact on GitHub was verified well-formed: 57.4 MB, valid ZIP magic
+(`PK\x03\x04`), APK Signing Block v2/v3 present. So the upstream APK
+was fine.
+
+Root cause: `UpdateChecker.downloadApk` wrote the response body
+directly to `cacheDir/updates/lofipod-<code>.apk` and on retry reused
+any cached file with `length() > 0L`. A network drop mid-stream left
+a partial APK in cache; subsequent retries reused the partial file
+without revalidating, and the system installer surfaced "There's a
+problem with the app file" indefinitely. Cache hit-the-wrong-thing.
+
+Fix:
+- Download to `<file>.tmp`, atomic-rename to final on success.
+- Validate downloaded length against `Content-Length` header; short
+  read → delete + retry on next call.
+- Validate ZIP magic (`PK\x03\x04`) on both the freshly-written tmp
+  and any reused cached file. Catches HTML-error-page-saved-as-APK.
+- Wipe leftover `.tmp` at function entry so an interrupted prior run
+  can't leak across sessions.
+- Cross-filesystem rename failure falls back to copy+delete, preserving
+  the all-or-nothing consumer contract.
+
+The user's stuck v0.6.6 cache is at `lofipod-40.apk`; v0.6.7 uses
+cache key `lofipod-41.apk`, so it's a clean download path. From v0.6.7
+forward, every update is integrity-checked end-to-end.
+
+ai_contamination: true # claude opus 4.7
+
 ## Fix: auto-download fires immediately at play time, not deferred
 
 User report: manual downloads work after the v0.6.5 `resumeDownloads()`
