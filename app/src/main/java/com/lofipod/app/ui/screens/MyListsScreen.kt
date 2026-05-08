@@ -26,8 +26,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.media3.exoplayer.offline.Download
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.data.LofiDownload
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.db.QueueEntryEntity
 import com.lofipod.app.data.model.Episode
@@ -69,7 +69,7 @@ fun MyListsScreen(
     var tab by remember { mutableStateOf(0) }
 
     val completed = remember(downloads) {
-        downloads.values.filter { it.state == Download.STATE_COMPLETED }.map { it.request.id }
+        downloads.values.filter { it.state == LofiDownload.State.COMPLETED }.map { it.guid }
     }
     var downloadedRows by remember { mutableStateOf<List<EpisodeStateEntity>>(emptyList()) }
     LaunchedEffect(completed) {

@@ -2,6 +2,65 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.6.9 — Ditch Media3's offline framework; OkHttp downloader from scratch
+
+After v0.6.5–v0.6.8 each fixed a different Media3 download-stack quirk
+(paused-by-default DownloadManager, deferred-fire missing the play-and-
+listen-straight-through case, listener that doesn't fire on byte
+progress) and downloads were *still* hit/miss, the user called it: ditch
+Media3's offline framework entirely. v0.6.9 does that.
+
+**What's gone:**
+- `Downloads.kt` (Media3 DownloadManager wrapper) — deleted.
+- `LofiPodDownloadService` (.kt + manifest entry + dataSync FGS comment) —
+  deleted.
+- `SimpleCache` + `StandaloneDatabaseProvider` + `CacheDataSource` from
+  `DownloadHolder` — gone. The streaming-cache that used to wrap HTTP
+  requests is gone too; re-streaming on a back-scrub during streaming
+  is acceptable (rare for podcasts).
+- Cache contention between the player and downloader — gone (only one
+  thing reads/writes audio bytes now).
+
+**What's new:**
+- `LofiDownload` (data class) — app's own state model: `{ guid, state,
+  bytesDownloaded, contentLength, filePath, errorMessage }` with a
+  4-state enum `{ QUEUED, DOWNLOADING, COMPLETED, FAILED }`.
+- `LofiPodDownloader` — pure OkHttp + coroutines. Per-GUID file at
+  `filesDir/episode_audio/<sha256(guid)>.bin`. Concurrency capped at 2
+  via Semaphore. HTTP Range resume. `ensureActive()` cancellation
+  contract so a cancelled download never gets marked completed on
+  partial bytes. Direct `MutableStateFlow<Map<String, LofiDownload>>`
+  emissions on every progress tick (500 ms) — no listener whose
+  fan-out we have to second-guess.
+- `LofiDownloadEntity` + `LofiDownloadDao` — Room v15 → v16 migration
+  adds `lofi_download` table for persistence.
+- `DownloadHolder` — drastically simplified. Holds the shared OkHttp
+  client + a `DefaultDataSource.Factory` that auto-routes `file://`
+  → FileDataSource and `http(s)://` → OkHttpDataSource. That's it.
+- `PlayerController.playEpisode` — when constructing the MediaItem,
+  prefers `app.downloadsApi.completedFile(guid)` (file URI) over the
+  remote audioUrl when a local copy exists. Offline playback now
+  literally reads from disk.
+
+**Migration path:**
+- One-shot legacy cleanup in `LofiPodApp.onCreate` deletes the old
+  `filesDir/downloads/` SimpleCache directory + Media3's
+  `exoplayer_internal.db`. Reclaims disk that was holding broken cache
+  chunks.
+- The `auto_download` table stays (its schema is downloader-agnostic).
+  The new downloader's `LofiDownloadEntity` is fresh — no rows from the
+  old Media3 db carry over.
+
+**Hydrate behavior:**
+- On app start, any `lofi_download` row left in DOWNLOADING / QUEUED
+  state from a prior session (process killed mid-download) gets
+  presented as FAILED with an "Interrupted on app exit — tap to resume."
+  message. The user retries from the row UI; that calls `start(ep)`
+  which seeks the partial file with a Range header and resumes from
+  the saved byte offset.
+
+ai_contamination: true # claude opus 4.7
+
 ## Fix: download progress poll — UI sees real-time bytes, not frozen 0%
 
 User on v0.6.7: "downloads still do not work. Manual download appears

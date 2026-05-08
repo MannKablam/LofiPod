@@ -57,14 +57,14 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         val tOnCreate = System.nanoTime()
         super.onCreate()
-        // Cache-aware media source factory: downloaded episodes play locally,
-        // streamed episodes still hit HTTP (with opportunistic range caching).
-        // Note: accessing app.downloads triggers the lazy init if it hasn't
-        // already happened on the warmup coroutine. On slow devices, this
-        // can be a notable wait — surfaced in the Startup section as
-        // `playback_service_oncreate`.
-        val cacheFactory = (application as LofiPodApp).downloads.cacheDataSourceFactory
-        val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(cacheFactory)
+        // Scheme-aware DataSource factory: file:// URIs (downloaded episodes)
+        // route through Media3's FileDataSource, http(s):// URIs go to
+        // OkHttpDataSource. v0.6.9 reset dropped the streaming-cache
+        // (SimpleCache + CacheDataSource) along with the rest of Media3's
+        // offline framework — re-streaming on scrub is a tolerable trade
+        // for a downloader we can actually trust.
+        val dataSourceFactory = (application as LofiPodApp).downloads.dataSourceFactory
+        val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory)
 
         // Audio-friendly buffer sizes. Defaults are tuned for video; podcasts can
         // afford larger buffers (one episode is ~50–200 MB at 128 kbps for 1 hour
