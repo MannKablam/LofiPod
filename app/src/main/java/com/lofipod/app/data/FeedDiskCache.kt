@@ -64,6 +64,19 @@ class FeedDiskCache(context: Context) {
         }
     }
 
+    /** Read the cached Podcast for [feedUrl], or null if not present. */
+    fun read(feedUrl: String): Podcast? {
+        val file = File(dir, fileName(feedUrl))
+        if (!file.isFile) return null
+        return try {
+            decode(file.readText())
+        } catch (e: Exception) {
+            Log.w(TAG, "Bad cache file ${file.name}; deleting", e)
+            runCatching { file.delete() }
+            null
+        }
+    }
+
     /** Drop the cache file for [feedUrl]. Used when a feed is removed. */
     fun delete(feedUrl: String) {
         runCatching { File(dir, fileName(feedUrl)).delete() }
