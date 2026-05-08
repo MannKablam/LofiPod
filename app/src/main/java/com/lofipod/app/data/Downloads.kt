@@ -10,10 +10,13 @@ import com.lofipod.app.data.db.AutoDownloadDao
 import com.lofipod.app.data.model.Episode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -50,6 +53,12 @@ class Downloads(
      */
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * Scope for the progress-poll loop. Separate from [cleanupScope] so a
+     * stuck poll (shouldn't happen, but defensive) doesn't block cleanup.
+     */
+    private val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var pollJob: Job? = null
 
     private val _byId = MutableStateFlow<Map<String, Download>>(emptyMap())
     val byId: StateFlow<Map<String, Download>> = _byId.asStateFlow()
@@ -83,6 +92,9 @@ class Downloads(
                     com.lofipod.app.diagnostics.AppDiagnostics
                         .recordDownloadFailure(download.request.id, reason)
                 }
+                // State just changed; if anything's now active, kick the
+                // progress poll. Self-deduping if already running.
+                ensureProgressPolling()
             }
 
             override fun onDownloadRemoved(downloadManager: DownloadManager, download: Download) {
@@ -93,6 +105,7 @@ class Downloads(
 
             override fun onInitialized(downloadManager: DownloadManager) {
                 refreshAll()
+                ensureProgressPolling()
             }
         })
     }
@@ -107,6 +120,66 @@ class Downloads(
             }
         }
         _byId.value = map
+        // After a cold-start refresh, anything that was DOWNLOADING in the
+        // index needs the poll loop running to ride its progress out to the
+        // UI — otherwise we'd freeze at the index's last persisted bytes.
+        ensureProgressPolling()
+    }
+
+    /**
+     * Periodic poll that re-emits [byId] with a fresh snapshot of
+     * [DownloadManager.currentDownloads] so the UI sees live progress.
+     *
+     * **Why this is needed.** Media3's [DownloadManager.Listener.onDownloadChanged]
+     * fires only on STATE transitions (QUEUED → DOWNLOADING → COMPLETED /
+     * FAILED). It does NOT fire during DOWNLOADING for byte / percentage
+     * progress updates. Without this poll the UI's spinner would freeze at
+     * the percent value captured the moment DOWNLOADING first fired
+     * (typically 0%) for the entire duration of the download — exactly the
+     * "infinitely in progress" symptom.
+     *
+     * The poll also acts as a safety net for state transitions in case the
+     * listener's fan-out is delayed (Compose snapshot scheduling, or
+     * Media3's internal handler thread being throttled). The same 500 ms
+     * cadence picks up any state change within half a second.
+     *
+     * **Lifecycle.** Self-starts on [start], on [refreshAll], and on any
+     * [DownloadManager.Listener.onDownloadChanged] callback. Self-stops
+     * when no downloads are in DOWNLOADING / QUEUED / RESTARTING. Running
+     * a second time is a no-op while the loop is alive.
+     *
+     * **Cost.** ~2 reads/sec of an in-memory `currentDownloads` list while
+     * any download is active; idle when nothing's downloading. Map equality
+     * uses reference equality on Download values (no equals override in
+     * Media3), so any progress-field difference produces a structurally-
+     * different map and triggers Compose recomposition end-to-end.
+     */
+    private fun ensureProgressPolling() {
+        if (pollJob?.isActive == true) return
+        pollJob = pollScope.launch {
+            try {
+                while (isActive) {
+                    val snapshot = manager.currentDownloads
+                    if (snapshot.isNotEmpty()) {
+                        _byId.value = _byId.value.toMutableMap().apply {
+                            for (d in snapshot) put(d.request.id, d)
+                        }
+                    }
+                    val hasActive = snapshot.any {
+                        it.state == Download.STATE_DOWNLOADING ||
+                            it.state == Download.STATE_QUEUED ||
+                            it.state == Download.STATE_RESTARTING
+                    }
+                    if (!hasActive) break
+                    delay(POLL_INTERVAL_MS)
+                }
+            } catch (t: Throwable) {
+                // Defensive — a poll failure must not crash the app or take
+                // out the manager. Log and let a future state change kick a
+                // fresh loop via ensureProgressPolling().
+                Log.e(TAG, "progress poll loop failed", t)
+            }
+        }
     }
 
     fun start(ep: Episode) {
@@ -115,6 +188,10 @@ class Downloads(
             .build()
         try {
             manager.addDownload(request)
+            // Kick the poll immediately so the UI sees this new download's
+            // progress without waiting for the listener's first DOWNLOADING
+            // state transition (which fires before bytes start flowing).
+            ensureProgressPolling()
         } catch (t: Throwable) {
             // Defensive — DownloadManager.addDownload can throw if the
             // index is in a bad state. We'd rather log and continue
@@ -143,5 +220,15 @@ class Downloads(
 
     companion object {
         private const val TAG = "LofiPodDownloads"
+
+        /**
+         * 500 ms cadence for the progress poll. Tradeoffs: at 250 ms the
+         * UI's percent label looks fluid but burns ~4 reads/sec/active for
+         * what's mostly imperceptible motion on a phone-sized progress
+         * arc. At 1 s the percent feels laggy. 500 ms is the sweet spot —
+         * humans read ~100 ms quanta as "instant," and 500 ms keeps the
+         * arc moving without churning.
+         */
+        private const val POLL_INTERVAL_MS = 500L
     }
 }
