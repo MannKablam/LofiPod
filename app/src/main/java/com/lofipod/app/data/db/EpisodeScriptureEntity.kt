@@ -1,6 +1,7 @@
 package com.lofipod.app.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -21,8 +22,22 @@ import androidx.room.PrimaryKey
  * Confidence + source columns let the UI show "auto-tagged from
  * description" vs "from Kabod metadata" if useful, and let queries filter
  * out low-confidence detections.
+ *
+ * Index `idx_episode_scripture_book_ch` covers the canon-browse queries
+ * (`forBook`, `coveredChaptersIn`, `coveredVersesIn`, `nextInCanon`)
+ * which all filter on book + startCh and sort by startV. The name
+ * matches the explicit CREATE INDEX in MIGRATION_14_15 so Room's
+ * post-migration schema validation finds the same index it expects.
  */
-@Entity(tableName = "episode_scripture")
+@Entity(
+    tableName = "episode_scripture",
+    indices = [
+        Index(
+            name = "idx_episode_scripture_book_ch",
+            value = ["book", "startCh", "startV"],
+        ),
+    ],
+)
 data class EpisodeScriptureEntity(
     @PrimaryKey val guid: String,
     /** Canonical book name from [com.lofipod.app.bible.BibleCanon]. */
