@@ -268,7 +268,8 @@ private fun AppNav(
                     onOpenSettings = { nav.navigate("settings") },
                     onOpenNowPlaying = { nav.navigate("player") },
                     onOpenHistory = { nav.navigate("history") },
-                    onOpenSearch = { nav.navigate("search") }
+                    onOpenSearch = { nav.navigate("search") },
+                    onOpenCanonBrowse = { nav.navigate("canonBrowse") },
                 )
             }
 
@@ -378,6 +379,13 @@ private fun AppNav(
             composable("audiophileNotes") {
                 AudiophileNotesScreen(
                     onBack = { smartBack(nav, "audiophileNotes") }
+                )
+            }
+
+            composable("canonBrowse") {
+                CanonBrowseScreen(
+                    controller = controller,
+                    onBack = { smartBack(nav, "canonBrowse") },
                 )
             }
 

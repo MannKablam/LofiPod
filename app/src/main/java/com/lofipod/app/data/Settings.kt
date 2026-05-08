@@ -177,6 +177,40 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Set of feedUrls excluded from the canon-browse Bible index. Lets the
+     * user hide a noisy feed (e.g., one that mistags a lot) from the
+     * book/chapter/verse grids without removing it from the catalog. CSV
+     * stored as the value (DataStore doesn't have native Set support).
+     * Empty = include everything.
+     */
+    val canonBrowseExcludedFeeds: Flow<Set<String>> =
+        context.dataStore.data.map {
+            it[KEY_CANON_BROWSE_EXCLUDED]?.split(",")?.filter { s -> s.isNotBlank() }?.toSet()
+                ?: emptySet()
+        }
+
+    suspend fun setCanonBrowseExcludedFeeds(feedUrls: Set<String>) {
+        context.dataStore.edit {
+            if (feedUrls.isEmpty()) it.remove(KEY_CANON_BROWSE_EXCLUDED)
+            else it[KEY_CANON_BROWSE_EXCLUDED] = feedUrls.joinToString(",")
+        }
+    }
+
+    /**
+     * When the user starts an episode that has a detected scripture ref,
+     * the next-up at end-of-stream comes from the canon-order resolver
+     * (next sermon strictly after the current passage in Bible order)
+     * instead of the standard queue/feed-next chain. Default off — the
+     * user opts in via the canon-browse "Play through" affordance.
+     */
+    val canonAutoplayEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_CANON_AUTOPLAY] ?: false }
+
+    suspend fun setCanonAutoplayEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_CANON_AUTOPLAY] = v }
+    }
+
+    /**
      * EQ phase-mode toggle. False (default) = minimum-phase biquad cascade
      * (~5.7 ms total chain latency); true = linear-phase 4096-tap FIR
      * convolution (~52 ms total). Linear preserves transient waveform shape
@@ -313,6 +347,10 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
         private val KEY_PHASE_MODE_LINEAR =
             androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
+        private val KEY_CANON_BROWSE_EXCLUDED =
+            androidx.datastore.preferences.core.stringPreferencesKey("canon_browse_excluded_feeds")
+        private val KEY_CANON_AUTOPLAY =
+            androidx.datastore.preferences.core.booleanPreferencesKey("canon_autoplay_enabled")
         private val KEY_BACKUP_TREE_URI =
             androidx.datastore.preferences.core.stringPreferencesKey("backup_tree_uri")
         private val KEY_BACKUP_INTERVAL_HOURS =

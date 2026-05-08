@@ -259,6 +259,102 @@ interface PodcastStateDao {
 }
 
 @Dao
+interface EpisodeScriptureDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: EpisodeScriptureEntity)
+
+    @Query("SELECT * FROM episode_scripture WHERE guid = :guid LIMIT 1")
+    suspend fun get(guid: String): EpisodeScriptureEntity?
+
+    @Query("SELECT * FROM episode_scripture WHERE guid = :guid LIMIT 1")
+    fun observe(guid: String): Flow<EpisodeScriptureEntity?>
+
+    @Query("DELETE FROM episode_scripture WHERE guid = :guid")
+    suspend fun delete(guid: String)
+
+    /** Drop every RSS-tagged row so a re-tag run can re-populate them
+     *  with updated rules. Kabod-sourced rows are preserved (they're
+     *  authoritative — pulled from the pack's structured metadata). */
+    @Query("DELETE FROM episode_scripture WHERE source LIKE 'rss-%'")
+    suspend fun deleteAllRssTagged()
+
+    @Query("SELECT * FROM episode_scripture")
+    suspend fun getAll(): List<EpisodeScriptureEntity>
+
+    /** Set of distinct canonical book names that have at least one tagged
+     *  episode. Drives the gray-out behaviour of the book grid in the
+     *  canon-browse screen. */
+    @Query("SELECT DISTINCT book FROM episode_scripture")
+    fun observeBooksWithCoverage(): Flow<List<String>>
+
+    @Query("SELECT DISTINCT book FROM episode_scripture")
+    suspend fun booksWithCoverage(): List<String>
+
+    /** Episodes covering the given book, optionally filtered to a chapter
+     *  range. Joined with episode_state for pubDate sorting; the caller
+     *  decides whether to display archived ones. */
+    @Query(
+        "SELECT * FROM episode_scripture " +
+            "WHERE book = :book " +
+            "ORDER BY COALESCE(startCh, 999), COALESCE(startV, 999)"
+    )
+    suspend fun forBook(book: String): List<EpisodeScriptureEntity>
+
+    /** Distinct chapters with at least one tagged episode in the given
+     *  book. Drives the chapter grid's gray-out behaviour. */
+    @Query(
+        "SELECT DISTINCT startCh FROM episode_scripture " +
+            "WHERE book = :book AND startCh IS NOT NULL"
+    )
+    suspend fun coveredChaptersIn(book: String): List<Int>
+
+    /** Distinct verses (start verses) with at least one tagged episode
+     *  in the given book/chapter. Drives the verse grid's gray-out. */
+    @Query(
+        "SELECT DISTINCT startV FROM episode_scripture " +
+            "WHERE book = :book AND startCh = :ch AND startV IS NOT NULL"
+    )
+    suspend fun coveredVersesIn(book: String, ch: Int): List<Int>
+
+    /** Episodes covering a specific verse (or range that includes it).
+     *  Used by the verse-detail screen and the smart-queue resolver. */
+    @Query(
+        "SELECT * FROM episode_scripture " +
+            "WHERE book = :book AND startCh <= :ch " +
+            "AND (endCh IS NULL OR endCh >= :ch) " +
+            "AND (startV IS NULL OR startV <= :v) " +
+            "AND (endV IS NULL OR endV >= :v) " +
+            "ORDER BY startCh, COALESCE(startV, 0)"
+    )
+    suspend fun coveringVerse(book: String, ch: Int, v: Int): List<EpisodeScriptureEntity>
+
+    /**
+     * Smart-queue resolver: given a current passage, find the next
+     * episode in canonical order whose start passage is strictly after
+     * (currentCh, currentV). Excludes the current episode by guid.
+     *
+     * Excluded feeds (the user's per-feed canon-browse filter) are
+     * applied at the caller level — DAO returns everything, caller
+     * filters.
+     */
+    @Query(
+        "SELECT s.* FROM episode_scripture s " +
+            "WHERE s.book = :book " +
+            "AND s.guid != :excludeGuid " +
+            "AND (s.startCh > :ch OR (s.startCh = :ch AND COALESCE(s.startV, 0) > :v)) " +
+            "ORDER BY s.startCh, COALESCE(s.startV, 0) " +
+            "LIMIT 1"
+    )
+    suspend fun nextInCanon(
+        book: String,
+        ch: Int,
+        v: Int,
+        excludeGuid: String,
+    ): EpisodeScriptureEntity?
+}
+
+@Dao
 interface AutoDownloadDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -323,9 +419,10 @@ interface AutoDownloadDao {
         KabodPackEntity::class,
         EpisodeKabodEntity::class,
         EpisodeTranscriptEntity::class,
-        AutoDownloadEntity::class
+        AutoDownloadEntity::class,
+        EpisodeScriptureEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -340,6 +437,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun episodeKabodDao(): EpisodeKabodDao
     abstract fun episodeTranscriptDao(): EpisodeTranscriptDao
     abstract fun autoDownloadDao(): AutoDownloadDao
+    abstract fun episodeScriptureDao(): EpisodeScriptureDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -628,6 +726,37 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v14 → v15: add episode_scripture table. Holds detected (RSS)
+         * and imported (Kabod) Bible passage references — the unified
+         * structured shape that powers the canon-browse UI and
+         * smart-queue. Backfill of Kabod-pack rows from episode_kabod
+         * happens at app start (one-shot job) rather than as part of
+         * the migration so the migration stays fast and idempotent.
+         */
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_scripture (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        book TEXT NOT NULL,
+                        startCh INTEGER,
+                        startV INTEGER,
+                        endCh INTEGER,
+                        endV INTEGER,
+                        source TEXT NOT NULL,
+                        confidence INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_episode_scripture_book_ch " +
+                        "ON episode_scripture(book, startCh, startV)"
+                )
+            }
+        }
+
+        /**
          * Wrap a [Migration] so its `migrate(...)` execution time is
          * recorded into [com.lofipod.app.diagnostics.StartupTimings].
          * The wrapper preserves [startVersion] and [endVersion] so Room
@@ -668,7 +797,7 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_7_8), timed(MIGRATION_8_9),
                         timed(MIGRATION_9_10), timed(MIGRATION_10_11),
                         timed(MIGRATION_11_12), timed(MIGRATION_12_13),
-                        timed(MIGRATION_13_14)
+                        timed(MIGRATION_13_14), timed(MIGRATION_14_15)
                     )
                     .build().also { instance = it }
             }

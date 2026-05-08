@@ -65,7 +65,8 @@ fun CatalogScreen(
     onOpenSettings: () -> Unit,
     onOpenNowPlaying: () -> Unit,
     onOpenHistory: () -> Unit,
-    onOpenSearch: () -> Unit
+    onOpenSearch: () -> Unit,
+    onOpenCanonBrowse: () -> Unit,
 ) {
     val vm: CatalogViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -196,6 +197,11 @@ fun CatalogScreen(
                                 text = { Text("Search episodes") },
                                 onClick = { menuExpanded = false; onOpenSearch() },
                                 leadingIcon = { Icon(Icons.Filled.Search, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Bible index") },
+                                onClick = { menuExpanded = false; onOpenCanonBrowse() },
+                                leadingIcon = { Icon(Icons.Filled.MenuBook, null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Playback history") },
