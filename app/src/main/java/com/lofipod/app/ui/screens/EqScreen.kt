@@ -64,7 +64,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     // without a track transition). Mirrors the diagnostics screen's reset path.
     val dcBlockerEnabled by settings.dcBlockerEnabled.collectAsState(initial = false)
     // EQ phase mode. False (default) = minimum-phase biquad cascade,
-    // ~5.7 ms latency. True = linear-phase 4096-tap FIR convolution,
+    // ~6.4 ms latency. True = linear-phase 4096-tap FIR convolution,
     // ~52 ms latency, preserves transient waveform shape exactly.
     val phaseModeLinear by settings.phaseModeLinear.collectAsState(initial = false)
 
@@ -268,7 +268,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
             Text("Phase mode", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(2.dp))
             Text(
-                "Minimum: ~5.7 ms latency, transparent for nearly all listeners (default). " +
+                "Minimum: ~6.4 ms latency, transparent for nearly all listeners (default). " +
                     "Linear: ~52 ms latency, preserves transient waveform shape exactly. " +
                     "Higher CPU; opt-in for audiophile-grade A/B testing.",
                 style = MaterialTheme.typography.bodySmall,

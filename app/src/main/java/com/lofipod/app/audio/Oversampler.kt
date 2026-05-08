@@ -28,19 +28,21 @@ import kotlin.math.sqrt
  *   - Per-channel delay lines; gain scaling baked into coefficients
  *
  * **Filter design.**
- *   - 64 taps + Kaiser β=9 gives ~90 dB stopband and a ~0.09-wide transition
+ *   - 128 taps + Kaiser β=9 gives ~90 dB stopband and a ~0.045-wide transition
  *     band in normalized [0, 0.5] coordinates. With cutoff at 0.25 (=
- *     original Nyquist), the transition spans roughly 18..26 kHz at 44.1k
- *     input rate. Audio above ~18 kHz starts rolling off; above ~26 kHz it's
- *     in deep stopband. For typical adult listeners (audible to ~16 kHz),
- *     this is transparent. For golden-ear listeners on music with
- *     high-frequency content (cymbals, airy synthesis), the >18 kHz roll-off
- *     is a marginal compromise — bumping FIR_TAPS to 128 would tighten the
- *     transition to ~20..24 kHz at the cost of double the MAC count.
+ *     original Nyquist), the transition spans roughly 20..24 kHz at 44.1k
+ *     input rate. Audio above ~20 kHz starts rolling off; above ~24 kHz it's
+ *     in deep stopband. Below 20 kHz the response is flat to ~0.001 dB ripple
+ *     — transparent for any listener including golden-ear audiophiles on
+ *     music with cymbal / brass / airy-synthesis high-frequency content. The
+ *     128-tap design replaced an earlier 64-tap version that had a wider
+ *     transition (~18..26 kHz) and put the roll-off into the audible band
+ *     for the most sensitive listeners. CPU cost for the upgrade is
+ *     negligible on any modern phone (~11 M extra MACs/sec at 44.1k stereo).
  *   - Linear phase (FIR is symmetric → no phase distortion)
- *   - Group delay = (N-1)/2 = 31.5 samples at 2x rate = ~16 samples at 1x for
- *     up + 16 for down = 32 samples = ~0.7 ms total. Combined with the
- *     limiter's 5 ms LA, total chain latency is ~5.7 ms — still inaudible.
+ *   - Group delay = (N-1)/2 = 63.5 samples at 2x rate = ~32 samples at 1x for
+ *     up + 32 for down = 64 samples = ~1.4 ms total. Combined with the
+ *     limiter's 5 ms LA, total chain latency is ~6.4 ms — still inaudible.
  *
  * **Polyphase math.**
  *   Upsampling: y[2n] = Σ h[2k] · x[n-k] (even phase)
@@ -174,14 +176,15 @@ class Oversampler {
     }
 
     companion object {
-        // FIR length. 64 taps with Kaiser β=9 gives ~90 dB stopband and a
-        // ~0.09 transition width in normalized [0, 0.5] coordinates (≈ 8 kHz
-        // transition centered on original Nyquist at 44.1k input rate).
-        // Doubling to 128 would halve the transition width but also double
-        // CPU; 64 keeps the chain cheap with a few-kHz roll-off at the very
-        // top of the audible band — fine for voice content, marginal for
-        // golden-ear listeners on music.
-        private const val FIR_TAPS = 64
+        // FIR length. 128 taps with Kaiser β=9 gives ~90 dB stopband and a
+        // ~0.045 transition width in normalized [0, 0.5] coordinates (≈ 4 kHz
+        // transition centered on original Nyquist at 44.1k input rate, i.e.
+        // ~20..24 kHz). Doubles MAC count vs. the earlier 64-tap design but
+        // CPU cost is negligible on any modern phone — the cleaner top-end
+        // roll-off is worth it for golden-ear audiophiles. 64-tap version
+        // shipped through v0.6.x; bumped to 128 alongside the Kaiser-windowed
+        // linear-phase kernel polish.
+        private const val FIR_TAPS = 128
         // Cutoff at 0.25 normalized = original Nyquist (= half of the
         // filter's Nyquist, which is the 2x rate's Nyquist). The filter
         // operates at 2x rate; in its normalized [0, 0.5] coordinates,

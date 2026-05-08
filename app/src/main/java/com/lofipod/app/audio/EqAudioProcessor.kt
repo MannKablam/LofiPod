@@ -33,7 +33,7 @@ import kotlin.math.pow
  * buffer with a 2048-sample equal-power cross-fade so the user can drag EQ
  * sliders without clicks.
  *
- * Total chain latency: ~5.7 ms (5 ms limiter LA + ~0.7 ms FIR group delay
+ * Total chain latency: ~6.4 ms (5 ms limiter LA + ~1.4 ms FIR group delay
  * across both oversampling stages). Inaudible. CPU footprint: a few percent
  * of one core for stereo at 44.1k.
  */
@@ -572,7 +572,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
      * Output frame count != input frame count: the EQ accumulates input
      * into [LinearPhaseEq.FRAME_SIZE] chunks before convolving, then emits
      * in [LinearPhaseEq.FRAME_SIZE]-sized bursts. Total chain latency in
-     * this mode is ~52 ms (~46 ms FIR group delay + ~5.7 ms post-gain
+     * this mode is ~52 ms (~46 ms FIR group delay + ~6.4 ms post-gain
      * chain). When the EQ is still accumulating its first chunk after a
      * configure / flush / mode switch, this method emits zero output bytes
      * for the buffer (no [replaceOutputBuffer] call) and consumes the input
@@ -648,7 +648,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
 
     /**
      * End-of-stream drain. The 2x oversampler + look-ahead limiter chain
-     * holds enough audio in its internal delay lines to fill ~5.7 ms — without
+     * holds enough audio in its internal delay lines to fill ~6.4 ms — without
      * this drain, the last bit of every track would be silently eaten as
      * Media3 stops calling [queueInput] and the chain never gets a chance to
      * flush its tail.

@@ -2,6 +2,39 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## DSP polish: 128-tap oversampler FIR + Kaiser-windowed linear-phase kernel
+
+Two pure-quality bumps to the audiophile chain. No behavior change beyond
+cleaner magnitude response — pre-existing toggles, presets, latency budget,
+diagnostics screen all still apply.
+
+**Oversampler FIR 64 -> 128 taps.** Tightens the anti-imaging /
+anti-aliasing transition band from ~18-26 kHz to ~20-24 kHz at 44.1k. The
+old design started rolling off at ~18 kHz, intruding into the audible band
+for the most sensitive listeners; the new one keeps the response flat to
+~0.001 dB ripple all the way to 20 kHz. Stopband attenuation stays at
+~90 dB (Kaiser β=9). Total chain latency ticks up from ~5.7 ms to ~6.4 ms;
+still inaudible. CPU cost is ~11 M extra MACs/sec at 44.1k stereo —
+negligible on any modern phone, especially after the v0.5.1 limiter
+deque optimization that took ~50% off chain CPU.
+
+**Linear-phase kernel: Kaiser window the truncation.** The biquad-cascade
+magnitude response is sampled at 8192 frequency points, IFFT'd, and
+truncated to 4096 taps. Without windowing, that's a rectangular truncation
+= sinc convolution in frequency = small ripple in the magnitude response.
+Now multiplied by a Kaiser window (β=6) on the truncated taps, which gives
+~60 dB of ripple suppression in exchange for mild softening of high-Q peak
+edges. The window is precomputed once at class load (4096 doubles cached on
+the companion) and applied per band-change, so the cost is one
+KERNEL_LENGTH-sized multiply.
+
+Latency / spec text propagated everywhere the old numbers appeared:
+`AudiophileNotesScreen`, `EqScreen`, `EqAudioProcessor`, `LinearPhaseEq`,
+`Settings`, `PlaybackService`. The audio diagnostics screen reads
+`firTaps` from telemetry so it picks up the new value automatically.
+
+ai_contamination: true # claude opus 4.7
+
 ## v0.6.4 — XML rescue + chapter-level Bible index + AppDiagnostics screen
 
 Five fixes addressing user-reported issues from the v0.6.3 logs.

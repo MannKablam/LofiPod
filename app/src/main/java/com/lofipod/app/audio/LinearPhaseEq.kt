@@ -32,8 +32,10 @@ import kotlin.math.sqrt
  *     magnitude response at [FFT_SIZE]/2 + 1 frequency points. Set phase to
  *     zero, IFFT to get an acausal symmetric impulse response, circular-shift
  *     by [FFT_SIZE]/2 to make it causal, truncate to [KERNEL_LENGTH] taps
- *     centered on the impulse. The result is a symmetric (linear-phase) FIR
- *     kernel. Re-FFT'd to a packed-complex spectrum for runtime convolution.
+ *     centered on the impulse, and apply a Kaiser window (β=6) over the
+ *     truncated taps to suppress the residual sinc ripple from rectangular
+ *     truncation. The result is a symmetric (linear-phase) FIR kernel.
+ *     Re-FFT'd to a packed-complex spectrum for runtime convolution.
  *   - **Overlap-add convolution** ([processChunk]). Per [FRAME_SIZE]-sample
  *     input chunk: zero-pad to [FFT_SIZE], FFT, multiply by the kernel
  *     spectrum, IFFT. The first [FRAME_SIZE] samples of the result are this
@@ -41,7 +43,7 @@ import kotlin.math.sqrt
  *     [KERNEL_LENGTH]-1 samples are saved as overlap for future chunks.
  *
  * **Latency.** Group delay = ([KERNEL_LENGTH] - 1) / 2 ≈ 2047 samples ≈
- * 46.4 ms at 44.1k. Combined with the chain's existing ~5.7 ms (limiter LA +
+ * 46.4 ms at 44.1k. Combined with the chain's existing ~6.4 ms (limiter LA +
  * oversampler FIR), total chain latency in linear-phase mode is ~52 ms.
  * Audible at very fast UI feedback contexts (typing-while-listening) but
  * fine for podcast playback.
@@ -173,17 +175,20 @@ class LinearPhaseEq {
             shifted[i] = spec[(i + half) % FFT_SIZE]
         }
 
-        // Step 5: truncate to KERNEL_LENGTH taps centered on the peak. With
-        // KERNEL_LENGTH < FFT_SIZE, this drops the very-low-amplitude
-        // trailing ringing on each side. Without a window the truncation
-        // applies a rectangular window in time = sinc convolution in
-        // frequency = small ripple in the magnitude response. Acceptable for
-        // typical EQ shapes (-12..+12 dB peaking biquads); revisit if high-Q
-        // bands show audible ripple.
+        // Step 5: truncate to KERNEL_LENGTH taps centered on the peak, then
+        // apply a Kaiser window over the truncated taps. Without a window the
+        // truncation applies a rectangular window in time = sinc convolution
+        // in frequency = ripple in the magnitude response. Kaiser β=6 gives
+        // ~60 dB of ripple suppression with only mild softening of the EQ
+        // response edges — enough to clean the response below audibility for
+        // typical 6-band peaking shapes (-12..+12 dB) without smearing
+        // higher-Q bands meaningfully. The window is symmetric (preserves
+        // linear phase) and precomputed once per process at companion init,
+        // so this is a per-band-change KERNEL_LENGTH-sized multiply.
         val kernel = DoubleArray(FFT_SIZE)  // zero-padded to FFT_SIZE for the convolution FFT
         val start = half - KERNEL_LENGTH / 2
         for (i in 0 until KERNEL_LENGTH) {
-            kernel[i] = shifted[start + i]
+            kernel[i] = shifted[start + i] * KAISER_WINDOW[i]
         }
         // kernel[KERNEL_LENGTH..FFT_SIZE-1] = 0 (already zeroed)
 
@@ -372,5 +377,50 @@ class LinearPhaseEq {
          * powers of 2 are the JTransforms fast path.
          */
         const val FFT_SIZE = 8192
+
+        /**
+         * Kaiser-window β. β=6 → ~60 dB ripple suppression, modest edge
+         * softening. β=8 → ~80 dB but visibly softer high-Q peaks. 6 is the
+         * sweet spot for podcast / general-listening EQ where kernel ripple
+         * is more objectionable than slightly-rounded peak shapes.
+         */
+        private const val KAISER_BETA = 6.0
+
+        /**
+         * Precomputed Kaiser window of length [KERNEL_LENGTH]. Symmetric
+         * around the center sample → preserves the kernel's linear phase.
+         * Computed once at class-load; applied per band-change in
+         * [synthesizeKernelSync].
+         */
+        private val KAISER_WINDOW: DoubleArray = run {
+            val w = DoubleArray(KERNEL_LENGTH)
+            val betaI0 = besselI0(KAISER_BETA)
+            for (n in 0 until KERNEL_LENGTH) {
+                val ratio = 2.0 * n / (KERNEL_LENGTH - 1) - 1.0
+                w[n] = besselI0(KAISER_BETA * sqrt(1.0 - ratio * ratio)) / betaI0
+            }
+            w
+        }
+
+        /**
+         * Modified Bessel function I0(x), summed by series until further
+         * terms are below 1e-15. Same implementation as `Oversampler`'s; kept
+         * private here to avoid a cross-file dependency for a 15-line helper.
+         *
+         *   I0(x) = Σ_{k=0..∞} (x/2)^(2k) / (k!)²
+         */
+        private fun besselI0(x: Double): Double {
+            var sum = 1.0
+            var term = 1.0
+            var k = 1
+            while (term > 1e-15) {
+                val r = x / (2.0 * k)
+                term *= r * r
+                sum += term
+                k++
+                if (k > 200) break  // belt-and-braces; converges in ~30 iters
+            }
+            return sum
+        }
     }
 }

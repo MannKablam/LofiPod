@@ -147,7 +147,7 @@ class PlaybackService : MediaSessionService() {
             sharedEq.setDcBlockerEnabled(settings.dcBlockerEnabled.first())
 
             // EQ phase mode (Phase C). False = minimum-phase biquad (default,
-            // ~5.7 ms latency); true = linear-phase FIR convolution (~52 ms).
+            // ~6.4 ms latency); true = linear-phase FIR convolution (~52 ms).
             // Rehydrated here so the user's preference survives a process
             // restart — without this, the chain would always start in
             // minimum-phase regardless of the saved setting.

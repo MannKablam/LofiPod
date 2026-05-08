@@ -212,7 +212,7 @@ class Settings(private val context: Context) {
 
     /**
      * EQ phase-mode toggle. False (default) = minimum-phase biquad cascade
-     * (~5.7 ms total chain latency); true = linear-phase 4096-tap FIR
+     * (~6.4 ms total chain latency); true = linear-phase 4096-tap FIR
      * convolution (~52 ms total). Linear preserves transient waveform shape
      * exactly at the cost of higher CPU + latency. Default minimum because
      * it's transparent for almost all listeners and the existing latency
