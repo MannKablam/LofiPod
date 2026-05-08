@@ -2,6 +2,45 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix auto-download hangs by bypassing DownloadService.sendAddDownload
+
+User-reported: auto-download for the now-playing episode hangs and
+generally doesn't work. Root cause: `DownloadService.sendAddDownload`
+triggers a foreground service start. On Android 12+ this can throw
+`ForegroundServiceStartNotAllowedException` from background-restricted
+states; on Android 15+ the `dataSync` foreground-service-type has a
+hard daily timeout (~6 h cumulative) that kills the service
+mid-download, leaving downloads silently stuck. Even though
+`playEpisode` runs while the PlaybackService (mediaPlayback type)
+keeps the app process in the foreground, starting a SECOND foreground
+service (the dataSync one) is what runs into the restriction.
+
+References: androidx/media#2614 (Android 15 dataSync timeout),
+#1239 (background sendAddDownload throws), #831 (downloads stuck on
+force-close).
+
+Fix: `Downloads.start()` and `Downloads.remove()` now call
+`DownloadManager.addDownload(request)` and `removeDownload(guid)`
+directly, bypassing `DownloadService.sendAddDownload` /
+`sendRemoveDownload`. The DownloadManager's executor pool (configured
+in DownloadHolder with 2 worker threads) runs downloads in-process;
+the existing PlaybackService keeps the process alive during active
+playback, which is when auto-download is most likely to fire.
+
+Trade-off: no dedicated foreground notification for downloads — the
+PlaybackService's media notification covers the visible artifact when
+audio is playing, and download progress is already shown inline in
+the EQ/episodes screens. If the user backgrounds the app and stops
+playback, the process eventually dies and downloads pause; they
+auto-resume when the user reopens the app (DownloadManager re-reads
+the index and continues).
+
+`LofiPodDownloadService` is now dormant (still registered in the
+manifest as a hatch for re-introducing foreground download
+notifications later if needed) but no code path invokes it.
+
+ai_contamination: true # claude opus 4.7
+
 ## Quality-of-life: cold-start episode restore + scroll-to-now-playing + quieter beeps
 
 Three small but high-value UX improvements.

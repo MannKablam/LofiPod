@@ -2,12 +2,11 @@ package com.lofipod.app.data
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
-import androidx.media3.exoplayer.offline.DownloadService
 import com.lofipod.app.data.model.Episode
-import com.lofipod.app.player.LofiPodDownloadService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +14,23 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Thin wrapper around Media3's [DownloadManager] that exposes a [StateFlow] of
  * downloads keyed by episode GUID. UI can collect this to render per-episode state.
+ *
+ * **Why we bypass [androidx.media3.exoplayer.offline.DownloadService.sendAddDownload].**
+ * Pre-v0.5.6 we routed adds + removes through `DownloadService.sendAddDownload`
+ * / `sendRemoveDownload`. On Android 12+ those calls trigger a foreground-
+ * service start, which can throw `ForegroundServiceStartNotAllowedException`
+ * from background-restricted states; on Android 15+ the `dataSync`
+ * foreground-service-type has a hard daily timeout (~6 h cumulative) that
+ * causes the service to be killed by the system mid-download, leaving
+ * downloads silently stuck. Both symptoms match the user's "auto-download
+ * hangs / generally doesn't work" report. Calling
+ * [DownloadManager.addDownload] / [DownloadManager.removeDownload] directly
+ * skips the service start and runs the work on the manager's own executor —
+ * which is alive as long as the process is alive. The [PlaybackService]
+ * (mediaPlayback foreground type) keeps the process alive during active
+ * playback, which is precisely when auto-download is most likely to fire,
+ * so this trades the (unused) download foreground notification for
+ * reliability. Reference: androidx/media#2614, #1239, #831.
  */
 class Downloads(
     private val context: Context,
@@ -66,20 +82,25 @@ class Downloads(
         val request = DownloadRequest.Builder(ep.guid, Uri.parse(ep.audioUrl))
             .setMimeType(ep.audioMimeType ?: "audio/mpeg")
             .build()
-        DownloadService.sendAddDownload(
-            context,
-            LofiPodDownloadService::class.java,
-            request,
-            /* foreground = */ false
-        )
+        try {
+            manager.addDownload(request)
+        } catch (t: Throwable) {
+            // Defensive — DownloadManager.addDownload can throw if the
+            // index is in a bad state. We'd rather log and continue
+            // playback than crash the play action.
+            Log.e(TAG, "addDownload(${ep.guid}) failed", t)
+        }
     }
 
     fun remove(episodeGuid: String) {
-        DownloadService.sendRemoveDownload(
-            context,
-            LofiPodDownloadService::class.java,
-            episodeGuid,
-            /* foreground = */ false
-        )
+        try {
+            manager.removeDownload(episodeGuid)
+        } catch (t: Throwable) {
+            Log.e(TAG, "removeDownload($episodeGuid) failed", t)
+        }
+    }
+
+    companion object {
+        private const val TAG = "LofiPodDownloads"
     }
 }
