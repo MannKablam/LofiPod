@@ -159,7 +159,7 @@ private const val PHASE_MODES = """
 The EQ stage can run in either of two modes, selectable from the Audio
 screen.
 
-Minimum-phase (default). The biquad cascade described above: ~5.7 ms total
+Minimum-phase (default). The biquad cascade described above: ~6.4 ms total
 chain latency, low CPU, transparent for almost all listeners. Like every
 analog EQ ever made and most digital ones, it introduces frequency-dependent
 group delay — different frequencies are delayed by different amounts. The
@@ -168,14 +168,15 @@ music or speech this is inaudible.
 
 Linear-phase. The biquad cascade's MAGNITUDE response is sampled at 8192
 frequency points; the phase is set to zero; an inverse FFT produces a
-4096-tap symmetric FIR kernel that's then convolved against the audio
-stream via overlap-add. Every frequency is delayed by EXACTLY the same
-amount (group delay = (kernel length - 1) / 2 = ~46 ms). The original
-signal's transient waveform shape is preserved verbatim — useful for
-audiophile-grade A/B testing where you want to verify a recording's
-transient response without the EQ smearing it.
+4096-tap symmetric FIR kernel which is then Kaiser-windowed (beta = 6) to
+suppress the residual sinc ripple from rectangular truncation, and convolved
+against the audio stream via overlap-add. Every frequency is delayed by
+EXACTLY the same amount (group delay = (kernel length - 1) / 2 = ~46 ms).
+The original signal's transient waveform shape is preserved verbatim —
+useful for audiophile-grade A/B testing where you want to verify a
+recording's transient response without the EQ smearing it.
 
-Tradeoff. Linear phase costs ~52 ms total chain latency (vs. ~5.7 ms for
+Tradeoff. Linear phase costs ~52 ms total chain latency (vs. ~6.4 ms for
 minimum phase) and ~3-5x more CPU. For podcast playback both numbers are
 fine on modern hardware; the latency is far below conversational thresholds
 and the CPU is still well under one core.
@@ -218,9 +219,11 @@ back into the audible range as aliasing.
 Running the limiter at 2x sample rate pushes alias products above the
 original Nyquist where the downsample filter removes them.
 
-FIR design: 64 taps, Kaiser window with beta = 9, low-pass at the original
-Nyquist. ~90 dB stopband attenuation; transition band roughly 18-26 kHz at
-44.1 kHz input. Linear phase (FIR is symmetric).
+FIR design: 128 taps, Kaiser window with beta = 9, low-pass at the original
+Nyquist. ~90 dB stopband attenuation; transition band roughly 20-24 kHz at
+44.1 kHz input. Below 20 kHz the response is flat to ~0.001 dB ripple,
+keeping the roll-off entirely outside the audible band even for golden-ear
+listeners. Linear phase (FIR is symmetric).
 
 Both up and down stages are polyphase (taps split into even/odd phases for
 the upsampler; single FIR convolution at 2x rate sampled at 1x for the
@@ -269,9 +272,9 @@ private const val LATENCY = """
 Total chain latency at 44.1 kHz input:
 
   - Look-ahead limiter:  ~5.0 ms (5 ms LA at the 2x rate -> 5 ms at 1x)
-  - Oversampler FIR:     ~0.7 ms (32 samples group delay across up + down at 1x)
+  - Oversampler FIR:     ~1.4 ms (64 samples group delay across up + down at 1x)
   - ----------------------------
-  - Total:               ~5.7 ms
+  - Total:               ~6.4 ms
 
 Inaudible at any podcast playback context. Dropped frames at flush /
 end-of-stream are handled by zero-padding the chain so the last 5 ms of
@@ -284,7 +287,7 @@ small latency only when active.
 
 private const val CPU = """
 Roughly a few percent of one core for stereo at 44.1 kHz on any phone made
-in the last 5 years. The dominant costs are the FIR (64 taps x 2 channels
+in the last 5 years. The dominant costs are the FIR (128 taps x 2 channels
 x 2 stages per input frame, run at the 1x rate) and the biquad cascade
 (6 bands x 2 channels). The limiter's monotonic-deque peak detector is
 O(1) amortized; envelope smoothing and gain application are trivial.
