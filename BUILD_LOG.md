@@ -2,6 +2,55 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Cold-start: defer download infra to first access; add 32h unfinished-auto sweep
+
+User report: "the app loads very slow on some devices to the point that
+playback is not able to start" — reproducible on two users' devices,
+but not on the dev's. The dev's storage is faster + has less
+downloaded data, so the cold-start cost on slower eMMC was hidden.
+
+Root cause: `LofiPodApp.onCreate` was constructing `DownloadHolder`
+synchronously, and `SimpleCache`'s constructor synchronously scans
+the entire download directory (Media3 documents this as slow). For
+users with many downloaded episodes, this scan + the synchronous
+`Downloads.refreshAll` cursor walk over the download index can cost
+seconds — and it blocked Application.onCreate, which delays MainActivity's
+first-frame render.
+
+**Fix**:
+- `LofiPodApp.downloads` and `downloadsApi` are now `by lazy {}`
+  properties. `onCreate` launches a background coroutine that touches
+  `downloadsApi.byId.value` to warm them up off-thread, in parallel
+  with MainActivity init. UI shell renders immediately; the slow disk
+  I/O runs alongside without blocking.
+- `Downloads.init.refreshAll()` now runs on `cleanupScope` instead
+  of inline, so even if construction does happen on the main thread
+  for some reason, the cursor walk doesn't block it.
+
+Worst-case behaviour (slow user, immediate playback request): if a
+UI thread / PlaybackService accesses `downloads` before the warmup
+finishes, that access blocks on the lazy. Same total wait as before,
+but the UI is already visible so the user perceives "starting
+playback..." rather than "app frozen at launch."
+
+## Auto-downloads also expire after 32 h if unfinished
+
+Per user follow-up: extend the auto-expiration rule to catch
+auto-downloads the user lost interest in. New
+`AutoDownloadDao.expiringUnfinishedGuids(cutoffMs)` query — selects
+auto_download rows where the episode was NOT played to completion
+AND `max(auto_download.createdAt, episode_state.lastPlayedMillis)`
+is older than `cutoffMs`. The `max()` clock catches both
+"never started" (lastPlayedMillis = 0, clock = createdAt) and
+"started but abandoned" (clock = last play tick).
+
+`PlayerController.sweepExpiredAutoDownloads` now runs both queries
+and de-dupes the results before iterating. New constant
+`AUTO_DOWNLOAD_UNFINISHED_TTL_MS = 32 h`. Rename of the existing
+`AUTO_DOWNLOAD_TTL_MS` to `AUTO_DOWNLOAD_FINISHED_TTL_MS` for clarity.
+
+ai_contamination: true # claude opus 4.7
+
 ## Auto-downloads expire 1h after the episode finishes playing
 
 User-triggered downloads should stick around forever; auto-downloads

@@ -644,23 +644,36 @@ class PlayerController(private val context: Context) {
     }
 
     /**
-     * Sweep auto-downloaded episodes whose playback has finished AND whose
-     * last-played timestamp is older than [AUTO_DOWNLOAD_TTL_MS] (1 hour).
-     * Removes the download via the manager and clears the auto_download
-     * row. Called from [connect] (catches stragglers from prior sessions)
+     * Sweep auto-downloaded episodes that should expire. Two rules:
+     *
+     *   1. **Finished + idle 1 h**: episode played to completion AND
+     *      `lastPlayedMillis` older than 1 hour. The user is done with
+     *      it; reclaim the disk.
+     *   2. **Unfinished + idle 32 h**: episode wasn't played to
+     *      completion AND `max(autoDownloadCreatedAt, lastPlayedMillis)`
+     *      older than 32 hours. The user lost interest; reclaim the
+     *      disk. Catches both never-started and started-but-abandoned
+     *      cases via the max() clock.
+     *
+     * Called from [connect] (catches stragglers from prior sessions)
      * and from [playEpisode] (housekeeping on every track switch).
      *
      * Intentionally narrow: only auto-downloads (= rows in `auto_download`)
      * are eligible. User-triggered downloads (no row) are kept until the
-     * user manually removes them. Episodes that were started but never
-     * finished are also kept — the rule is "finished + idle 1h," not
-     * "started + idle 1h."
+     * user manually removes them.
      */
     private fun sweepExpiredAutoDownloads() {
         scope.launch {
-            val cutoff = System.currentTimeMillis() - AUTO_DOWNLOAD_TTL_MS
+            val now = System.currentTimeMillis()
+            val finishedCutoff = now - AUTO_DOWNLOAD_FINISHED_TTL_MS
+            val unfinishedCutoff = now - AUTO_DOWNLOAD_UNFINISHED_TTL_MS
             val guids = withContext(Dispatchers.IO) {
-                autoDownloadDao.expiringGuids(cutoff)
+                val finished = autoDownloadDao.expiringFinishedGuids(finishedCutoff)
+                val unfinished = autoDownloadDao.expiringUnfinishedGuids(unfinishedCutoff)
+                // De-dupe in case both queries somehow returned the same
+                // guid (shouldn't — finished vs not-finished are mutually
+                // exclusive — but cheap insurance).
+                (finished + unfinished).distinct()
             }
             if (guids.isEmpty()) return@launch
             val app = context.applicationContext as LofiPodApp
@@ -1191,7 +1204,18 @@ class PlayerController(private val context: Context) {
          * they're done with them, but not immediately (so a quick
          * re-listen doesn't have to re-fetch the file).
          */
-        const val AUTO_DOWNLOAD_TTL_MS = 60L * 60 * 1000   // 1 hour
+        const val AUTO_DOWNLOAD_FINISHED_TTL_MS = 60L * 60 * 1000   // 1 hour
+
+        /**
+         * Time after an auto-downloaded episode was last touched (whichever
+         * is later: the auto-download fire, or the most recent playback
+         * tick) before an UNFINISHED episode's auto-download is eligible
+         * for removal. Longer than the finished TTL because not finishing
+         * is ambiguous — user might come back to it — but bounded so
+         * orphaned auto-downloads don't accumulate forever on disk for
+         * episodes the user lost interest in.
+         */
+        const val AUTO_DOWNLOAD_UNFINISHED_TTL_MS = 32L * 60 * 60 * 1000   // 32 hours
         const val REASON_JUMP_FROM = "jump_from"
         const val REASON_SESSION_END = "session_end"
         const val REASON_PROMOTED_TO_MOST_EXCELLENT = "promoted_to_most_excellent"

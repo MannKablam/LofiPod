@@ -55,8 +55,15 @@ class Downloads(
     val byId: StateFlow<Map<String, Download>> = _byId.asStateFlow()
 
     init {
-        // Seed with whatever Media3 already knows about (e.g. after process restart).
-        refreshAll()
+        // Seed with whatever Media3 already knows about (e.g. after process
+        // restart) on a background thread. The cursor walk over the download
+        // index is small but synchronous; running it inline blocks whichever
+        // thread constructed Downloads, which on a cold start was the main
+        // thread (LofiPodApp.onCreate). Deferring it lets [byId] start empty
+        // and fill in a tick later — UI collectors see an empty map
+        // initially, the same as if no downloads existed yet, and update
+        // when refreshAll lands.
+        cleanupScope.launch { refreshAll() }
         manager.addListener(object : DownloadManager.Listener {
             override fun onDownloadChanged(
                 downloadManager: DownloadManager,
