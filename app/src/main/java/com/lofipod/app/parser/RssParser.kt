@@ -195,21 +195,41 @@ object RssParser {
         }
     }
 
-    // Common feed pubDate format: RFC 822 / RFC 1123
+    // pubDate format menagerie. Different feeds emit different shapes:
+    //   - RFC 822 / RFC 1123: "Sun, 26 Apr 1998 00:00:00 GMT" (most podcasts)
+    //   - ISO 8601 with offset: "1998-04-26T00:00:00+00:00"
+    //   - ISO 8601 with Z: "1998-04-26T00:00:00Z" (Megaphone, Castos)
+    //   - ISO 8601 with milliseconds + Z: "1998-04-26T00:00:00.000Z"
+    //   - Date only: "1998-04-26" (some kabod-pack-style sources)
+    // SimpleDateFormat doesn't accept 'Z' as a literal, so for the Z variants
+    // we strip/replace it before parsing rather than adding more format
+    // strings. Order matters: we try the most-common first to avoid
+    // unnecessary exception throws.
     private val pubDateFormats = listOf(
         "EEE, dd MMM yyyy HH:mm:ss zzz",
         "EEE, dd MMM yyyy HH:mm:ss Z",
         "dd MMM yyyy HH:mm:ss zzz",
-        "yyyy-MM-dd'T'HH:mm:ssXXX"
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS",
+        "yyyy-MM-dd",
     )
 
     private fun parsePubDate(s: String?): Long? {
         if (s.isNullOrBlank()) return null
+        // Normalize ISO 'Z' (UTC) to '+00:00' so the XXX format specifier
+        // parses cleanly. Keeps the format list short.
+        val normalized = s.trim().let { raw ->
+            if (raw.endsWith("Z") && raw.length >= 11 && raw[10] == 'T') {
+                raw.dropLast(1) + "+00:00"
+            } else raw
+        }
         for (fmt in pubDateFormats) {
             try {
                 val sdf = SimpleDateFormat(fmt, Locale.ENGLISH)
                 sdf.timeZone = TimeZone.getTimeZone("UTC")
-                return sdf.parse(s)?.time
+                return sdf.parse(normalized)?.time
             } catch (_: Exception) { /* try next */ }
         }
         return null

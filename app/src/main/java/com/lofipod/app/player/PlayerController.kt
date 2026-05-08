@@ -294,8 +294,17 @@ class PlayerController(private val context: Context) {
             pushState()
             if (playbackState == Player.STATE_ENDED) {
                 // Remove the just-finished episode from the queue and auto-advance.
+                // If canon-order autoplay is enabled and this episode has a
+                // detected scripture ref, prefer the next sermon in canon
+                // order over the standard queue/feed-next chain.
                 val finishedGuid = controller?.currentMediaItem?.mediaId
-                scope.launch { advanceToNextInQueue(finishedGuid) }
+                scope.launch {
+                    if (finishedGuid != null && tryAdvanceToNextInCanon(finishedGuid)) {
+                        // Canon mode handled it; skip the standard advance.
+                        return@launch
+                    }
+                    advanceToNextInQueue(finishedGuid)
+                }
                 // Fire any deferred auto-download for the just-ended
                 // episode. The cache has been populated by streaming;
                 // DownloadManager will see the cached spans and complete
@@ -1191,6 +1200,55 @@ class PlayerController(private val context: Context) {
      *
      * Falls through silently when neither lookup yields anything.
      */
+    /**
+     * If the user has canon-order autoplay enabled AND [finishedGuid]
+     * has a detected scripture ref, find the next sermon in canon order
+     * and play it. Returns true if a play was issued (caller skips the
+     * normal queue advance), false otherwise.
+     *
+     * "Next in canon" = strictly after the finished episode's start
+     * passage, regardless of feed or pubDate. Driven by
+     * [com.lofipod.app.data.db.EpisodeScriptureDao.nextInCanon].
+     *
+     * Excluded feeds (per `Settings.canonBrowseExcludedFeeds`) are NOT
+     * applied here — the user explicitly opted into canon-order play
+     * for the current episode's book; respecting browse-time exclusions
+     * here would silently skip sermons mid-series.
+     */
+    private suspend fun tryAdvanceToNextInCanon(finishedGuid: String): Boolean {
+        val app = context.applicationContext as LofiPodApp
+        val settings = com.lofipod.app.data.Settings(app)
+        val enabled = withContext(Dispatchers.IO) {
+            settings.canonAutoplayEnabled.first()
+        }
+        if (!enabled) return false
+        val current = withContext(Dispatchers.IO) {
+            app.db.episodeScriptureDao().get(finishedGuid)
+        } ?: return false
+        // Use the END passage as the "current position" so the next sermon
+        // genuinely starts after this one. Fall back to start if endCh is
+        // missing.
+        val ch = current.endCh ?: current.startCh ?: return false
+        val v = current.endV ?: current.startV ?: 0
+        val next = withContext(Dispatchers.IO) {
+            app.db.episodeScriptureDao().nextInCanon(
+                book = current.book,
+                ch = ch,
+                v = v,
+                excludeGuid = finishedGuid,
+            )
+        } ?: run {
+            // End of book reached. Clear the flag so the user isn't
+            // stuck in canon mode for the next session and surprised
+            // by it on a different episode.
+            withContext(Dispatchers.IO) { settings.setCanonAutoplayEnabled(false) }
+            return false
+        }
+        val ep = episodeFromState(next.guid) ?: return false
+        playEpisode(ep = ep, podcastTitle = "", podcastArt = ep.episodeArtworkUrl)
+        return true
+    }
+
     private suspend fun advanceToNextInQueue(excluding: String?) {
         val app = context.applicationContext as LofiPodApp
 

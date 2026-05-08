@@ -2,6 +2,81 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.6.0 — Canonical Bible index + scripture-aware smart-queue
+
+The categorical level-up: the app is no longer just "podcasts organized
+by feed" — it's a personal sermon archive navigable by Scripture. The
+podcast feeds become source material; the Bible canon is the navigation
+primitive.
+
+**Bible canon data.** New `com.lofipod.app.bible.BibleCanon` — 66-book
+Protestant canon, KJV versification, Logos-style 10-group canonical
+categorization (Pentateuch / Historical / Wisdom / Major Prophets /
+Minor Prophets / Gospels / Acts / Pauline / General Epistles /
+Revelation), each book with chapter and per-chapter verse counts plus
+common abbreviation aliases. Drives the verse grid's gray-out behaviour
+and the ScriptureTagger's detection regex.
+
+**Auto-detection from RSS title + description.** New
+`com.lofipod.app.bible.ScriptureTagger` builds a precompiled regex from
+all canonical names + aliases. Anchored: book name MUST be followed by
+a chapter digit, so "John Piper" doesn't match the gospel-John
+("John 3:16" or "(2 John 1:5)" do). Confidence scoring (0..100) ranks
+title-vs-description hits and chapter-only-vs-chapter+verse precision.
+BBC's pattern of putting the passage in `<description>` rather than
+`<title>` is handled — title is preferred, description is a fallback.
+
+**Storage (v14 → v15 migration).** New `episode_scripture` table
+mirrors the Kabod schema's `scriptureRef` shape: `(guid, book, startCh,
+startV, endCh, endV, source, confidence)`. Single uniform query path
+across Kabod-imported and RSS-tagged refs. New `EpisodeScriptureDao`
+exposes `coveringVerse`, `nextInCanon`, `coveredChaptersIn`,
+`coveredVersesIn`, `forBook`, etc.
+
+**ScriptureIndexer + warm-tag pass.** `ScriptureIndexer` owns
+population: `backfillFromKabod` copies authoritative Kabod-pack refs
+on every app start (idempotent); `tagPodcast` runs the RSS tagger
+after each successful fetch via the new `PodcastRepository.afterFetchHook`.
+A startup warm-tag sweep walks the disk-hydrated cache so users with
+existing data get a populated Bible index without needing to refresh.
+Kabod-sourced rows are never overwritten by regex guesses.
+
+**Logos-style canon-browse UI.** New `CanonBrowseScreen` —
+hierarchical: book grid (4-col, color-coded by group, gray when no
+sermons) → chapter grid (6-col, gray when no sermons) → verse grid
+(8-col, gray when no sermons) → sermons-for-verse list with
+"Play through from here" + "Just this" affordances. Reachable from
+the Catalog overflow menu ("Bible index").
+
+**Smart canon-order autoplay.** New `Settings.canonAutoplayEnabled`
+flag. When set, end-of-stream advances to the *next sermon in canon
+order* across all feeds (resolver: `EpisodeScriptureDao.nextInCanon`)
+instead of the queue/feed-next chain. End-of-book auto-clears the flag.
+"Play through from here" sets the flag; "Just this" clears it. Falls
+through to standard advance for episodes without a scripture ref.
+
+**Source filter for the Bible index.** New
+`Settings.canonBrowseExcludedFeeds` (CSV-stored Set<String>). Tune-icon
+button on the canon-browse top bar opens a dialog of all canon sources;
+unchecking hides a feed from the grids without removing it from the
+catalog. Excluded feeds DO NOT apply to canon-order autoplay (the user
+explicitly opted into a series; respecting browse-time exclusions
+mid-series would silently skip sermons).
+
+**pubDate parser fix.** `RssParser.parsePubDate` now handles ISO 8601
+with `Z` UTC suffix (Megaphone, Castos) and millisecond-precision
+variants. The `Z` is normalized to `+00:00` before the format pass.
+Also added bare `yyyy-MM-dd` for kabod-pack-style sources. Episodes
+with previously-unparseable dates now sort correctly in the canon view.
+
+Color tokens for the canonical groups are inspired by traditional
+Christian publishing — earth/sand for the Pentateuch, royal blue for
+the Major Prophets, scarlet for the Gospels, Pentecost yellow for
+Acts, violet for the Pauline epistles, deep purple for Revelation —
+without cloning Logos directly.
+
+ai_contamination: true # claude opus 4.7
+
 ## Feed loading: disk cache + per-feed timing + concurrency cap
 
 User report: "loading feeds is impossibly slow on Pixel 7. Pixel 8

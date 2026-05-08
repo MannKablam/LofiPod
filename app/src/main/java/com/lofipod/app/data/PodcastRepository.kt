@@ -61,6 +61,15 @@ class PodcastRepository(
      */
     @Volatile var diskCache: FeedDiskCache? = null
 
+    /**
+     * Optional post-fetch hook invoked once for each successfully-fetched
+     * podcast (after merge, after disk cache write). Used by
+     * [com.lofipod.app.bible.ScriptureIndexer] to auto-tag episode
+     * passage references. Keeping it as a hook means `PodcastRepository`
+     * doesn't need to know about the indexer.
+     */
+    @Volatile var afterFetchHook: (suspend (Podcast) -> Unit)? = null
+
     @Volatile private var cache: Map<String, Podcast> = emptyMap()
 
     /**
@@ -196,6 +205,15 @@ class PodcastRepository(
                 withContext(Dispatchers.IO) { dc.write(merged) }
             } catch (e: Exception) {
                 System.err.println("Feed disk-cache write failed for ${src.feedUrl}: ${e.message}")
+            }
+        }
+        // Post-fetch hook (Bible scripture tagging). Best-effort; an
+        // indexer failure shouldn't sink the whole fetch pipeline.
+        afterFetchHook?.let { hook ->
+            try {
+                hook(merged)
+            } catch (e: Exception) {
+                System.err.println("afterFetchHook failed for ${src.feedUrl}: ${e.message}")
             }
         }
         StartupTimings.record(phaseName, tStart)

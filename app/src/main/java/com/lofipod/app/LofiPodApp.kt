@@ -3,6 +3,7 @@ package com.lofipod.app
 import android.app.Application
 import coil.Coil
 import coil.ImageLoader
+import com.lofipod.app.bible.ScriptureIndexer
 import com.lofipod.app.data.BackupWorker
 import com.lofipod.app.data.DownloadHolder
 import com.lofipod.app.data.Downloads
@@ -43,6 +44,8 @@ class LofiPodApp : Application() {
         private set
     lateinit var transcripts: TranscriptRepository
         private set
+    lateinit var scriptureIndexer: ScriptureIndexer
+        private set
 
     override fun onCreate() {
         val tOnCreate = System.nanoTime()
@@ -64,6 +67,38 @@ class LofiPodApp : Application() {
         }
         transcripts = StartupTimings.phase("transcripts_init") {
             TranscriptRepository(db)
+        }
+        // Bible-scripture indexing: runs after every feed fetch so
+        // RSS-tagged refs land in episode_scripture next to Kabod-imported
+        // ones. Backfill from kabod packs runs in the background after
+        // initialization (idempotent — REPLACE conflict policy).
+        scriptureIndexer = ScriptureIndexer(
+            scriptureDao = db.episodeScriptureDao(),
+            kabodDao = db.episodeKabodDao(),
+        )
+        repo.afterFetchHook = { podcast -> scriptureIndexer.tagPodcast(podcast) }
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                StartupTimings.phase("scripture_kabod_backfill") {
+                    scriptureIndexer.backfillFromKabod()
+                }
+            } catch (e: Exception) {
+                System.err.println("Scripture kabod-backfill failed: ${e.message}")
+            }
+            // Tag any already-cached podcasts so the Bible index is
+            // populated even if the user hasn't refreshed since
+            // installing this version. Awaits disk hydration first; the
+            // afterFetchHook will tag any subsequent network refreshes.
+            try {
+                StartupTimings.phase("scripture_warm_tag") {
+                    repo.hydrateFromDisk()
+                    for (pod in repo.allCached()) {
+                        scriptureIndexer.tagPodcast(pod)
+                    }
+                }
+            } catch (e: Exception) {
+                System.err.println("Scripture warm-tag failed: ${e.message}")
+            }
         }
 
         // Warm up the lazy `downloads` / `downloadsApi` properties on a
