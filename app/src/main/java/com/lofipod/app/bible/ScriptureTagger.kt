@@ -91,20 +91,15 @@ object ScriptureTagger {
     private const val GROUP_END_CH = "endCh"
     private const val GROUP_END_V = "endV"
 
-    /**
-     * Map every alias (canonical name + each entry in `book.aliases`) to
-     * the canonical book name. Keys are normalized via [normalizeAlias]
-     * so "1Jn", "1 Jn", "I Jn" all map to "1 John". Values are the
-     * canonical names (as in [BibleCanon.BOOKS]).
-     */
-    private val aliasMap: Map<String, String> = buildMap {
-        for (book in BibleCanon.BOOKS) {
-            val all = listOf(book.canonicalName) + book.aliases
-            for (alias in all) {
-                put(normalizeAlias(alias), book.canonicalName)
-            }
-        }
-    }
+    // Order matters: regex constants must be declared BEFORE [aliasMap]
+    // because [aliasMap]'s initializer calls [normalizeAlias], which
+    // reads these. Kotlin `object` member initialization runs in
+    // declaration order; a forward reference returns null and the
+    // function NPEs inside the static initializer (= class fails to
+    // load with ExceptionInInitializerError, not just a runtime NPE).
+    private val romanLeadingPattern = Regex("^(iii|ii|i)(?=\\s|[a-z])")
+    private val whitespaceCollapsePattern = Regex("\\s+")
+    private val numericPrefixPattern = Regex("^([123])(?=[a-z])")
 
     /** Normalize an alias for map lookup: lowercase, collapse whitespace,
      *  Roman numeral I/II/III to 1/2/3. */
@@ -121,16 +116,29 @@ object ScriptureTagger {
             }
         }
         // Collapse interior whitespace.
-        out = out.replace(Regex("\\s+"), " ")
+        out = whitespaceCollapsePattern.replace(out, " ")
         // Drop the space between leading digit and book name: "1 john" -> "1 john" stays,
         // "1john" gets a space inserted: "1john" -> "1 john".
         // Tagger itself handles both forms via aliases, so we only need to
         // canonicalize for map lookup.
-        out = out.replace(Regex("^([123])(?=[a-z])"), "$1 ")
+        out = numericPrefixPattern.replace(out, "$1 ")
         return out
     }
 
-    private val romanLeadingPattern = Regex("^(iii|ii|i)(?=\\s|[a-z])")
+    /**
+     * Map every alias (canonical name + each entry in `book.aliases`) to
+     * the canonical book name. Keys are normalized via [normalizeAlias]
+     * so "1Jn", "1 Jn", "I Jn" all map to "1 John". Values are the
+     * canonical names (as in [BibleCanon.BOOKS]).
+     */
+    private val aliasMap: Map<String, String> = buildMap {
+        for (book in BibleCanon.BOOKS) {
+            val all = listOf(book.canonicalName) + book.aliases
+            for (alias in all) {
+                put(normalizeAlias(alias), book.canonicalName)
+            }
+        }
+    }
 
     /**
      * The mega-regex. Matches any book alias followed by REQUIRED
