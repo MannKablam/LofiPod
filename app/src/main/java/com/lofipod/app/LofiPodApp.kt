@@ -24,10 +24,19 @@ class LofiPodApp : Application() {
         private set
     lateinit var db: AppDatabase
         private set
-    lateinit var downloads: DownloadHolder
-        private set
-    lateinit var downloadsApi: Downloads
-        private set
+    /**
+     * Lazy because `SimpleCache`'s constructor synchronously scans the
+     * download directory — for users with many downloaded episodes on
+     * slow eMMC this can take seconds and visibly delays first-frame
+     * render if done eagerly in [onCreate]. Deferred to first access;
+     * a background coroutine in [onCreate] warms it up off-thread so the
+     * typical first access (PlaybackService.onCreate or the first UI
+     * collect of `byId`) finds it ready.
+     */
+    val downloads: DownloadHolder by lazy { DownloadHolder(this) }
+    val downloadsApi: Downloads by lazy {
+        Downloads(this, downloads.downloadManager, db.autoDownloadDao())
+    }
     lateinit var kabodLoader: KabodAssetLoader
         private set
     lateinit var transcripts: TranscriptRepository
@@ -38,11 +47,24 @@ class LofiPodApp : Application() {
         instance = this
         repo = PodcastRepository(this)
         db = AppDatabase.get(this)
-        downloads = DownloadHolder(this)
-        downloadsApi = Downloads(this, downloads.downloadManager, db.autoDownloadDao())
         kabodLoader = KabodAssetLoader(this, db)
         repo.kabodLoader = kabodLoader
         transcripts = TranscriptRepository(db)
+
+        // Warm up the lazy `downloads` / `downloadsApi` properties on a
+        // background thread. The expensive bits — SimpleCache's directory
+        // scan + Downloads' refreshAll over the download index — run here
+        // in parallel with MainActivity init, so the user sees the
+        // Catalog screen render immediately instead of waiting on disk
+        // I/O. A read of `byId.value` is enough to trigger the full chain
+        // (downloadsApi → downloads.downloadManager → cache).
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                downloadsApi.byId.value
+            } catch (e: Exception) {
+                System.err.println("Downloads warmup failed: ${e.message}")
+            }
+        }
 
         // Coil's default OkHttp uses a generic UA that some podcast art hosts (e.g.
         // cloudfront fronts) reject. Force the same browser-ish UA we use for feed

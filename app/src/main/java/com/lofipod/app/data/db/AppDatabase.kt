@@ -286,7 +286,29 @@ interface AutoDownloadDao {
             "AND e.lastPlayedMillis > 0 " +
             "AND e.lastPlayedMillis < :cutoffMs"
     )
-    suspend fun expiringGuids(cutoffMs: Long): List<String>
+    suspend fun expiringFinishedGuids(cutoffMs: Long): List<String>
+
+    /**
+     * GUIDs of auto-download rows whose corresponding episode has NOT
+     * finished playing AND has been idle for [cutoffMs] milliseconds.
+     * "Idle" = max(auto_download.createdAt, episode_state.lastPlayedMillis)
+     * is older than the cutoff — so the clock starts ticking from
+     * whichever was most recent (the auto-download fire, or the user's
+     * last playback tick). Catches both "never started" auto-downloads
+     * (lastPlayedMillis = 0, clock = createdAt) and "started but
+     * abandoned" ones (clock = last play tick).
+     *
+     * SQLite's `max(x, y)` is scalar (largest of the arguments per row),
+     * not the aggregate `MAX(x)`. Confusing naming but unambiguous in
+     * context.
+     */
+    @Query(
+        "SELECT a.guid FROM auto_download a " +
+            "INNER JOIN episode_state e ON a.guid = e.guid " +
+            "WHERE NOT (e.durationMs > 0 AND e.positionMs >= e.durationMs - 5000) " +
+            "AND max(a.createdAt, e.lastPlayedMillis) < :cutoffMs"
+    )
+    suspend fun expiringUnfinishedGuids(cutoffMs: Long): List<String>
 }
 
 @Database(
