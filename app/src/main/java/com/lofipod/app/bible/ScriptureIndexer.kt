@@ -73,12 +73,11 @@ class ScriptureIndexer(
                 // Authoritative — leave alone.
                 continue
             }
-            val ref = ScriptureTagger.detect(ep.title, ep.description) ?: run {
-                // No detection. If a stale rss-* row exists from a prior
-                // tagger pass, leave it — could be deliberate user edit
-                // in the future. (Currently no UI for that, but harmless.)
-                continue
-            }
+            // No detection: leave any stale rss-* row from a prior tagger
+            // pass alone (could be a deliberate user edit in the future;
+            // currently no UI for that, but harmless).
+            val ref = ScriptureTagger.detect(ep.title, ep.description)
+            if (ref == null) continue
             // Skip if the detected book isn't canonical (shouldn't happen
             // because the regex is built from BibleCanon, but defensive).
             if (ref.book !in BibleCanon.BY_NAME) continue
