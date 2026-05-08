@@ -35,11 +35,22 @@ class CatalogViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * If [force] is false (the default for init / lifecycle revival), short-circuit
-     * to whatever the in-memory [PodcastRepository] cache has — no network hit and
-     * no "loading feeds" flicker on navigation back into Catalog, even if the VM
-     * was rebuilt by the framework. Refresh from the overflow menu sets force=true
-     * to actually re-pull.
+     * Stale-while-revalidate. On any call (init or refresh), surface
+     * whatever the in-memory + disk caches hold IMMEDIATELY so the
+     * Catalog renders without waiting on the network. Then trigger a
+     * network refresh in the background and update the UI when each
+     * feed lands.
+     *
+     * The disk cache (populated by [PodcastRepository.diskCache] writes
+     * on each successful fetchOne) means a cold start renders the
+     * Catalog from disk in milliseconds — no more "loading feeds"
+     * stall while every RSS gets re-fetched, which on slower devices
+     * (Pixel 7 reports) was taking long enough to feel broken.
+     *
+     * [force] is now informational only — we always refresh, and the
+     * cached snapshot always shows first if non-empty. Kept as a param
+     * so the overflow-menu Refresh action explicitly says "refresh now"
+     * without changing behaviour.
      */
     private suspend fun loadCanon(force: Boolean) {
         val sources = Sources.ALL
@@ -47,17 +58,34 @@ class CatalogViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = CatalogUiState()
             return
         }
-        if (!force) {
-            val cached = sources.mapNotNull { repo.cached(it.feedUrl) }
-            if (cached.size == sources.size) {
-                _state.value = CatalogUiState(podcasts = cached)
-                return
-            }
+        // 1) Hydrate the in-memory cache from disk (idempotent — first
+        //    call reads the JSON files, subsequent calls are no-ops).
+        repo.hydrateFromDisk()
+        // 2) Surface whatever's cached right now. Even partial coverage
+        //    is better than blank: render what we have, mark loading
+        //    only for sources we don't have yet.
+        val cachedNow = sources.mapNotNull { repo.cached(it.feedUrl) }
+        if (cachedNow.isNotEmpty()) {
+            _state.value = CatalogUiState(
+                podcasts = cachedNow,
+                loading = cachedNow.size < sources.size,
+                feedProgress = sources.map { src ->
+                    val cached = repo.cached(src.feedUrl)
+                    FeedLoadStatus(
+                        source = src,
+                        status = if (cached != null) FeedStatus.OK else FeedStatus.LOADING,
+                        errorMessage = null,
+                    )
+                }
+            )
+        } else {
+            _state.value = CatalogUiState(
+                loading = true,
+                feedProgress = sources.map { FeedLoadStatus(it, FeedStatus.LOADING) }
+            )
         }
-        _state.value = CatalogUiState(
-            loading = true,
-            feedProgress = sources.map { FeedLoadStatus(it, FeedStatus.LOADING) }
-        )
+        // 3) Network refresh in the background. Updates per-feed status
+        //    as each one lands, replacing cached versions with fresh ones.
         try {
             val pods = repo.fetchFeeds(sources) { src, status, err ->
                 _state.update { current ->
@@ -72,7 +100,13 @@ class CatalogViewModel(app: Application) : AndroidViewModel(app) {
             }
             _state.value = CatalogUiState(podcasts = pods)
         } catch (e: Exception) {
-            _state.value = CatalogUiState(error = e.message ?: "Failed to load")
+            // If we have cached content, keep showing it and surface the
+            // error in feedProgress instead of wiping the screen.
+            if (cachedNow.isNotEmpty()) {
+                _state.update { it.copy(loading = false, error = e.message) }
+            } else {
+                _state.value = CatalogUiState(error = e.message ?: "Failed to load")
+            }
         }
     }
 }
