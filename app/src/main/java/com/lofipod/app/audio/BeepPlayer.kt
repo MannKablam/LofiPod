@@ -148,9 +148,11 @@ class BeepPlayer(private val player: Player) {
             val buf = ShortArray(numSamples)
             val period = sampleRate.toDouble() / freqHz
             val rampSamples = (sampleRate * 0.005).toInt().coerceAtLeast(1)  // 5 ms
-            // 0.5 amplitude (~-6 dBFS) — calibrated against the prior 0.85
-            // peak which read too hot vs. typical podcast loudness.
-            val sustainPeak = 0.5
+            // 0.2 amplitude (~-14 dBFS) — calibrated by ear vs. typical
+            // podcast loudness. The 0.85 default was startling-loud; 0.5
+            // was still too hot; 0.2 sits ~10 dB below the limited podcast
+            // peak so it reads as a notification chime instead of an alarm.
+            val sustainPeak = 0.2
             for (i in 0 until numSamples) {
                 // Square wave value at this position (±1.0).
                 val phase = (i % period.toInt()).toDouble() / period

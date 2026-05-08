@@ -141,7 +141,90 @@ class PlayerController(private val context: Context) {
                     pushState()
                 }
             }
+            // Cold-start restore: if the session has nothing loaded after the
+            // sync settles, surface the last-played episode (paused) so the
+            // mini-player + Player screen show "where I left off" without
+            // making the user re-navigate from the catalog. Delay slightly
+            // past the sync window above so we don't fire when the service
+            // is still hydrating its own state.
+            scope.launch {
+                kotlinx.coroutines.delay(900)
+                if (controller == null) return@launch
+                if (pendingPlay != null) return@launch  // user already wants something specific
+                restoreLastEpisodeIfNeeded()
+            }
         }, MoreExecutors.directExecutor())
+    }
+
+    /**
+     * Cold-start restore. If the MediaController has no current item AND
+     * episode_state has a most-recently-played row, load that episode at
+     * its saved position WITHOUT auto-playing. Result: the mini-player and
+     * Player screen both show the last episode in paused state, ready to
+     * resume on tap. No-op if the session already has an item (warm
+     * reconnect after activity recreate) or if no episode has ever been
+     * played on this install.
+     *
+     * Side-effect-light vs [playEpisode]: skips the autoplay timer, the
+     * auto-download trigger, and the feed-visit upsert — those are signals
+     * of an active "user started playing this" event, not a passive
+     * restore.
+     */
+    private fun restoreLastEpisodeIfNeeded() {
+        val c = controller ?: return
+        if (c.currentMediaItem != null) return
+        scope.launch {
+            val state = withContext(Dispatchers.IO) { dao.mostRecentlyPlayed() }
+                ?: return@launch
+            if (controller == null) return@launch
+            // Reuse the episode_state row to reconstruct the Episode (same
+            // pattern as [episodeFromState]). Description / pubDate / mime
+            // / duration aren't persisted there but Player only needs the
+            // identity + uri + display metadata to render correctly.
+            val ep = Episode(
+                guid = state.guid,
+                feedUrl = state.feedUrl,
+                title = state.title,
+                description = null,
+                pubDateMillis = null,
+                audioUrl = state.audioUrl,
+                audioMimeType = null,
+                durationSeconds = null,
+                episodeArtworkUrl = state.artworkUrl,
+            )
+            // Treat positions within the last 5s of duration as "played" —
+            // start from 0 if the user finished it, otherwise resume at
+            // saved position. Mirrors the same logic in [playEpisode].
+            val startPos = if (state.durationMs > 0 && state.positionMs >= state.durationMs - 5_000) {
+                0L
+            } else {
+                state.positionMs
+            }
+            val art = ep.episodeArtworkUrl
+            val item = MediaItem.Builder()
+                .setMediaId(ep.guid)
+                .setUri(ep.audioUrl)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(ep.title)
+                        .setArtist("")
+                        .setArtworkUri(art?.let { android.net.Uri.parse(it) })
+                        .build()
+                )
+                .build()
+            // Same dual-form setMediaItem pattern as [playEpisode] —
+            // bundling a non-zero seek into setMediaItem races against
+            // prepare on a fresh service start. With startPos 0 we use the
+            // single-arg form.
+            if (startPos > 0L) {
+                c.setMediaItem(item, startPos)
+            } else {
+                c.setMediaItem(item)
+            }
+            c.prepare()
+            // Explicit: do NOT call play(). The user wants the episode
+            // surfaced, not auto-resumed.
+        }
     }
 
     fun release() {

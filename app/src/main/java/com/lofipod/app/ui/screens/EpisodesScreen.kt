@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.*
@@ -134,6 +135,26 @@ fun EpisodesScreen(
         }
     }
 
+    // Scroll-to-now-playing on entry. One-shot per screen instance: when the
+    // visible list first contains the current episode (paused or playing),
+    // animate to its position. Subsequent scrolls aren't auto-driven — once
+    // the user has been pointed at the right row, manual scrolling owns the
+    // viewport. Keys on size + currentEpisodeGuid because the filtered list's
+    // identity changes every recomposition; size is a stable proxy for "list
+    // contents settled."
+    val listState = rememberLazyListState()
+    var didInitialScroll by remember { mutableStateOf(false) }
+    LaunchedEffect(visibleEpisodes.size, playerState.currentEpisodeGuid) {
+        if (didInitialScroll) return@LaunchedEffect
+        val guid = playerState.currentEpisodeGuid ?: return@LaunchedEffect
+        if (visibleEpisodes.isEmpty()) return@LaunchedEffect
+        val idx = visibleEpisodes.indexOfFirst { it.guid == guid }
+        if (idx >= 0) {
+            listState.animateScrollToItem(idx)
+            didInitialScroll = true
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -188,6 +209,7 @@ fun EpisodesScreen(
             return@Scaffold
         }
         LazyColumn(
+            state = listState,
             modifier = Modifier.padding(padding),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
