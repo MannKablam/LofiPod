@@ -2,6 +2,38 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix: auto-download fires immediately at play time, not deferred
+
+User report: manual downloads work after the v0.6.5 `resumeDownloads()`
+fix, but auto-download for the currently-playing episode never fires
+and "some downloads are hit/miss." Root cause was the v0.5.9 deferred-
+fire design: `playEpisode` would write an `auto_download` row but NOT
+call `addDownload` until the user transitioned away (track switch or
+`STATE_ENDED`). The original justification was "avoid simultaneous HTTP
+fetches that cause spinner-forever-no-progress" — but that symptom was
+actually `downloadsPaused = true` (the v0.6.5 fix). The deferred design
+was a workaround for the wrong diagnosis, and it broke the most common
+listening pattern: play one episode and listen straight through.
+
+That's also the "hit/miss" pattern: episodes the user happened to skip
+or transition off of got auto-downloaded; episodes they listened all
+the way through (or paused on indefinitely) did not.
+
+`DownloadManager` and `CacheDataSource` already share the same
+`SimpleCache`, so firing `addDownload` immediately doesn't double-fetch
+overlapping byte ranges — they coordinate through cache spans.
+
+Fix: in `PlayerController.playEpisode`, when the episode has no current
+Download (or the prior one is STATE_FAILED), insert the auto_download
+row AND call `app.downloadsApi.start(ep)` inline. The existing
+`fireDeferredAutoDownload` calls on STATE_ENDED + track-out remain as
+no-op safety nets (addDownload is idempotent against existing requests),
+and the orphan-sweep on connect handles legacy rows from before this
+fix. STATE_FAILED treatment is new: a previously-failed auto-download
+gets a fresh attempt on replay rather than silently staying broken.
+
+ai_contamination: true # claude opus 4.7
+
 ## Fix: downloads stuck in STATE_QUEUED — call `resumeDownloads()` at startup
 
 Root cause of the long-standing "downloads don't actually download" bug
