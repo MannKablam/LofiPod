@@ -9,6 +9,7 @@ import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.offline.DownloadManager
+import com.lofipod.app.diagnostics.StartupTimings
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.Executors
@@ -37,23 +38,34 @@ class DownloadHolder(context: Context) {
 
     private val downloadDirectory: File = File(context.filesDir, "downloads").apply { mkdirs() }
 
-    val databaseProvider: StandaloneDatabaseProvider = StandaloneDatabaseProvider(context)
+    val databaseProvider: StandaloneDatabaseProvider = StartupTimings.phase("download_db_provider") {
+        StandaloneDatabaseProvider(context)
+    }
 
-    val cache: SimpleCache = SimpleCache(
-        downloadDirectory,
-        NoOpCacheEvictor(),     // never evict — user manages downloads explicitly
-        databaseProvider
-    )
+    val cache: SimpleCache = StartupTimings.phase("simple_cache_init") {
+        // Slow on devices with many downloaded files; the constructor
+        // synchronously scans the entire download directory + cross-
+        // references with the cache db. Surfaced in the Startup section
+        // of the diagnostics screen so a slow user can see "is this what
+        // ate my cold-start time?"
+        SimpleCache(
+            downloadDirectory,
+            NoOpCacheEvictor(),     // never evict — user manages downloads explicitly
+            databaseProvider
+        )
+    }
 
-    val downloadManager: DownloadManager = DownloadManager(
-        context,
-        databaseProvider,
-        cache,
-        httpDataSourceFactory,
-        Executors.newFixedThreadPool(2)
-    ).apply {
-        // Allow up to 2 concurrent downloads; podcast episodes are typically <100 MB each.
-        maxParallelDownloads = 2
+    val downloadManager: DownloadManager = StartupTimings.phase("download_manager_init") {
+        DownloadManager(
+            context,
+            databaseProvider,
+            cache,
+            httpDataSourceFactory,
+            Executors.newFixedThreadPool(2)
+        ).apply {
+            // Allow up to 2 concurrent downloads; podcast episodes are typically <100 MB each.
+            maxParallelDownloads = 2
+        }
     }
 
     /** Cache-first DataSource.Factory for ExoPlayer. */

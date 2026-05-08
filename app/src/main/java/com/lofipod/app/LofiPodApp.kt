@@ -11,6 +11,7 @@ import com.lofipod.app.data.PodcastRepository
 import com.lofipod.app.data.Settings
 import com.lofipod.app.data.TranscriptRepository
 import com.lofipod.app.data.db.AppDatabase
+import com.lofipod.app.diagnostics.StartupTimings
 import com.lofipod.app.update.UpdateWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,13 +44,18 @@ class LofiPodApp : Application() {
         private set
 
     override fun onCreate() {
+        val tOnCreate = System.nanoTime()
         super.onCreate()
         instance = this
-        repo = PodcastRepository(this)
-        db = AppDatabase.get(this)
-        kabodLoader = KabodAssetLoader(this, db)
+        repo = StartupTimings.phase("repo_init") { PodcastRepository(this) }
+        db = StartupTimings.phase("db_get") { AppDatabase.get(this) }
+        kabodLoader = StartupTimings.phase("kabod_loader_init") {
+            KabodAssetLoader(this, db)
+        }
         repo.kabodLoader = kabodLoader
-        transcripts = TranscriptRepository(db)
+        transcripts = StartupTimings.phase("transcripts_init") {
+            TranscriptRepository(db)
+        }
 
         // Warm up the lazy `downloads` / `downloadsApi` properties on a
         // background thread. The expensive bits — SimpleCache's directory
@@ -60,7 +66,9 @@ class LofiPodApp : Application() {
         // (downloadsApi → downloads.downloadManager → cache).
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                downloadsApi.byId.value
+                StartupTimings.phase("downloads_warmup") {
+                    downloadsApi.byId.value
+                }
             } catch (e: Exception) {
                 System.err.println("Downloads warmup failed: ${e.message}")
             }
@@ -99,11 +107,17 @@ class LofiPodApp : Application() {
         // even if the asset list grows.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                kabodLoader.installBundled()
+                StartupTimings.phase("kabod_install_bundled") {
+                    kabodLoader.installBundled()
+                }
             } catch (e: Exception) {
                 System.err.println("Kabod bundle install failed: ${e.message}")
             }
         }
+        // Bookend marker for the synchronous portion of onCreate. Anything
+        // after this still happens (Coil setup, background launches), but
+        // the MAIN-THREAD blocking is bounded by this timestamp.
+        StartupTimings.record("application_oncreate", tOnCreate)
     }
 
     companion object {
