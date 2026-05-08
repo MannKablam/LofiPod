@@ -2,6 +2,30 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix: downloads stuck in STATE_QUEUED — call `resumeDownloads()` at startup
+
+Root cause of the long-standing "downloads don't actually download" bug
+that survived v0.5.6 (bypass DownloadService.sendAddDownload), v0.5.x
+(deferred auto-download), and v0.6.4 (remove the `<service>` declaration
+entirely). Per Media3 1.4.1's `DownloadManager.java` javadoc: "Normally
+a download manager should be accessed via a `DownloadService`. When a
+download manager is used directly instead, **downloads will be initially
+paused and so must be resumed by calling `resumeDownloads()`**." The
+field `downloadsPaused = true` by default in the constructor; we never
+flipped it. Every `addDownload()` we issued landed in STATE_QUEUED and
+stayed there because `canStartDownloads()` gates on `!downloadsPaused`.
+
+Fix: one-line `resumeDownloads()` call right after the DownloadManager
+is constructed in `DownloadHolder`. The flip persists across the
+manager's lifetime — subsequent `addDownload()` calls auto-start once
+`Requirements.NETWORK` is satisfied (which the manager's internal
+`RequirementsWatcher` tracks regardless of whether a `DownloadService`
+is alive). No service re-introduction needed, so the
+`ForegroundServiceStartNotAllowedException` crash that drove the v0.6.4
+manifest change stays gone.
+
+ai_contamination: true # claude opus 4.7
+
 ## DSP polish: 128-tap oversampler FIR + Kaiser-windowed linear-phase kernel
 
 Two pure-quality bumps to the audiophile chain. No behavior change beyond
