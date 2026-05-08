@@ -73,6 +73,16 @@ class Downloads(
                 _byId.value = _byId.value.toMutableMap().apply {
                     put(download.request.id, download)
                 }
+                // Surface STATE_FAILED + finalException to the diagnostics
+                // screen so the user can see "why didn't this download" at
+                // a glance instead of just an error icon on the row.
+                if (download.state == Download.STATE_FAILED) {
+                    val reason = finalException?.let {
+                        "${it.javaClass.simpleName}: ${it.message ?: "(no message)"}"
+                    } ?: "STATE_FAILED (no exception attached)"
+                    com.lofipod.app.diagnostics.AppDiagnostics
+                        .recordDownloadFailure(download.request.id, reason)
+                }
             }
 
             override fun onDownloadRemoved(downloadManager: DownloadManager, download: Download) {
@@ -110,6 +120,8 @@ class Downloads(
             // index is in a bad state. We'd rather log and continue
             // playback than crash the play action.
             Log.e(TAG, "addDownload(${ep.guid}) failed", t)
+            com.lofipod.app.diagnostics.AppDiagnostics
+                .recordDownloadFailure(ep.guid, "addDownload threw: ${t.javaClass.simpleName} ${t.message ?: ""}")
         }
     }
 
@@ -118,6 +130,8 @@ class Downloads(
             manager.removeDownload(episodeGuid)
         } catch (t: Throwable) {
             Log.e(TAG, "removeDownload($episodeGuid) failed", t)
+            com.lofipod.app.diagnostics.AppDiagnostics
+                .recordDownloadFailure(episodeGuid, "removeDownload threw: ${t.javaClass.simpleName} ${t.message ?: ""}")
         }
         // Always cleanup any auto_download row so the table doesn't accumulate
         // stale entries — irrespective of whether this removal was a manual

@@ -2,6 +2,72 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.6.4 — XML rescue + chapter-level Bible index + AppDiagnostics screen
+
+Five fixes addressing user-reported issues from the v0.6.3 logs.
+
+**Tolerant XML retry on bare ampersands.** CCM's two Sunday-service
+feeds emit `<title>Q&A on Romans</title>`-style content without
+`&amp;` escaping; strict XmlPullParser dies with "unterminated entity
+ref." `RssParser` now reads the whole stream up front, parses
+strictly, and on failure retries with a sanitized copy where bare
+`&` are replaced with `&amp;`. Negative-lookahead in the regex skips
+already-escaped entities (`&amp;`, `&#39;`, `&#x27;`) so we don't
+double-encode. Doesn't fix unclosed tags / mismatched quotes — those
+re-throw and surface as feed failures. Rescue events get a row in
+`AppDiagnostics` so it's visible the feed needed help.
+
+**Chapter-level Bible index.** Per user feedback that verse-level
+was too sparse to navigate (most RSS auto-tagging only nails
+chapter precision), the verse-grid step was dropped. Flow is now
+Book grid -> Chapter grid -> Sermons-for-chapter. Chapter-level
+matches what the tagger can reliably extract and what users want
+to scrub through.
+
+**Coverage-bug fix.** Books were rendering highlighted in the grid
+even when no underlying row had a chapter — tapping the book
+showed an empty chapter grid. Root cause: `loadCoverage` was
+incrementing `bookCounts` for every row in `episode_scripture`,
+including rows where `startCh` was null (e.g., a Kabod entry with
+`scriptureBook` set but no chapter, or a degenerate regex hit).
+Fixed: a row only counts toward the book if it has a non-null
+`startCh`. No more "highlighted but empty" books.
+
+**First-50-words description scan.** ScriptureTagger.detect now
+slices the description to its first 50 whitespace-separated tokens
+(after stripping HTML-ish `<...>` runs) before regex scanning. A
+sermon's description usually opens with a single explicit citation
+("In this sermon, Pastor expounds Romans 8:28-30...") and then
+drifts into broader themes that incidentally mention many verses.
+Scanning the whole description was picking up incidental mentions
+and yielding wrong primary tags.
+
+**LofiPodDownloadService removed from manifest.** v0.5.6 stopped
+routing through the service (DownloadManager.addDownload directly).
+But Media3's internals can still bind a registered service from
+cached download intents on app start, which on Android 12+/14+/15
+crashes with ForegroundServiceStartNotAllowedException — visible in
+recent Pixel logs even though our code doesn't invoke the service.
+Solution: comment out the `<service>` declaration + the
+`FOREGROUND_SERVICE_DATA_SYNC` permission. With no manifest entry,
+the OS can't bind. The .kt file stays per EFFICIENCY_REVIEW notes
+as a hatch for future reactivation with a proper Scheduler + UIDT.
+
+**New AppDiagnostics infrastructure + screen.** Sister to
+StartupTimings (which tracks timing); this one captures errors and
+notable events across subsystems. Categories: feed failures, feed
+rescues (tolerant XML pass needed), download failures (both
+synchronous throws from `addDownload`/`removeDownload` and the
+async STATE_FAILED listener path), scripture-tag skips, generic
+"other." Bounded ring buffer per category (50 entries) so a noisy
+subsystem can't push out signal from quiet ones. New
+`AppDiagnosticsScreen` lists entries by category newest-first,
+copy-to-clipboard per category. Settings -> "App diagnostics
+(bugs)" entry routes here. Lets a user with a misbehaving build
+capture concrete data rather than "it didn't work."
+
+ai_contamination: true # claude opus 4.7
+
 ## v0.6.0 — Canonical Bible index + scripture-aware smart-queue
 
 The categorical level-up: the app is no longer just "podcasts organized

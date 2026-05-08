@@ -142,11 +142,16 @@ class PodcastRepository(
                             onProgress(src, FeedStatus.OK, null)
                         } else {
                             onProgress(src, FeedStatus.TIMEOUT, "Timed out after 60s")
+                            com.lofipod.app.diagnostics.AppDiagnostics
+                                .recordFeedFailure(src.feedUrl, "Timed out after 60s")
                         }
                         pod
                     } catch (e: Exception) {
                         System.err.println("Feed failed: ${src.feedUrl} -> ${e.message}")
-                        onProgress(src, FeedStatus.FAILED, e.message ?: e.javaClass.simpleName)
+                        val msg = e.message ?: e.javaClass.simpleName
+                        onProgress(src, FeedStatus.FAILED, msg)
+                        com.lofipod.app.diagnostics.AppDiagnostics
+                            .recordFeedFailure(src.feedUrl, msg)
                         null
                     }
                 }

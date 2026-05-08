@@ -43,12 +43,17 @@ import kotlinx.coroutines.withContext
 /**
  * Canon-order Bible-index browse. Logos-style. Tier hierarchy:
  *
- *   Books (color-coded grid)
+ *   Books (color-coded grid by canonical group, grayed when no coverage)
  *     -> Chapters (numeric grid, grayed when no coverage)
- *       -> Verses (numeric grid, grayed when no coverage)
- *         -> Sermons covering that verse, with a "Play through from here"
- *            affordance that flips the canon-order autoplay flag and
- *            starts the chosen episode.
+ *       -> Sermons covering that chapter, with a "Play through from here"
+ *          affordance that flips the canon-order autoplay flag and
+ *          starts the chosen episode.
+ *
+ * v0.6.4 dropped the verse-grid layer that originally sat between
+ * chapter and sermons — verse-level coverage was too sparse to be
+ * useful given the description-only chapter detection most RSS feeds
+ * provide. Chapter-level granularity matches what the auto-tagger can
+ * reliably extract and what users want to navigate by.
  *
  * Excluded feeds (per [Settings.canonBrowseExcludedFeeds]) are filtered
  * out of the coverage data so the user can hide noisy or off-topic
@@ -65,7 +70,6 @@ fun CanonBrowseScreen(
     val scope = rememberCoroutineScope()
 
     val excluded by settings.canonBrowseExcludedFeeds.collectAsState(initial = emptySet())
-    val playerState by controller.state.collectAsState()
 
     // Coverage is loaded once per (excluded, refreshTick) and grouped by book.
     // Tick bumps when the user comes back from playing something or toggles
@@ -91,8 +95,7 @@ fun CanonBrowseScreen(
                         when {
                             path.book == null -> "Bible index"
                             path.chapter == null -> path.book!!.canonicalName
-                            path.verse == null -> "${path.book!!.canonicalName} ${path.chapter}"
-                            else -> "${path.book!!.canonicalName} ${path.chapter}:${path.verse}"
+                            else -> "${path.book!!.canonicalName} ${path.chapter}"
                         }
                     )
                 },
@@ -141,16 +144,9 @@ fun CanonBrowseScreen(
                     cov = cov,
                     onChapterTap = { ch -> path = path.copy(chapter = ch) },
                 )
-                path.verse == null -> VerseGrid(
+                else -> SermonsForChapter(
                     book = path.book!!,
                     chapter = path.chapter!!,
-                    cov = cov,
-                    onVerseTap = { v -> path = path.copy(verse = v) },
-                )
-                else -> SermonsForVerse(
-                    book = path.book!!,
-                    chapter = path.chapter!!,
-                    verse = path.verse!!,
                     onPlayCanonOrder = { episode ->
                         scope.launch {
                             withContext(Dispatchers.IO) {
@@ -204,11 +200,9 @@ fun CanonBrowseScreen(
 private data class BrowsePath(
     val book: BibleCanon.Book? = null,
     val chapter: Int? = null,
-    val verse: Int? = null,
 ) {
     fun isEmpty(): Boolean = book == null
     fun pop(): BrowsePath = when {
-        verse != null -> copy(verse = null)
         chapter != null -> copy(chapter = null)
         else -> empty()
     }
@@ -217,15 +211,15 @@ private data class BrowsePath(
 
 /**
  * Per-feed-excluded coverage snapshot. Built once per filter change, then
- * the grids consult the maps directly without re-querying the DB.
+ * the grids consult the maps directly without re-querying the DB. v0.6.4
+ * dropped the verse-grid layer per user feedback (verse-level was too
+ * sparse to be useful given description-only chapter detection).
  */
 private data class Coverage(
-    /** book canonical name → number of episodes covering ANY verse of that book. */
+    /** book canonical name → number of chapter-resolved episodes for that book. */
     val bookCounts: Map<String, Int>,
     /** book → set of chapter numbers with at least one covered episode. */
     val chaptersByBook: Map<String, Set<Int>>,
-    /** (book, chapter) → set of verse start numbers with coverage. */
-    val versesByChapter: Map<Pair<String, Int>, Set<Int>>,
 )
 
 private suspend fun loadCoverage(app: LofiPodApp, excluded: Set<String>): Coverage {
@@ -239,28 +233,21 @@ private suspend fun loadCoverage(app: LofiPodApp, excluded: Set<String>): Covera
     val filtered = if (excludedGuids.isEmpty()) all else all.filter { it.guid !in excludedGuids }
     val bookCounts = HashMap<String, Int>()
     val chapters = HashMap<String, MutableSet<Int>>()
-    val verses = HashMap<Pair<String, Int>, MutableSet<Int>>()
     for (row in filtered) {
-        bookCounts[row.book] = (bookCounts[row.book] ?: 0) + 1
-        // Range expansion: a row that covers Romans 8:1-11 should mark
-        // chapter 8 (and verses 1..11) as covered. Capping at startCh
-        // alone would miss multi-chapter spans; we expand from start to
-        // end where both sides are known.
+        // A book only "counts" (= renders highlighted in the book grid)
+        // when it has a chapter-resolved row. Without this guard, a row
+        // that detected a book name but no chapter (e.g., a Kabod pack
+        // where scriptureStartCh was null, or a sloppy regex hit) would
+        // mark the book as covered but every chapter cell stays gray —
+        // user reports tapping a "highlighted" book and seeing nothing.
         val sCh = row.startCh ?: continue
         val eCh = row.endCh ?: sCh
+        bookCounts[row.book] = (bookCounts[row.book] ?: 0) + 1
         for (ch in sCh..eCh) {
             chapters.getOrPut(row.book) { mutableSetOf() }.add(ch)
-            val sV = if (ch == sCh) row.startV else 1
-            val eV = if (ch == eCh) row.endV else BibleCanon.BY_NAME[row.book]?.versesIn(ch) ?: 1
-            if (sV != null && eV != null) {
-                val set = verses.getOrPut(row.book to ch) { mutableSetOf() }
-                for (v in sV..eV) set.add(v)
-            } else if (sV != null) {
-                verses.getOrPut(row.book to ch) { mutableSetOf() }.add(sV)
-            }
         }
     }
-    return Coverage(bookCounts, chapters, verses)
+    return Coverage(bookCounts, chapters)
 }
 
 @Composable
@@ -341,34 +328,6 @@ private fun ChapterGrid(
     }
 }
 
-@Composable
-private fun VerseGrid(
-    book: BibleCanon.Book,
-    chapter: Int,
-    cov: Coverage,
-    onVerseTap: (Int) -> Unit,
-) {
-    val coveredVerses = cov.versesByChapter[book.canonicalName to chapter] ?: emptySet()
-    val baseColor = groupColor(book.group)
-    val verses = book.versesIn(chapter)
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(8),
-        contentPadding = PaddingValues(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        items((1..verses).toList(), key = { it }) { v ->
-            val active = v in coveredVerses
-            NumericCell(
-                label = "$v",
-                active = active,
-                accent = baseColor,
-                onClick = { if (active) onVerseTap(v) },
-            )
-        }
-    }
-}
 
 @Composable
 private fun NumericCell(
@@ -393,25 +352,30 @@ private fun NumericCell(
 }
 
 @Composable
-private fun SermonsForVerse(
+private fun SermonsForChapter(
     book: BibleCanon.Book,
     chapter: Int,
-    verse: Int,
     onPlayCanonOrder: (Episode) -> Unit,
     onPlayOnce: (Episode) -> Unit,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
     var rows by remember { mutableStateOf<List<EnrichedSermon>>(emptyList()) }
-    LaunchedEffect(book, chapter, verse) {
+    LaunchedEffect(book, chapter) {
         rows = withContext(Dispatchers.IO) {
-            val matches = app.db.episodeScriptureDao()
-                .coveringVerse(book.canonicalName, chapter, verse)
-            // Resolve each guid back to its Episode + podcast title via the
-            // PodcastRepository's in-memory cache. Skip rows whose podcast
-            // isn't loaded (rare — usually means a dead feed cache entry).
-            val out = ArrayList<EnrichedSermon>(matches.size)
-            for (m in matches) {
+            // Pull every row tagged for this book; filter to those whose
+            // [startCh, endCh] range overlaps the requested chapter.
+            // Sort by start chapter+verse so the user gets the natural
+            // canonical order — the same order the smart-queue resolver
+            // walks at end-of-stream.
+            val all = app.db.episodeScriptureDao().forBook(book.canonicalName)
+            val inChapter = all.filter { row ->
+                val sCh = row.startCh ?: return@filter false
+                val eCh = row.endCh ?: sCh
+                chapter in sCh..eCh
+            }
+            val out = ArrayList<EnrichedSermon>(inChapter.size)
+            for (m in inChapter) {
                 val state = app.db.episodeStateDao().get(m.guid) ?: continue
                 val podcast: Podcast? = app.repo.cached(state.feedUrl)
                 val ep = podcast?.episodes?.firstOrNull { it.guid == m.guid }
@@ -428,7 +392,7 @@ private fun SermonsForVerse(
     if (rows.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                "No sermons covering this verse yet.",
+                "No sermons covering this chapter yet.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

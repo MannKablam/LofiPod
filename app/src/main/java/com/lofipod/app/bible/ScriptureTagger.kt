@@ -43,14 +43,33 @@ object ScriptureTagger {
     )
 
     /**
-     * Run detection over [title] (preferred) and [description] (fallback).
-     * Returns the highest-confidence match or null.
+     * Run detection over [title] (preferred) and the FIRST 50 WORDS of
+     * [description] (fallback). Returns the highest-confidence match
+     * or null.
+     *
+     * Why first 50 words: a sermon's description often opens with a
+     * single explicit passage citation ("In this sermon, Pastor expounds
+     * Romans 8:28-30...") and then drifts into broader themes that
+     * mention many other verses incidentally. Scanning the whole
+     * description picks up incidental mentions and yields a wrong
+     * primary tag. The first ~50 words is where the discipline of
+     * stating the passage tends to live.
      */
     fun detect(title: String?, description: String?): Reference? {
         // Title first. A successful chapter+verse hit there short-circuits.
         title?.let { findFirst(it, Source.TITLE) }?.let { return it }
-        description?.let { findFirst(it, Source.DESCRIPTION) }?.let { return it }
+        val descPrefix = description?.let { firstNWords(it, 50) }
+        descPrefix?.let { findFirst(it, Source.DESCRIPTION) }?.let { return it }
         return null
+    }
+
+    /** Take the first [n] whitespace-separated tokens of [s], rejoined
+     *  with single spaces. Drops HTML-ish artifacts (bare tags) by
+     *  stripping `<...>` runs first. */
+    private fun firstNWords(s: String, n: Int): String {
+        val stripped = s.replace(Regex("<[^>]+>"), " ")
+        val tokens = stripped.trim().split(Regex("\\s+"))
+        return tokens.take(n).joinToString(" ")
     }
 
     private fun findFirst(text: String, source: Source): Reference? {

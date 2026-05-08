@@ -49,6 +49,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAudioDiagnostics: () -> Unit = {},
     onOpenAudiophileNotes: () -> Unit = {},
+    onOpenAppDiagnostics: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -205,6 +206,13 @@ fun SettingsScreen(
             // math, CPU footprint, and license attribution.
             TextButton(onClick = onOpenAudiophileNotes) {
                 Text("Notes for audiophiles")
+            }
+            // App-wide bug telemetry — feed failures, download failures,
+            // scripture-tag skips, etc. Distinct from Audio diagnostics
+            // (chain-specific). Lands here so a user can capture concrete
+            // data when something breaks instead of "it didn't work."
+            TextButton(onClick = onOpenAppDiagnostics) {
+                Text("App diagnostics (bugs)")
             }
 
             Spacer(Modifier.height(20.dp))

@@ -25,9 +25,44 @@ object RssParser {
     private const val NS_ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 
     fun parse(feedUrl: String, input: InputStream): Podcast {
+        // Read the whole stream so we can retry with a sanitized copy if
+        // strict XML parsing fails. Most feeds parse cleanly on the first
+        // pass; the sanitization pass costs one regex sweep over the
+        // text. Worst-case feed is ~5 MB (Ask Pastor John) — acceptable
+        // memory cost given the alternative is no episodes shown for
+        // bare-ampersand feeds (CCM Sunday-service feeds reproduce this).
+        val raw = input.bufferedReader().use { it.readText() }
+        return try {
+            parseString(feedUrl, raw)
+        } catch (e: org.xmlpull.v1.XmlPullParserException) {
+            // Retry once with a tolerant pass that escapes bare ampersands
+            // (the most common cause: feeds that emit `Q&A` or `Tom & Jerry`
+            // in titles without `&amp;`). Negative lookahead keeps already-
+            // escaped entities (`&amp;`, `&#39;`, `&#x27;`) untouched, so
+            // we don't double-encode. Doesn't fix unclosed tags / bad
+            // quoting; those will re-throw as the upstream feed-failure log
+            // entry. Surface in [com.lofipod.app.diagnostics.AppDiagnostics]
+            // so the user can see which feeds needed the rescue.
+            try {
+                val sanitized = AMPERSAND_FIXUP.replace(raw, "&amp;")
+                parseString(feedUrl, sanitized).also {
+                    com.lofipod.app.diagnostics.AppDiagnostics.recordFeedRescue(
+                        feedUrl, "bare ampersand"
+                    )
+                }
+            } catch (_: Exception) {
+                throw e
+            }
+        }
+    }
+
+    private val AMPERSAND_FIXUP =
+        Regex("&(?!(?:[a-zA-Z]+|#\\d+|#x[\\da-fA-F]+);)")
+
+    private fun parseString(feedUrl: String, xml: String): Podcast {
         val parser: XmlPullParser = Xml.newPullParser()
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-        parser.setInput(input, null)
+        parser.setInput(xml.byteInputStream(), null)
 
         var channelTitle = ""
         var channelDesc: String? = null
