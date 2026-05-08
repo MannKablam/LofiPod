@@ -182,17 +182,53 @@ class PodcastRepository(
             }
         }
         // Override title if user provided a display name
-        val out = if (src.displayName != null) parsed.copy(title = src.displayName) else parsed
+        val titled = if (src.displayName != null) parsed.copy(title = src.displayName) else parsed
+        // Merge with disk-cached version to preserve historical episodes
+        // that may have dropped off the upstream feed (CCM Sunday services
+        // appear capped at the most recent ~200 — anything older drops out
+        // each refresh). Build guid → Episode map; fresh entries win on
+        // collision so updates land, but older episodes from previous
+        // fetches stay around indefinitely.
+        val merged = mergeWithCachedHistory(titled)
         // Persist to disk cache (best-effort; failures don't fail the fetch).
         diskCache?.let { dc ->
             try {
-                withContext(Dispatchers.IO) { dc.write(out) }
+                withContext(Dispatchers.IO) { dc.write(merged) }
             } catch (e: Exception) {
                 System.err.println("Feed disk-cache write failed for ${src.feedUrl}: ${e.message}")
             }
         }
         StartupTimings.record(phaseName, tStart)
-        return out
+        return merged
+    }
+
+    /**
+     * Merge a freshly-parsed Podcast with whatever the in-memory cache or
+     * disk cache holds for the same feedUrl. Fresh episodes win on guid
+     * collision (so titles, durations, audio URLs update); older episodes
+     * not in the fresh fetch are preserved.
+     *
+     * Why: some feeds (e.g. CCM Sunday Morning / Sunday Evening services)
+     * cap their RSS output at the most-recent N items. A naive cache that
+     * overwrites on each fetch loses anything older than the current
+     * window. Merge-and-keep means once an episode has been seen, it
+     * stays in the user's local catalog forever even if the upstream
+     * drops it.
+     */
+    private fun mergeWithCachedHistory(fresh: Podcast): Podcast {
+        val previous: Podcast? = cache[fresh.feedUrl] ?: diskCache?.read(fresh.feedUrl)
+        if (previous == null || previous.episodes.isEmpty()) return fresh
+        val byGuid = LinkedHashMap<String, com.lofipod.app.data.model.Episode>(
+            previous.episodes.size + fresh.episodes.size
+        )
+        // Seed with previous so older episodes survive…
+        for (ep in previous.episodes) byGuid[ep.guid] = ep
+        // …then layer fresh on top so any updated metadata replaces.
+        for (ep in fresh.episodes) byGuid[ep.guid] = ep
+        // Sort newest-first by pubDate, falling back to insertion order
+        // for episodes without a date (rare).
+        val sorted = byGuid.values.sortedByDescending { it.pubDateMillis ?: 0L }
+        return fresh.copy(episodes = sorted)
     }
 
     /** Short, host-derived label for per-feed timing entries. */
