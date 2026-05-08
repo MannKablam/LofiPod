@@ -2,6 +2,36 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Quality-of-life: cold-start episode restore + scroll-to-now-playing + quieter beeps
+
+Three small but high-value UX improvements.
+
+**Beep volume — drop to 0.2 amplitude.** v0.5.3 dropped from 0.85 to
+0.5; user reported still too hot. Cut further to 0.2 (~-14 dB from
+original, ~-8 dB from previous). Should now sit ~10 dB below the
+limited podcast peak — a notification chime rather than an alarm.
+
+**Cold-start episode restore.** New `EpisodeStateDao.mostRecentlyPlayed()`
+query + new `PlayerController.restoreLastEpisodeIfNeeded()` helper.
+Called from the post-connect block in `connect()` after a 900 ms
+settle (past the existing 100/300/800 ms pushState window). Loads the
+last-played episode at its saved position WITHOUT auto-playing — so
+reopening the app shows the mini-player + Player screen with "where I
+left off" ready to resume on tap. No-op if the session already has an
+item (warm reconnect) or if no episode has ever been played. Skips
+the side effects of a real `playEpisode` (no autoplay timer, no
+auto-download, no feed-visit upsert) since this is a passive restore.
+
+**Scroll-to-now-playing on the episodes screen.** Added a
+`rememberLazyListState` + one-shot `LaunchedEffect` that animates the
+list to the current episode's position when both the list and the
+current-guid are settled. One-shot per screen instance (subsequent
+manual scrolls own the viewport). No-op if the current episode isn't
+in this feed's visible list (different feed, or archived and the
+filter excludes it).
+
+ai_contamination: true # claude opus 4.7
+
 ## DSP Phase C: linear-phase EQ via FFT overlap-add convolution
 
 Optional linear-phase EQ mode that preserves transient waveform shape

@@ -21,6 +21,16 @@ interface EpisodeStateDao {
     @Query("SELECT * FROM episode_state WHERE guid = :guid LIMIT 1")
     fun observe(guid: String): Flow<EpisodeStateEntity?>
 
+    /**
+     * Most recently played episode (by `lastPlayedMillis`). Used by the
+     * cold-start restore path in `PlayerController.restoreLastEpisodeIfNeeded`
+     * so reopening the app surfaces the last episode the user was on,
+     * paused at its saved position. Excludes rows that have never been
+     * played (lastPlayedMillis == 0).
+     */
+    @Query("SELECT * FROM episode_state WHERE lastPlayedMillis > 0 ORDER BY lastPlayedMillis DESC LIMIT 1")
+    suspend fun mostRecentlyPlayed(): EpisodeStateEntity?
+
     /** All episodes at exactly this favorite tier (1 = Excellent, 2 = Most-excellent). */
     @Query("SELECT * FROM episode_state WHERE favoriteTier = :tier ORDER BY lastPlayedMillis DESC")
     fun observeAtTier(tier: Int): Flow<List<EpisodeStateEntity>>
