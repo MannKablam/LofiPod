@@ -15,6 +15,11 @@ app/release/
 # Personal notes / cheat sheets — kept on disk, not shared.
 SCREEN_MAP.md
 
+# Running list of dormant / partially-wired / "come-back-to" pieces of the
+# app. Personal scratch tracking what we deferred or worked around so we
+# don't lose context. Not part of the shipped repo.
+EFFICIENCY_REVIEW.md
+
 # Kabod Pack format reference — kept on disk for the AI agent's recall and for
 # anyone hand-authoring a .kabod, but not part of the shipped repo. The format
 # is also documented inline in BUILD_LOG.md and the KabodPackParser source.

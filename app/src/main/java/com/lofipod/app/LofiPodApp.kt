@@ -39,7 +39,7 @@ class LofiPodApp : Application() {
         repo = PodcastRepository(this)
         db = AppDatabase.get(this)
         downloads = DownloadHolder(this)
-        downloadsApi = Downloads(this, downloads.downloadManager)
+        downloadsApi = Downloads(this, downloads.downloadManager, db.autoDownloadDao())
         kabodLoader = KabodAssetLoader(this, db)
         repo.kabodLoader = kabodLoader
         transcripts = TranscriptRepository(db)

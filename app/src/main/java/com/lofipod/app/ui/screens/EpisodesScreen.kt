@@ -270,9 +270,17 @@ fun EpisodesScreen(
                             scope.launch {
                                 upsertState(app, ep, pod)
                                 app.downloadsApi.start(ep)
+                                // Manual trigger — clear any prior auto-download
+                                // flag so the 1-hour-after-finished sweep won't
+                                // expire this user-requested download.
+                                withContext(Dispatchers.IO) {
+                                    app.db.autoDownloadDao().delete(ep.guid)
+                                }
                                 snackbarHostState.showSnackbar("Download started")
                             }
                         } else {
+                            // remove() inside Downloads also clears the auto_download
+                            // row, so no extra cleanup needed here.
                             app.downloadsApi.remove(ep.guid)
                         }
                     },

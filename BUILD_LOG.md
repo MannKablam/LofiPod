@@ -2,6 +2,55 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Auto-downloads expire 1h after the episode finishes playing
+
+User-triggered downloads should stick around forever; auto-downloads
+fired by `playEpisode` should free up disk shortly after the user is
+done with them. New `auto_download` table tracks which downloads
+were auto-fired vs user-triggered.
+
+**Schema.** New `auto_download` Room entity (guid PK, createdAt). v13
+→ v14 migration adds the table. Empty on first migration — every
+existing download is treated as manual (kept until the user removes
+it explicitly).
+
+**Auto path.** `playEpisode` upserts into `auto_download` when it
+fires a download. Re-listening to a finished episode that's still
+auto-flagged renews the timestamp so the 1-hour clock resets.
+Re-listening to a manually-downloaded episode does NOT silently
+convert it to auto.
+
+**Manual paths.** Every UI download trigger (EpisodesScreen + PlayerScreen
+buttons, PlayerController.startDownloadForCurrent) deletes the
+`auto_download` row alongside calling `Downloads.start`, so a user
+pressing the download button converts an auto download to manual.
+`Downloads.remove` clears the row internally so removal callers don't
+have to remember the cleanup.
+
+**Sweep.** New `PlayerController.sweepExpiredAutoDownloads` runs:
+- on `connect()` (catches stragglers from prior sessions)
+- at the start of every `playEpisode` (housekeeping on each track switch)
+
+The query inner-joins `auto_download` against `episode_state`,
+returning guids where `durationMs > 0 AND positionMs >= durationMs - 5000
+AND lastPlayedMillis < (now - 1h)`. For each match, the manager's
+download is removed and the auto_download row is cleared. Episodes
+that were started but never finished stay (the rule is
+"finished + idle 1h," not "started + idle 1h"). Manual downloads
+(no auto_download row) are never eligible.
+
+**Constant.** `PlayerController.AUTO_DOWNLOAD_TTL_MS = 60 * 60 * 1000`.
+One knob to retune the expiration window.
+
+## Efficiency Review file (gitignored)
+
+New `EFFICIENCY_REVIEW.md` at repo root. Personal scratch tracking
+dormant / partially-wired / abandoned pieces of the build. Gitignored
+alongside `SCREEN_MAP.md` and `KABOD_SCHEMA.md`. First entry
+documents `LofiPodDownloadService` as dormant since v0.5.6 — kept on
+disk + in the manifest as a hatch in case we want a separate download
+foreground notification later, but no code path invokes it.
+
 ## Fix auto-download hangs by bypassing DownloadService.sendAddDownload
 
 User-reported: auto-download for the now-playing episode hangs and
