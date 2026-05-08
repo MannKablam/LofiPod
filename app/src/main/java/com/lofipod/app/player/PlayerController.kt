@@ -7,6 +7,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
+import androidx.media3.exoplayer.offline.Download
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
@@ -597,27 +598,40 @@ class PlayerController(private val context: Context) {
                 )
             }
 
-            // Auto-download tracking. v0.5.9 redesign: we no longer FIRE
-            // the actual DownloadManager add while the user is streaming
-            // this episode. ExoPlayer's CacheDataSource fills the same
-            // SimpleCache as it streams, so by the time the user moves on
-            // (track change or STATE_ENDED), the cache already has most or
-            // all of the file. Firing addDownload then is near-instant
-            // (DownloadManager sees the cached spans and completes), and
-            // crucially avoids two parallel HTTP fetches to the same URL —
-            // the simultaneous-fetch was the source of the "spinner spins
-            // forever, no progress" reports.
+            // Auto-download. Fires the addDownload immediately at play
+            // time so the currently-playing episode lands offline regardless
+            // of whether the user ever transitions to another track.
             //
-            // What we still do here: insert the auto_download row so
-            // [fireDeferredAutoDownloadOn] knows to fire the manager add
-            // when the user transitions away. Manual downloads (user
-            // pressing the download button) clear the auto_download row
-            // and immediately call addDownload — that path is unchanged.
+            // History: v0.5.9 deferred this until track-out / STATE_ENDED
+            // because we thought parallel HTTP fetches (streaming +
+            // downloading the same URL) caused the "spinner spins forever,
+            // no progress" symptom. The actual root cause turned out to be
+            // DownloadManager defaulting to downloadsPaused = true when used
+            // without a DownloadService — fixed in commit d0bd777 by calling
+            // resumeDownloads() at construction. With the manager actually
+            // running, parallel fetches are NOT a problem: DownloadManager
+            // and CacheDataSource share the same SimpleCache, so they
+            // coordinate through cache spans rather than double-fetching the
+            // same byte ranges. The deferred design left "play and listen
+            // straight through" episodes never getting auto-downloaded —
+            // exactly the user's hit/miss report.
+            //
+            // The auto_download row still gets inserted: the expiration
+            // sweep keys off it (finished + 1h, unfinished + 32h) and the
+            // orphan-fire backstop on connect uses it to catch any addDownload
+            // that didn't land. The fireDeferredAutoDownload calls in
+            // STATE_ENDED + track-out remain as defensive backstops; they
+            // become no-ops when the immediate fire below already promoted
+            // the row (Downloads.byId contains the guid).
             val app = context.applicationContext as LofiPodApp
-            val alreadyDownloading = app.downloadsApi.byId.value.containsKey(ep.guid)
-            if (!alreadyDownloading) {
-                // Schedule: insert the auto_download row only. The actual
-                // addDownload fires later on transition-out.
+            // Treat a prior STATE_FAILED Download the same as no download:
+            // replaying the episode is a natural moment to retry the offline
+            // copy, and Downloads.start() merges with the existing failed
+            // request via DownloadManager's idempotent addDownload semantics.
+            val existingDl = app.downloadsApi.byId.value[ep.guid]
+            val needsStart = existingDl == null || existingDl.state == Download.STATE_FAILED
+            if (needsStart) {
+                // Insert the auto_download row + fire addDownload now.
                 withContext(Dispatchers.IO) {
                     autoDownloadDao.upsert(
                         com.lofipod.app.data.db.AutoDownloadEntity(
@@ -626,6 +640,7 @@ class PlayerController(private val context: Context) {
                         )
                     )
                 }
+                app.downloadsApi.start(ep)
             } else {
                 // Existing download: only renew the auto clock if it WAS
                 // already auto. A manually-downloaded episode (no
