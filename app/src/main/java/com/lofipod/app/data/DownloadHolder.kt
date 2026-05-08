@@ -65,6 +65,23 @@ class DownloadHolder(context: Context) {
         ).apply {
             // Allow up to 2 concurrent downloads; podcast episodes are typically <100 MB each.
             maxParallelDownloads = 2
+            // CRITICAL: when a DownloadManager is used directly (without a
+            // DownloadService driving it), it is constructed in a PAUSED
+            // state — downloadsPaused = true by default. Without this flip,
+            // every addDownload() request lands in STATE_QUEUED and stays
+            // there forever, which is exactly the symptom we've been chasing
+            // since v0.5.6 (when we stopped routing through DownloadService
+            // to dodge the Android 12+/14+/15 ForegroundServiceStartNotAllowed
+            // crash). resumeDownloads() flips downloadsPaused to false and
+            // syncs the task queue once; subsequent addDownload() calls then
+            // auto-start as soon as Requirements.NETWORK is satisfied. Single
+            // call at construction is sufficient — the flag persists. See
+            // androidx/media DownloadManager.java javadoc: "Normally a
+            // download manager should be accessed via a DownloadService.
+            // When a download manager is used directly instead, downloads
+            // will be initially paused and so must be resumed by calling
+            // resumeDownloads()."
+            resumeDownloads()
         }
     }
 
