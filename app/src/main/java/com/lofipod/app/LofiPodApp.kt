@@ -6,7 +6,7 @@ import coil.ImageLoader
 import com.lofipod.app.bible.ScriptureIndexer
 import com.lofipod.app.data.BackupWorker
 import com.lofipod.app.data.DownloadHolder
-import com.lofipod.app.data.Downloads
+import com.lofipod.app.data.LofiPodDownloader
 import com.lofipod.app.data.FeedDiskCache
 import com.lofipod.app.data.KabodAssetLoader
 import com.lofipod.app.data.PodcastRepository
@@ -28,17 +28,27 @@ class LofiPodApp : Application() {
     lateinit var db: AppDatabase
         private set
     /**
-     * Lazy because `SimpleCache`'s constructor synchronously scans the
-     * download directory — for users with many downloaded episodes on
-     * slow eMMC this can take seconds and visibly delays first-frame
-     * render if done eagerly in [onCreate]. Deferred to first access;
-     * a background coroutine in [onCreate] warms it up off-thread so the
-     * typical first access (PlaybackService.onCreate or the first UI
-     * collect of `byId`) finds it ready.
+     * Networking + DataSource plumbing for the player. Lightweight after
+     * the v0.6.9 reset (no SimpleCache directory scan, no DownloadManager
+     * boot). The shared OkHttp client lives here so the new
+     * [LofiPodDownloader] can reuse the connection pool.
      */
     val downloads: DownloadHolder by lazy { DownloadHolder(this) }
-    val downloadsApi: Downloads by lazy {
-        Downloads(this, downloads.downloadManager, db.autoDownloadDao())
+
+    /**
+     * App-owned downloader (v0.6.9 rewrite). Replaced Media3's
+     * `DownloadManager` + `DownloadService` + `SimpleCache` after four
+     * versions of trying to get them to behave. UI collects [byId] for
+     * per-episode state; player calls `completedFile(guid)` to prefer
+     * local files at MediaItem-construction time.
+     */
+    val downloadsApi: LofiPodDownloader by lazy {
+        LofiPodDownloader(
+            context = this,
+            httpClient = downloads.httpClient,
+            downloadDao = db.lofiDownloadDao(),
+            autoDownloadDao = db.autoDownloadDao(),
+        )
     }
     lateinit var kabodLoader: KabodAssetLoader
         private set
@@ -102,12 +112,9 @@ class LofiPodApp : Application() {
         }
 
         // Warm up the lazy `downloads` / `downloadsApi` properties on a
-        // background thread. The expensive bits — SimpleCache's directory
-        // scan + Downloads' refreshAll over the download index — run here
-        // in parallel with MainActivity init, so the user sees the
-        // Catalog screen render immediately instead of waiting on disk
-        // I/O. A read of `byId.value` is enough to trigger the full chain
-        // (downloadsApi → downloads.downloadManager → cache).
+        // background thread. After the v0.6.9 reset this is mostly a Room
+        // hydrate of the lofi_download table — fast in steady state. Touch
+        // both so the player and UI find them ready.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 StartupTimings.phase("downloads_warmup") {
@@ -115,6 +122,29 @@ class LofiPodApp : Application() {
                 }
             } catch (e: Exception) {
                 System.err.println("Downloads warmup failed: ${e.message}")
+            }
+        }
+
+        // One-shot legacy cleanup: the old Media3 SimpleCache lived under
+        // filesDir/downloads/ and the StandaloneDatabaseProvider's SQLite
+        // db wraps the same directory. Both are obsolete after v0.6.9.
+        // Wiping reclaims disk that's been holding stuck/partial cache
+        // chunks. Idempotent — once gone, staying gone.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                val legacyCache = java.io.File(filesDir, "downloads")
+                if (legacyCache.exists()) {
+                    legacyCache.deleteRecursively()
+                }
+                // Media3's StandaloneDatabaseProvider creates a SQLite db
+                // named "exoplayer_internal.db" alongside the cache. Wipe.
+                val legacyDb = java.io.File(filesDir, "exoplayer_internal.db")
+                if (legacyDb.exists()) legacyDb.delete()
+                java.io.File(filesDir, "exoplayer_internal.db-journal").let {
+                    if (it.exists()) it.delete()
+                }
+            } catch (e: Exception) {
+                System.err.println("Legacy download cleanup failed: ${e.message}")
             }
         }
 

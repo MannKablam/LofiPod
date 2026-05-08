@@ -17,7 +17,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.exoplayer.offline.Download
+import com.lofipod.app.data.LofiDownload
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.ui.theme.ThemedArtwork
 import com.lofipod.app.data.db.EpisodeStateEntity
@@ -266,7 +266,7 @@ fun EpisodesScreen(
                     },
                     onToggleDownload = {
                         val d = downloadsByGuid[ep.guid]
-                        if (d == null || d.state == Download.STATE_FAILED) {
+                        if (d == null || d.state == LofiDownload.State.FAILED) {
                             scope.launch {
                                 upsertState(app, ep, pod)
                                 app.downloadsApi.start(ep)
@@ -448,7 +448,7 @@ private fun EpisodeRow(
     podcastArt: String?,
     state: EpisodeUiState,
     isQueued: Boolean,
-    download: Download?,
+    download: LofiDownload?,
     isCurrent: Boolean,
     isPlaying: Boolean,
     autoplayDirectionUp: Boolean,

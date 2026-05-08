@@ -6,16 +6,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!--
-        API 34+: was needed for LofiPodDownloadService when it was active.
-        v0.5.6 routed downloads through DownloadManager.addDownload directly
-        (see EFFICIENCY_REVIEW.md), making the service dormant. v0.6.4
-        removes the <service> declaration entirely so the OS won't try to
-        bind it from cached intents — keeping this permission would let the
-        app advertise dataSync foreground capability it doesn't actually
-        use, so dropping it too. Add back if the service is reactivated.
-    -->
-    <!-- <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" /> -->
+    <!-- No FOREGROUND_SERVICE_DATA_SYNC: the v0.6.9 download rewrite ditched
+         Media3's DownloadService entirely. Downloads now run on the app
+         process while the PlaybackService (mediaPlayback type) keeps it
+         alive during playback. -->
+
     <!-- API 33+: needed to post the media notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- In-app updater: needed to invoke the system installer for an APK
@@ -52,24 +47,6 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
-
-        <!--
-            LofiPodDownloadService is dormant since v0.5.6 (downloads route
-            directly through DownloadManager.addDownload). The <service>
-            declaration is removed in v0.6.4 because Media3's internals can
-            still try to invoke a registered service from cached download
-            intents on app start, which on Android 12+/14+/15 then crashes
-            with ForegroundServiceStartNotAllowedException. With no manifest
-            entry the OS can't bind it. The Kotlin file is kept on disk per
-            EFFICIENCY_REVIEW notes as a hatch in case we want to reactivate
-            with a Scheduler + UIDT FGS type later.
-        -->
-        <!--
-        <service
-            android:name=".player.LofiPodDownloadService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
-        -->
 
         <!-- FileProvider for sharing the downloaded APK URI with the system
              installer. Direct file:// URIs are blocked since Android 7;

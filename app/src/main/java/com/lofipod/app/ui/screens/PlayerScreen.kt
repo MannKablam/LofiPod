@@ -421,7 +421,7 @@ fun PlayerScreen(
                             download = download,
                             onClick = {
                                 val d = downloadsByGuid[displayedGuid]
-                                if (d == null || d.state == androidx.media3.exoplayer.offline.Download.STATE_FAILED) {
+                                if (d == null || d.state == com.lofipod.app.data.LofiDownload.State.FAILED) {
                                     // Start. Preview has full Episode in
                                     // hand; live looks up via episode_state.
                                     // Both paths are MANUAL — user pressed

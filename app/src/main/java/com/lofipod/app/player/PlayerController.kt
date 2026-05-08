@@ -7,7 +7,6 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
-import androidx.media3.exoplayer.offline.Download
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
@@ -546,9 +545,21 @@ class PlayerController(private val context: Context) {
             val startPos = forcedStartMs ?: savedPos
 
             val art = ep.episodeArtworkUrl ?: podcastArt
+            // Prefer a downloaded local file when one exists. The new
+            // OkHttp-based downloader (v0.6.9) writes completed episodes
+            // to filesDir/episode_audio/<sha256(guid)>.bin; pointing the
+            // MediaItem at file://that path makes ExoPlayer use a
+            // FileDataSource, skipping HTTP entirely for offline playback.
+            val app = context.applicationContext as LofiPodApp
+            val localFile = app.downloadsApi.completedFile(ep.guid)
+            val playUri = if (localFile != null) {
+                android.net.Uri.fromFile(localFile)
+            } else {
+                android.net.Uri.parse(ep.audioUrl)
+            }
             val item = MediaItem.Builder()
                 .setMediaId(ep.guid)
-                .setUri(ep.audioUrl)
+                .setUri(playUri)
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(ep.title)
@@ -598,40 +609,18 @@ class PlayerController(private val context: Context) {
                 )
             }
 
-            // Auto-download. Fires the addDownload immediately at play
-            // time so the currently-playing episode lands offline regardless
-            // of whether the user ever transitions to another track.
-            //
-            // History: v0.5.9 deferred this until track-out / STATE_ENDED
-            // because we thought parallel HTTP fetches (streaming +
-            // downloading the same URL) caused the "spinner spins forever,
-            // no progress" symptom. The actual root cause turned out to be
-            // DownloadManager defaulting to downloadsPaused = true when used
-            // without a DownloadService — fixed in commit d0bd777 by calling
-            // resumeDownloads() at construction. With the manager actually
-            // running, parallel fetches are NOT a problem: DownloadManager
-            // and CacheDataSource share the same SimpleCache, so they
-            // coordinate through cache spans rather than double-fetching the
-            // same byte ranges. The deferred design left "play and listen
-            // straight through" episodes never getting auto-downloaded —
-            // exactly the user's hit/miss report.
-            //
-            // The auto_download row still gets inserted: the expiration
-            // sweep keys off it (finished + 1h, unfinished + 32h) and the
-            // orphan-fire backstop on connect uses it to catch any addDownload
-            // that didn't land. The fireDeferredAutoDownload calls in
-            // STATE_ENDED + track-out remain as defensive backstops; they
-            // become no-ops when the immediate fire below already promoted
-            // the row (Downloads.byId contains the guid).
-            val app = context.applicationContext as LofiPodApp
-            // Treat a prior STATE_FAILED Download the same as no download:
-            // replaying the episode is a natural moment to retry the offline
-            // copy, and Downloads.start() merges with the existing failed
-            // request via DownloadManager's idempotent addDownload semantics.
+            // Auto-download. Fires immediately so the currently-playing
+            // episode lands offline regardless of whether the user ever
+            // transitions to another track. Backed by the new OkHttp
+            // downloader (v0.6.9 rewrite) — no Media3 download manager,
+            // no shared SimpleCache, no listener that doesn't fire on
+            // progress. Just a plain HTTP fetch into filesDir/episode_audio/.
+            // A prior FAILED state is treated as "needs start" so a replay
+            // naturally retries the offline copy.
             val existingDl = app.downloadsApi.byId.value[ep.guid]
-            val needsStart = existingDl == null || existingDl.state == Download.STATE_FAILED
+            val needsStart = existingDl == null ||
+                existingDl.state == com.lofipod.app.data.LofiDownload.State.FAILED
             if (needsStart) {
-                // Insert the auto_download row + fire addDownload now.
                 withContext(Dispatchers.IO) {
                     autoDownloadDao.upsert(
                         com.lofipod.app.data.db.AutoDownloadEntity(
@@ -711,13 +700,21 @@ class PlayerController(private val context: Context) {
     private suspend fun fireDeferredAutoDownload(guid: String) {
         val auto = withContext(Dispatchers.IO) { autoDownloadDao.get(guid) } ?: return
         val app = context.applicationContext as LofiPodApp
-        if (app.downloadsApi.byId.value.containsKey(guid)) return
+        // With the v0.6.9 OkHttp downloader, every play fires start() inline.
+        // The deferred helpers only fire if no acceptable state already
+        // exists — i.e. the row is FAILED or absent. Don't re-trigger a
+        // currently-running or completed download.
+        val existing = app.downloadsApi.byId.value[guid]
+        if (existing != null) {
+            val s = existing.state
+            if (s == com.lofipod.app.data.LofiDownload.State.QUEUED ||
+                s == com.lofipod.app.data.LofiDownload.State.DOWNLOADING ||
+                s == com.lofipod.app.data.LofiDownload.State.COMPLETED
+            ) return
+        }
         val ep = withContext(Dispatchers.IO) { episodeFromState(guid) } ?: return
         app.downloadsApi.start(ep)
-        // Touch the auto_download row to keep the expiration clock fresh
-        // (sweep uses createdAt for the unfinished-32h rule). Without this
-        // an auto-download fired right after a play could already look
-        // "stale" if the episode never gets played further.
+        // Touch the auto_download row to keep the expiration clock fresh.
         withContext(Dispatchers.IO) {
             autoDownloadDao.upsert(
                 com.lofipod.app.data.db.AutoDownloadEntity(
@@ -742,30 +739,20 @@ class PlayerController(private val context: Context) {
         scope.launch {
             val app = context.applicationContext as LofiPodApp
             val rows = withContext(Dispatchers.IO) {
-                // Re-use the existing finished-or-unfinished queries by
-                // composing them — but actually we want ALL auto_download
-                // rows here, regardless of finished state. The simpler
-                // path is to grab the union of expiringFinishedGuids
-                // (with cutoff = MAX_VALUE so we get all) and
-                // expiringUnfinishedGuids similarly. But cleaner to just
-                // walk the byId snapshot for missing guids — we don't
-                // currently expose a "list all auto_download" query so
-                // we approximate by checking the in-memory snapshot.
-                // For now: rely on the cumulative auto_download table
-                // being small (one row per recently-played episode) and
-                // poke the missing ones.
-                val haveDownloads = app.downloadsApi.byId.value.keys
-                // Walk the recent finished + unfinished queries to get a
-                // representative set without adding a new query. (The
-                // cutoff = Long.MAX_VALUE means everything matches the
-                // time predicate; the rows still must satisfy the
-                // finished/unfinished predicate, so finished + unfinished
-                // together cover all rows.)
+                // Walk all auto_download rows. "Orphan" = no LofiDownload
+                // entry, OR the entry is in FAILED state (e.g. revived
+                // from a prior interrupted session — see hydrate()). The
+                // finished + unfinished sweeps together cover every row
+                // at MAX_VALUE cutoff (mutually exclusive predicates).
                 val all = (
                     autoDownloadDao.expiringFinishedGuids(Long.MAX_VALUE) +
                         autoDownloadDao.expiringUnfinishedGuids(Long.MAX_VALUE)
                     ).distinct()
-                all.filter { it !in haveDownloads }
+                all.filter { guid ->
+                    val existing = app.downloadsApi.byId.value[guid]
+                    existing == null ||
+                        existing.state == com.lofipod.app.data.LofiDownload.State.FAILED
+                }
             }
             for (guid in rows) {
                 fireDeferredAutoDownload(guid)

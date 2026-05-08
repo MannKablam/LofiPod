@@ -407,6 +407,35 @@ interface AutoDownloadDao {
     suspend fun expiringUnfinishedGuids(cutoffMs: Long): List<String>
 }
 
+@Dao
+interface LofiDownloadDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: LofiDownloadEntity)
+
+    @Query("SELECT * FROM lofi_download WHERE guid = :guid LIMIT 1")
+    suspend fun get(guid: String): LofiDownloadEntity?
+
+    @Query("SELECT * FROM lofi_download")
+    suspend fun getAll(): List<LofiDownloadEntity>
+
+    @Query("DELETE FROM lofi_download WHERE guid = :guid")
+    suspend fun delete(guid: String)
+
+    @Query(
+        "UPDATE lofi_download SET bytesDownloaded = :bytes, contentLength = :total, " +
+            "state = :state, errorMessage = :error, updatedAt = :now WHERE guid = :guid"
+    )
+    suspend fun updateProgress(
+        guid: String,
+        bytes: Long,
+        total: Long,
+        state: Int,
+        error: String?,
+        now: Long,
+    )
+}
+
 @Database(
     entities = [
         EpisodeStateEntity::class,
@@ -420,9 +449,10 @@ interface AutoDownloadDao {
         EpisodeKabodEntity::class,
         EpisodeTranscriptEntity::class,
         AutoDownloadEntity::class,
-        EpisodeScriptureEntity::class
+        EpisodeScriptureEntity::class,
+        LofiDownloadEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -438,6 +468,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun episodeTranscriptDao(): EpisodeTranscriptDao
     abstract fun autoDownloadDao(): AutoDownloadDao
     abstract fun episodeScriptureDao(): EpisodeScriptureDao
+    abstract fun lofiDownloadDao(): LofiDownloadDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -726,6 +757,37 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v15 → v16: add lofi_download table. The OkHttp-based downloader's
+         * persistent state — replaces Media3's StandaloneDatabaseProvider +
+         * DownloadIndex which we ditched in v0.6.9 after four versions of
+         * trying to coax reliability out of the DownloadManager+SimpleCache
+         * stack. One row per episode-download with the file path, byte
+         * progress, content length, and a state int matching
+         * `LofiDownload.State` ordinals (0 QUEUED / 1 DOWNLOADING /
+         * 2 COMPLETED / 3 FAILED).
+         */
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS lofi_download (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        audioUrl TEXT NOT NULL,
+                        mimeType TEXT,
+                        filePath TEXT NOT NULL,
+                        state INTEGER NOT NULL,
+                        contentLength INTEGER NOT NULL,
+                        bytesDownloaded INTEGER NOT NULL,
+                        errorMessage TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
          * v14 → v15: add episode_scripture table. Holds detected (RSS)
          * and imported (Kabod) Bible passage references — the unified
          * structured shape that powers the canon-browse UI and
@@ -797,7 +859,8 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_7_8), timed(MIGRATION_8_9),
                         timed(MIGRATION_9_10), timed(MIGRATION_10_11),
                         timed(MIGRATION_11_12), timed(MIGRATION_12_13),
-                        timed(MIGRATION_13_14), timed(MIGRATION_14_15)
+                        timed(MIGRATION_13_14), timed(MIGRATION_14_15),
+                        timed(MIGRATION_15_16)
                     )
                     .build().also { instance = it }
             }
