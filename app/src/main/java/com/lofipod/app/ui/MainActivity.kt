@@ -156,6 +156,7 @@ private val PRIMARY_ROUTES = setOf(
 private val NESTED_PARENTS = mapOf(
     "audioDiagnostics" to "settings",
     "audiophileNotes" to "settings",
+    "appDiagnostics" to "settings",
     "notes/{guid}" to "notesBrowser",
 )
 
@@ -366,6 +367,7 @@ private fun AppNav(
                     onBack = { smartBack(nav, "settings") },
                     onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
                     onOpenAudiophileNotes = { nav.navigate("audiophileNotes") },
+                    onOpenAppDiagnostics = { nav.navigate("appDiagnostics") },
                 )
             }
 
@@ -379,6 +381,12 @@ private fun AppNav(
             composable("audiophileNotes") {
                 AudiophileNotesScreen(
                     onBack = { smartBack(nav, "audiophileNotes") }
+                )
+            }
+
+            composable("appDiagnostics") {
+                AppDiagnosticsScreen(
+                    onBack = { smartBack(nav, "appDiagnostics") }
                 )
             }
 
