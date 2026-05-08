@@ -2,6 +2,73 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Startup diagnostics + beep ducking redesign + defer auto-download until track-out
+
+Three related fixes shipped together.
+
+**Startup-phase diagnostics.** New `StartupTimings` (in
+`com.lofipod.app.diagnostics`) records `(name, startNs, endNs)` tuples
+for key initialization steps: `repo_init`, `db_get`, the per-version
+Room migrations (`migration_1_to_2` … `migration_13_to_14`),
+`download_db_provider`, `simple_cache_init`, `download_manager_init`,
+`downloads_warmup`, `playback_service_oncreate`,
+`media_controller_connect`, `kabod_install_bundled`,
+`kabod_loader_init`, `transcripts_init`, `application_oncreate`. Each
+phase shows duration in ms and offset-from-process-start. Surfaced as
+a "Startup" section in the Audio diagnostics screen, also included
+in the Copy-to-clipboard dump. The slow-cold-start report flow is now:
+user opens diagnostics → screenshots the Startup section → dev sees
+which phase ate the time. Room migrations are individually wrapped
+via a `timed(Migration)` helper so any future hop's cost shows up
+without per-migration plumbing.
+
+**BeepPlayer ducking redesign.** Old: `player.volume = 0f` before the
+beep, restore after. The MediaController → session → ExoPlayer.volume
+path is supposed to be synchronous but was leaving the podcast
+audible during the beep on device — so the beep was effectively
+mixed with the podcast at full volume, which the user perceived as
+"too loud." New: `player.pause()` before the beep, `player.play()`
+after if the user was playing. Pause is bulletproof (stops feeding
+the audio sink within one buffer; no rebuffer on resume since the
+sink picks up where it left off). Bookkeeping uses `wasPlaying` to
+avoid auto-resuming if the user had already paused. New
+`BEEP_TRACK_VOLUME = 0.5f` constant via `AudioTrack.setVolume` adds
+an additional runtime tuning knob independent of the pre-rendered
+`sustainPeak`. Effective beep level = `sustainPeak * BEEP_TRACK_VOLUME`
+at full system volume. With the ducking now actually working, the
+calibration baseline changes — set `sustainPeak` to 0.3 (× 0.5
+volume = 0.15 effective), can tune either constant later.
+
+**Defer auto-download until the user moves on.** Old: `playEpisode`
+fired `DownloadManager.addDownload(request)` immediately for the
+now-playing episode. The DownloadManager opened a second HTTP
+connection to the same audio URL while ExoPlayer was streaming via
+its own connection — many podcast hosts rate-limit or stall the
+second connection, producing the user-reported "spinner spins
+forever, no progress" symptom. New: `playEpisode` only INSERTS the
+`auto_download` row; the actual `addDownload` is deferred until the
+user transitions away (track change in `playEpisode`'s outgoing
+block, or `STATE_ENDED` in the player listener). By then ExoPlayer's
+CacheDataSource has filled the SimpleCache as part of streaming, so
+DownloadManager's worker sees the cached spans and completes
+near-instantly without re-fetching. New helper
+`fireDeferredAutoDownload(guid)` does the work; new orphan sweep
+`fireDeferredAutoDownloadOrphans()` runs on `connect()` to pick up
+deferred rows from prior sessions where the app was closed before
+the transition fired. Manual download trigger paths
+(EpisodesScreen / PlayerScreen buttons,
+`startDownloadForCurrent`) are unchanged — user explicitly asking
+for a download still fires `addDownload` immediately.
+
+UX side effect: during playback, the now-playing episode's download
+button shows the "Download" icon (no Download object yet). The
+"downloaded" checkmark appears shortly after the user transitions
+away — typically within seconds since the cache is mostly full
+already. Easier to live with than the broken "spinner forever"
+behaviour and avoids double-fetch.
+
+ai_contamination: true # claude opus 4.7
+
 ## Cold-start: defer download infra to first access; add 32h unfinished-auto sweep
 
 User report: "the app loads very slow on some devices to the point that

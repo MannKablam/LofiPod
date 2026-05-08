@@ -627,6 +627,33 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Wrap a [Migration] so its `migrate(...)` execution time is
+         * recorded into [com.lofipod.app.diagnostics.StartupTimings].
+         * The wrapper preserves [startVersion] and [endVersion] so Room
+         * still picks the right hop when chaining migrations across
+         * multiple version jumps.
+         *
+         * Migrations only run on the first DB query after a version
+         * bump, so on a steady-state install the wrappers are inert.
+         * On a first-install-after-upgrade or fresh install with seeded
+         * data, this surfaces which hop is the slow one in the
+         * Startup section of the diagnostics screen.
+         */
+        private fun timed(m: Migration): Migration = object : Migration(m.startVersion, m.endVersion) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val t0 = System.nanoTime()
+                try {
+                    m.migrate(db)
+                } finally {
+                    com.lofipod.app.diagnostics.StartupTimings.record(
+                        "migration_${startVersion}_to_${endVersion}",
+                        t0
+                    )
+                }
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -635,10 +662,13 @@ abstract class AppDatabase : RoomDatabase() {
                     "lofipod.db"
                 )
                     .addMigrations(
-                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-                        MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
-                        MIGRATION_12_13, MIGRATION_13_14
+                        timed(MIGRATION_1_2), timed(MIGRATION_2_3),
+                        timed(MIGRATION_3_4), timed(MIGRATION_4_5),
+                        timed(MIGRATION_5_6), timed(MIGRATION_6_7),
+                        timed(MIGRATION_7_8), timed(MIGRATION_8_9),
+                        timed(MIGRATION_9_10), timed(MIGRATION_10_11),
+                        timed(MIGRATION_11_12), timed(MIGRATION_12_13),
+                        timed(MIGRATION_13_14)
                     )
                     .build().also { instance = it }
             }

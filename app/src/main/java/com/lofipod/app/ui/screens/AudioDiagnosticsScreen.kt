@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.AudioChainTelemetry
 import com.lofipod.app.audio.EqPresets
+import com.lofipod.app.diagnostics.StartupTimings
 import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
@@ -90,6 +91,7 @@ fun AudioDiagnosticsScreen(
     val snap = remember(tick) { TelemetrySnapshot.capture() }
     val timing = remember(tick) { AudioChainTelemetry.computeBufferTimingStats() }
     val events = remember(tick) { AudioChainTelemetry.snapshotEvents() }
+    val startupPhases = remember(tick) { StartupTimings.snapshot() }
     val eq = PlaybackService.sharedEq
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     val gainDb = remember(playerState, tick) { eq.currentGainDb() }
@@ -192,6 +194,18 @@ fun AudioDiagnosticsScreen(
                     } else {
                         Text(formatEvents(events), style = MaterialTheme.typography.bodySmall)
                     }
+
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("Startup")
+                    if (startupPhases.isEmpty()) {
+                        Text(
+                            "  (no phases recorded yet)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(formatStartup(startupPhases), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
 
@@ -208,6 +222,7 @@ fun AudioDiagnosticsScreen(
                         playerLine = formatPlayerLine(playerState),
                         errorVerbose = errorVerbose,
                         events = events,
+                        startupPhases = startupPhases,
                     )
                     copyToClipboard(ctx, text)
                 }) { Text("Copy to clipboard") }
@@ -491,6 +506,35 @@ private fun formatPerformance(
     }
 }
 
+/**
+ * Format the startup-phase list as a small fixed-width table. Each row
+ * shows the phase name padded to a fixed width, followed by its duration
+ * in ms. The list is already sorted by start time so the order shows the
+ * sequence of operations during boot. A summary row at the bottom shows
+ * the total wallclock since [StartupTimings.processStartNs].
+ */
+private fun formatStartup(phases: List<StartupTimings.Phase>): String {
+    val nameWidth = phases.maxOf { it.name.length }.coerceAtLeast(20)
+    val totalMs = (System.nanoTime() - StartupTimings.processStartNs) / 1_000_000.0
+    return buildString {
+        for (p in phases) {
+            append("  ")
+            append(p.name.padEnd(nameWidth))
+            append("  ")
+            append("%6.1f ms".format(p.durationMs))
+            append("  @")
+            val offsetMs = (p.startNs - StartupTimings.processStartNs) / 1_000_000.0
+            append("%6.0f".format(offsetMs))
+            append(" ms")
+            append('\n')
+        }
+        append("  ")
+        append("(elapsed since process start)".padEnd(nameWidth))
+        append("  ")
+        append("%6.1f ms".format(totalMs))
+    }
+}
+
 private fun formatEvents(events: List<AudioChainTelemetry.Event>): String {
     val now = System.currentTimeMillis()
     return events.joinToString("\n") { e ->
@@ -530,6 +574,7 @@ private fun buildClipboardDump(
     playerLine: String,
     errorVerbose: String?,
     events: List<AudioChainTelemetry.Event>,
+    startupPhases: List<StartupTimings.Phase>,
 ): String = buildString {
     appendLine("LofiPod audio diagnostics")
     appendLine("=========================")
@@ -561,6 +606,10 @@ private fun buildClipboardDump(
     appendLine("[Recent events]")
     if (events.isEmpty()) appendLine("  (no events)")
     else appendLine(formatEvents(events))
+    appendLine()
+    appendLine("[Startup]")
+    if (startupPhases.isEmpty()) appendLine("  (no phases recorded)")
+    else appendLine(formatStartup(startupPhases))
 }
 
 private fun copyToClipboard(ctx: Context, text: String) {
