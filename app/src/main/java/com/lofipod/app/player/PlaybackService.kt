@@ -66,17 +66,30 @@ class PlaybackService : MediaSessionService() {
         val dataSourceFactory = (application as LofiPodApp).downloads.dataSourceFactory
         val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory)
 
-        // Audio-friendly buffer sizes. Defaults are tuned for video; podcasts can
-        // afford larger buffers (one episode is ~50–200 MB at 128 kbps for 1 hour
-        // of audio), and a longer max buffer means fewer rebuffers on flaky
-        // connections. setPrioritizeTimeOverSizeWhileLoading favors buffering more
-        // duration over hitting a byte cap, which is what we want for audio.
+        // Audio buffer sizes — significantly larger than Media3 defaults
+        // because we play at variable speed. The buffer durations here are
+        // in MEDIA TIME (the duration of audio held), not wall-clock; at 2x
+        // playback, source material is consumed at 2x wall-clock rate. So
+        // a 60s media-time buffer drains in 30s wall-clock at 2x, and any
+        // network slowdown longer than that starves the renderer.
+        //
+        // Symptom (v0.6.x reports): at 2x for ~7 min the playback would
+        // stall with the position cycling through the last ~5s of decoded
+        // audio (renderer underrun loop), then resume after a flush. At
+        // 1.75x, the same effect appeared as severe stuttering. Both were
+        // network slowdowns landing while the buffer was already small.
+        //
+        // New thresholds give 5 min wall-clock headroom at 2x (10 min
+        // media-time max), and require 8s of buffer after a rebuffer
+        // before resuming so the audio doesn't immediately re-stall.
+        // Memory cost: ~10 min of audio at 256 kbps stereo is ~19 MB.
+        // Acceptable on any modern phone.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 60_000,
-                /* maxBufferMs = */ 180_000,
-                /* bufferForPlaybackMs = */ 2_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 4_000
+                /* minBufferMs = */ 180_000,
+                /* maxBufferMs = */ 600_000,
+                /* bufferForPlaybackMs = */ 5_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 8_000
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()

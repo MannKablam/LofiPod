@@ -2,6 +2,61 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Playback robustness: bigger buffers + snackbar feedback on stuck taps
+
+Three user reports, one root cause + one UX gap:
+
+1. **2x speed for ~7:30 → playback lost; position cycled 43:31→43:36
+   then repeated until a flush reset it.** Renderer underrun loop —
+   the source-side buffer drained, the audio sink kept playing the
+   last decoded ~5s of buffer over and over until the renderer
+   flushed and re-synced.
+
+2. **1.75x for ~10 min → severe stuttering.** Same fingerprint, less
+   severe — buffer drained more slowly so underruns were brief.
+
+3. **Scrubbing far from the play head took 1-2 min before playback
+   resumed; play button felt like a silent no-op.** Long HTTP
+   Range fetch to fill the buffer at the new position, with no
+   explicit user feedback that anything was happening.
+
+Root cause for (1) and (2): `DefaultLoadControl` buffer durations are
+in MEDIA TIME (the duration of audio held), not wall-clock. At 2x
+playback, source is consumed 2x faster wall-clock, so a 60s media-time
+buffer drains in 30s wall-clock. Any network slowdown longer than that
+starves the renderer.
+
+**Fix for (1) and (2)**: bump `DefaultLoadControl` buffer thresholds:
+- `minBufferMs`: 60s → 180s
+- `maxBufferMs`: 180s → 600s
+- `bufferForPlaybackMs`: 2s → 5s
+- `bufferForPlaybackAfterRebufferMs`: 4s → 8s
+
+10 min media-time max gives 5 min wall-clock headroom at 2x.
+Memory: ~19 MB at 256 kbps stereo — fine on any modern phone.
+
+**Fix for (3)**: new `transientMessages: SharedFlow<String>` on
+`PlayerController`. `togglePlay()` emits a one-shot string when the
+tap hits a no-op-feeling state:
+- Controller not yet bound → "Player isn't connected yet — try again."
+- IDLE with no MediaItem → "No episode loaded — pick one from the
+  catalog."
+- BUFFERING (already trying) → "Buffering — waiting on the network."
+
+`PlayerScreen` collects the SharedFlow in a `LaunchedEffect` and
+surfaces each message via the existing `snackbarHostState`. The
+buffering ring around the play button stays as the primary visual
+"I see your tap" signal; the snackbar is the second signal for cases
+where the ring isn't obviously connected to the user's action.
+
+Also: yes, all three were related — (1) and (2) are different
+intensities of the same underflow, and (3) is the same network-bound
+slowness expressed during a seek. Larger buffer reduces (1)/(2) and
+shortens (3) in cases where the seek target falls within an already-
+loaded range.
+
+ai_contamination: true # claude opus 4.7
+
 ## EqScreen: thumb-only band sliders + "Audio Fine-tuning" title
 
 User report: scrolling up/down the EQ screen kept catching slider tracks

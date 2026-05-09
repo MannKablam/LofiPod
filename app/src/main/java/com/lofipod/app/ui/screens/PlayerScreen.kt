@@ -184,6 +184,17 @@ fun PlayerScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // Surface controller-side transient messages as snackbars so play-button
+    // taps that hit a no-op state (player not bound, no media loaded,
+    // already buffering) get explicit user feedback rather than feeling
+    // dead. SharedFlow with replay=0 means leftover messages from a prior
+    // composition don't replay on screen revisit.
+    LaunchedEffect(controller) {
+        controller.transientMessages.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
