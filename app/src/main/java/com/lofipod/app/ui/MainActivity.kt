@@ -154,8 +154,13 @@ private val PRIMARY_ROUTES = setOf(
  * — back from it goes to the most recent primary in the back stack.
  */
 private val NESTED_PARENTS = mapOf(
-    "audioDiagnostics" to "settings",
-    "audiophileNotes" to "settings",
+    // audioDiagnostics + audiophileNotes used to be pinned to "settings"
+    // here, but they're now reachable from EqScreen too (right-justified
+    // links at the top of the screen). Pinning to one parent route would
+    // teleport the user past EqScreen on back when they arrived via that
+    // path; plain popBackStack handles both entry points correctly. Kept
+    // appDiagnostics + notes/{guid} pinned because those still have a
+    // single canonical parent.
     "appDiagnostics" to "settings",
     "notes/{guid}" to "notesBrowser",
 )
@@ -398,7 +403,9 @@ private fun AppNav(
             composable("eq") {
                 EqScreen(
                     controller = controller,
-                    onBack = { smartBack(nav, "eq") }
+                    onBack = { smartBack(nav, "eq") },
+                    onOpenAudiophileNotes = { nav.navigate("audiophileNotes") },
+                    onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
                 )
             }
 
@@ -417,15 +424,18 @@ private fun AppNav(
             }
 
             composable("audioDiagnostics") {
+                // Plain popBackStack so back returns to whoever sent us
+                // here — Settings, Audio Fine-tuning, or wherever a
+                // future entry point shows up.
                 AudioDiagnosticsScreen(
                     controller = controller,
-                    onBack = { smartBack(nav, "audioDiagnostics") }
+                    onBack = { nav.popBackStack() }
                 )
             }
 
             composable("audiophileNotes") {
                 AudiophileNotesScreen(
-                    onBack = { smartBack(nav, "audiophileNotes") }
+                    onBack = { nav.popBackStack() }
                 )
             }
 

@@ -48,7 +48,12 @@ import kotlin.math.log10
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
+fun EqScreen(
+    controller: PlayerController,
+    onBack: () -> Unit,
+    onOpenAudiophileNotes: () -> Unit = {},
+    onOpenAudioDiagnostics: () -> Unit = {},
+) {
     val eq: EqAudioProcessor = PlaybackService.sharedEq
     val skipSilence: SilenceSkippingProcessor = PlaybackService.sharedSkipSilence
     val playerState by controller.state.collectAsState()
@@ -252,6 +257,31 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                 .fillMaxSize()
                 .verticalScroll(scrollState)
         ) {
+            // ---- Top-of-screen links to the documentation + diagnostics
+            // sister screens. Right-justified so they read as ancillary
+            // navigation rather than primary controls — the master "Audio
+            // enhancement" toggle below is the actual top-of-page action.
+            // Notes for audiophiles sits above audio diagnostics because
+            // most users want the spec/explanation more often than the
+            // live counters. ----
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onOpenAudiophileNotes) {
+                    Text("Notes for audiophiles")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onOpenAudioDiagnostics) {
+                    Text("Audio diagnostics")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = audioEnhancementEnabled, onCheckedChange = { v ->
                     composeScope.launch {
