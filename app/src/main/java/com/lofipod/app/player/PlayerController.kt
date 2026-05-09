@@ -24,7 +24,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -97,6 +100,19 @@ class PlayerController(private val context: Context) {
     private val _autoplayTimer = MutableStateFlow<AutoplayTimerState?>(null)
     val autoplayTimer: StateFlow<AutoplayTimerState?> = _autoplayTimer.asStateFlow()
     private var autoplayTimerJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * One-shot transient messages from the player layer that the UI
+     * surfaces as snackbars. Used so the play button never feels like a
+     * silent no-op: when the user taps play and the player is
+     * mid-buffering / not yet bound / has no media item, we emit a short
+     * message so they get explicit confirmation that their tap registered.
+     *
+     * Buffer capacity 4 so a quick burst of taps doesn't drop messages,
+     * but we don't replay old messages to fresh subscribers.
+     */
+    private val _transientMessages = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 4)
+    val transientMessages: SharedFlow<String> = _transientMessages.asSharedFlow()
 
     fun connect(onReady: () -> Unit) {
         // Pin this controller as the autoplay-confirm target for any
@@ -868,9 +884,21 @@ class PlayerController(private val context: Context) {
      *              the start; matches what every other media player does
      *              when you tap Play on a finished item).
      *   - else   → standard pause/play toggle.
+     *
+     * **Snackbar feedback contract**: any path that doesn't actually
+     * advance the player's visible state (controller not bound yet, no
+     * MediaItem loaded, already buffering) emits a one-shot message via
+     * [transientMessages]. The UI surfaces those as snackbars so the play
+     * button never feels like a silent no-op. The buffering ring around
+     * the play button is the primary "I see your tap" signal; the
+     * snackbar is the second signal for cases where the ring isn't
+     * obviously connected to the user's action.
      */
     fun togglePlay() {
-        val c = controller ?: return
+        val c = controller ?: run {
+            _transientMessages.tryEmit("Player isn't connected yet — try again in a moment.")
+            return
+        }
         // Autoplay-confirmation window: a tap while the timer is counting
         // and the player is playing means "confirm continuation" — cancel
         // the timer, do NOT toggle to pause. The play button is morphed
@@ -884,12 +912,25 @@ class PlayerController(private val context: Context) {
         when {
             c.isPlaying -> c.pause()
             c.playbackState == Player.STATE_IDLE -> {
+                if (c.currentMediaItem == null) {
+                    _transientMessages.tryEmit("No episode loaded — pick one from the catalog.")
+                    return
+                }
                 c.prepare()
                 c.play()
             }
             c.playbackState == Player.STATE_ENDED -> {
                 c.seekTo(0)
                 c.play()
+            }
+            c.playbackState == Player.STATE_BUFFERING -> {
+                // Player is already trying. Tapping play again won't
+                // accelerate buffering; surface a message so the user
+                // knows we heard them and what's happening.
+                _transientMessages.tryEmit(
+                    "Buffering — waiting on the network. Far seek + slow connection takes a bit."
+                )
+                c.play()  // keeps playWhenReady=true; harmless in BUFFERING.
             }
             else -> c.play()
         }
