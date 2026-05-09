@@ -2,6 +2,41 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EqScreen: thumb-only band sliders + "Audio Fine-tuning" title
+
+User report: scrolling up/down the EQ screen kept catching slider tracks
+and producing accidental band tweaks. Root cause: Material3's `Slider`
+listens for taps + drags across the entire track, so any vertical scroll
+that crossed a band slider got hijacked into a horizontal drag of that
+band.
+
+Fix: replace the band-row `Slider` with a custom `BandSlider` that only
+listens to drags starting on the thumb circle itself. The track is now
+purely decorative — touches on the bare track propagate to the parent
+verticalScroll Column, so the page scrolls cleanly even when the
+finger lands on a slider line. Drag mechanics on the thumb are
+preserved (cumulative-delta from drag start, snapped to the same 23
+discrete steps over the [-12 dB, +12 dB] range, accent color matches
+the override-state tint).
+
+Visuals: full-width inactive track + a center tick at the 0 dB home
+position (so the user can see how far each band is shaped relative to
+flat) + an active track segment from the center to the thumb in the
+accent color. Slightly more minimal than Material3's slider — no
+ripple, no thumb scale animation — which suits the dense 10-band
+graphic-EQ row better.
+
+Trade-offs: tap-to-jump on the track is gone (the very behavior we
+were fixing). Keyboard / accessibility nav is gone (we're touch-only).
+The volume-boost slider above still uses the standard Material3
+Slider since it's a single isolated control where tap-to-jump is
+useful and accidental drag isn't a problem.
+
+Bonus: TopBar title renamed from "Audio" to "Audio Fine-tuning" so
+the screen's purpose reads more clearly from the navigation bar.
+
+ai_contamination: true # claude opus 4.7
+
 ## EqScreen: bottom Hold-to-A/B mirror under the band sliders
 
 The existing Hold-to-A/B button sits up top (under the master "Audio
