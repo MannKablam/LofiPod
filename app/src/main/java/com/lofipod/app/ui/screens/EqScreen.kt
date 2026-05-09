@@ -90,15 +90,18 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
         )
     }
 
-    // Per-podcast state for the podcast that owns the currently-playing
-    // episode. Drives the two per-podcast toggles below (disable / one-off
-    // EQ) AND the override-color tinting that signals "you're editing the
-    // per-podcast preset, not the global one." When no episode is loaded,
-    // both flows yield null and the toggles stay disabled.
-    //
-    // Per-podcast (not per-episode) since v0.6.11 — the user expectation
-    // was always "tweaking EQ for an episode of a podcast applies to that
-    // whole podcast." Per-episode granularity wasn't useful.
+    // EQ state model (v0.6.12 reshape):
+    //   - There is NO global EQ. Each podcast owns its own tuning, stored
+    //     in `podcast_state.eqBandsCsvOverride`. An episode normally
+    //     inherits its podcast's EQ.
+    //   - The one "For this episode" toggle below is a per-episode branch
+    //     point: when on, slider edits route to `episode_state.eqBandsCsvOverride`
+    //     for the currently-playing guid (a one-off override for that
+    //     episode only). When off, slider edits write back to the podcast's
+    //     EQ — i.e. the slider IS the podcast's tuning interface.
+    //   - "Disable EQ" is gone as a concept. To mute the chain for an
+    //     episode or podcast, set bands to flat (the existing master "Audio
+    //     enhancement" toggle still gates the whole DSP chain globally).
     val currentEpisodeGuid = playerState.currentEpisodeGuid
     val episodeStateFlow = remember(currentEpisodeGuid) {
         if (currentEpisodeGuid == null) {
@@ -117,16 +120,15 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
         }
     }
     val podcastState by podcastStateFlow.collectAsState(initial = null)
-    val eqDisabledForPodcast = podcastState?.eqDisabled ?: false
-    val podcastOverrideOn = (podcastState?.eqBandsCsvOverride != null)
+    val episodeOverrideOn = (episodeState?.eqBandsCsvOverride != null)
 
-    // When override is active, controls re-tint to the override color so the
-    // user has a visible reminder that slider movement is shaping a
-    // per-podcast preset, not the global one. Tertiary is distinct enough
-    // from primary that it reads at a glance while still feeling part of
-    // the palette.
+    // When the episode-override is on, controls re-tint to the override
+    // color so the user has a visible reminder that slider movement is
+    // shaping a one-off preset for this single episode rather than the
+    // podcast's tuning. Tertiary is distinct enough from primary that it
+    // reads at a glance while still feeling part of the palette.
     val overrideColor = MaterialTheme.colorScheme.tertiary
-    val accentColor = if (podcastOverrideOn) overrideColor
+    val accentColor = if (episodeOverrideOn) overrideColor
                       else MaterialTheme.colorScheme.primary
     val sliderColors = SliderDefaults.colors(
         thumbColor = accentColor,
@@ -156,25 +158,42 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     }
 
     /**
-     * Persist the current band gains. When the per-podcast override is active
-     * for the podcast that owns the currently-playing episode, writes go to
-     * that podcast's row in `podcast_state.eqBandsCsvOverride`; otherwise
-     * they go to the global `Settings.eqBandsCsv`. In both cases the CSV
-     * format is one float per ISO band (gain in dB), in band order. Centers
-     * + Q come from `EqPresets.DEFAULT_BANDS` so only user-controlled gains
-     * round-trip.
+     * Persist the current band gains. Routing depends on whether the episode-
+     * override toggle is on:
+     *   - **Override on** + episode loaded: writes to that episode's
+     *     `episode_state.eqBandsCsvOverride` (one-off branch).
+     *   - **Override off** + podcast in scope: writes to the podcast's
+     *     `podcast_state.eqBandsCsvOverride` — i.e. the slider IS the
+     *     podcast's EQ.
+     *   - **No episode loaded**: writes nowhere. Slider movement still
+     *     mutates the live processor (transient preview), but there's no
+     *     persistence target without a podcast or episode in scope.
+     *
+     * CSV format is one float per ISO band (gain in dB) in band order.
+     * Centers + Q come from `EqPresets.DEFAULT_BANDS` so only user-
+     * controlled gains round-trip.
      */
     fun persistBands(latest: List<EqBand>) {
         val csv = latest.joinToString(",") { it.gainDb.toString() }
-        val routeToOverride = podcastOverrideOn && currentFeedUrl != null
+        val routeToEpisodeOverride = episodeOverrideOn && currentEpisodeGuid != null
+        val routeToPodcast = !episodeOverrideOn && currentFeedUrl != null
         composeScope.launch {
             withContext(Dispatchers.IO) {
-                if (routeToOverride) {
-                    val dao = app.db.podcastStateDao()
-                    dao.ensureRow(currentFeedUrl!!)
-                    dao.setEqBandsCsvOverride(currentFeedUrl, csv)
-                } else {
-                    settings.setEqBandsCsv(csv)
+                when {
+                    routeToEpisodeOverride -> {
+                        app.db.episodeStateDao().setEqBandsCsvOverride(currentEpisodeGuid!!, csv)
+                    }
+                    routeToPodcast -> {
+                        val dao = app.db.podcastStateDao()
+                        dao.ensureRow(currentFeedUrl!!)
+                        dao.setEqBandsCsvOverride(currentFeedUrl, csv)
+                    }
+                    else -> {
+                        // No scope — transient preview only. Slider movement
+                        // still affects the live processor (eq.setBands was
+                        // already called by the caller); we just don't
+                        // persist anywhere.
+                    }
                 }
             }
         }
@@ -329,92 +348,65 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
             // it's a sibling affordance: master toggle = persistent off; this
             // = momentary off for A/B.
             HoldToBypassButton(
-                effectiveChainEnabled = audioEnhancementEnabled && !eqDisabledForPodcast,
+                effectiveChainEnabled = audioEnhancementEnabled,
                 onPress = { eq.setEnabled(false) },
                 // Restore to TRUE because the button is only enabled when the
                 // chain is currently effectively on (see effectiveChainEnabled
-                // gate). If master or per-episode disable were on, the button
-                // would have been inert in the first place — race-free.
+                // gate). If the master toggle were off, the button would have
+                // been inert in the first place — race-free.
                 onRelease = { eq.setEnabled(true) },
             )
             Spacer(Modifier.height(20.dp))
 
-            // ---- Per-podcast controls. Both rows are inert when no episode
-            // is loaded (= no podcast in scope). The override toggle re-tints
-            // the EQ controls below in the override color so the user has a
-            // persistent visual reminder that slider movement is shaping a
-            // per-podcast preset rather than the global one.
+            // ---- One-off episode override. The default behavior (toggle off)
+            // is that the sliders below ARE the current podcast's EQ —
+            // edits go straight to podcast_state. Toggling this on branches
+            // to a single-episode override stored on episode_state.
+            // Toggling off discards the branch and falls back to the
+            // podcast's tuning.
             //
-            // Per-podcast (not per-episode) since v0.6.11 — the user's
-            // expectation was always "tweaking EQ for an episode of a
-            // podcast applies to that whole podcast." ----
-            Text("For this podcast", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            val podcastControlsEnabled = currentFeedUrl != null
-            val perPodcastSwitchColors = SwitchDefaults.colors(
+            // No "disable EQ" toggles — to mute the chain for an episode or
+            // podcast, set bands to flat. The master "Audio enhancement"
+            // toggle above gates the whole DSP chain globally. ----
+            val episodeControlsEnabled = currentEpisodeGuid != null
+            val perEpisodeSwitchColors = SwitchDefaults.colors(
                 checkedThumbColor = overrideColor,
                 checkedTrackColor = overrideColor.copy(alpha = 0.5f),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(
-                    checked = eqDisabledForPodcast,
-                    enabled = podcastControlsEnabled,
+                    checked = episodeOverrideOn,
+                    enabled = episodeControlsEnabled,
+                    colors = perEpisodeSwitchColors,
                     onCheckedChange = { v ->
-                        val feedUrl = currentFeedUrl ?: return@Switch
                         val guid = currentEpisodeGuid ?: return@Switch
-                        composeScope.launch {
-                            withContext(Dispatchers.IO) {
-                                val dao = app.db.podcastStateDao()
-                                dao.ensureRow(feedUrl)
-                                dao.setEqDisabled(feedUrl, v)
-                            }
-                            controller.applyEqOverrideFor(guid)
-                        }
-                    },
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Disable EQ for this podcast", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Useful when a podcast's mix already sounds right and the global EQ would change it. Forces full passthrough for every episode of this podcast.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = podcastOverrideOn,
-                    enabled = podcastControlsEnabled,
-                    colors = perPodcastSwitchColors,
-                    onCheckedChange = { v ->
-                        val feedUrl = currentFeedUrl ?: return@Switch
-                        val guid = currentEpisodeGuid ?: return@Switch
+                        // Seed the override with the currently-visible bands
+                        // so toggling on doesn't snap the audio. Clearing
+                        // (v=false) writes null and the chain falls back to
+                        // the podcast's EQ on the next applyEqOverrideFor.
                         val seedCsv = if (v) bands.joinToString(",") { it.gainDb.toString() }
                                       else null
                         composeScope.launch {
                             withContext(Dispatchers.IO) {
-                                val dao = app.db.podcastStateDao()
-                                dao.ensureRow(feedUrl)
-                                dao.setEqBandsCsvOverride(feedUrl, seedCsv)
+                                app.db.episodeStateDao()
+                                    .setEqBandsCsvOverride(guid, seedCsv)
                             }
-                            // Re-evaluate the live processor: when seeding,
-                            // it'll pick up the new override; when clearing,
-                            // it'll fall back to global Settings bands.
                             controller.applyEqOverrideFor(guid)
                             // After clearing, sync the visible bands to
-                            // whatever the global value is so the screen
-                            // doesn't keep showing (now-stale) override values.
+                            // whatever the podcast's EQ resolves to so the
+                            // screen doesn't keep showing the now-stale
+                            // one-off values.
                             if (!v) bands = eq.currentBands()
                         }
                     },
                 )
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Use a custom EQ for this podcast", style = MaterialTheme.typography.bodyMedium)
+                    Text("Use a one-off EQ for this episode", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "Slider changes save to this podcast only. The override color marks the EQ controls while it's on. Applies to every episode in this feed.",
+                        "Branches off this podcast's EQ for this episode only. " +
+                            "Toggle off to re-inherit the podcast's tuning. The override " +
+                            "color marks the EQ controls while it's on.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
