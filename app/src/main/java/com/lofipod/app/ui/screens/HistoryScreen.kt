@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
@@ -192,10 +193,22 @@ private fun FilterChipRow(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
+        // "All" gets a leading icon for visual rhythm with the per-reason
+        // chips below. Without one, the row alternates icon-vs-no-icon and
+        // chip widths fight each other (the "Sessions" chip in particular
+        // looked oddly wide next to the icon-less All). Uniform chip shape
+        // = readable rhythm even when counts vary.
         FilterChip(
             selected = active == null,
             onClick = { onPick(null) },
-            label = { Text("All (${rows.size})") }
+            label = { Text("All (${rows.size})") },
+            leadingIcon = {
+                Icon(
+                    Icons.AutoMirrored.Filled.List,
+                    null,
+                    modifier = Modifier.size(16.dp),
+                )
+            },
         )
         val reasonOrder = listOf(
             PlayerController.REASON_PROMOTED_TO_MOST_EXCELLENT,

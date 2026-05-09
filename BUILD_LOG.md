@@ -2,6 +2,53 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## UI roundup: Tune icon, MyLists tab hearts, history filter, tab fullscreen
+
+Five small UX cleanups shipped together:
+
+**Audio Fine-tuning ↔ Now Playing icons split.** Both used `GraphicEq`,
+which made the Player top-bar's "Audio Fine-tuning" button visually
+collide with the "Now Playing" affordance in Catalog overflow + Player
+top-left. Fine-tuning now uses `Tune` (slider knobs); Now Playing keeps
+`GraphicEq` (pulsing-bar live-audio glyph) and stays consistent across
+Catalog overflow and Player top-bar. Catalog overflow row also relabeled
+"EQ & speed" → "Audio Fine-tuning" to match the page title.
+
+**MyLists tabs no longer cut off.** "Excellent" and "Most-excellent"
+text labels were long enough on phone widths that the strip needed to
+scroll. Replaced text with the established heart vocabulary:
+- Queue → "Queue (n)" *(unchanged)*
+- Excellent → ♥ + "(n)"
+- Most-excellent → ♥ + small pulsing-gold ♥ + "(n)" *(mirrors
+  PlayerHeartIcon's tier-2 visual elsewhere)*
+- Downloaded → "Downloaded" *(unchanged)*
+
+The whole strip now fits without horizontal scroll on standard phone
+widths.
+
+**Playback history "All" filter chip got a leading icon.** Was
+text-only while the per-reason chips had icon+text — broke the row's
+visual rhythm and made the wider-counted Sessions chip look oddly
+weighted. Added an `AutoMirrored.List` icon to All; uniform shape
+across the row regardless of count digits.
+
+**Player tabs: tap active tab → fullscreen.** Stylish move for
+focused reading. Tapping the currently-selected tab on the Player
+screen's bottom tabs (Notes / Details / Transcript) collapses the
+upper Player UI (artwork, title, scrubber, transport) entirely and
+gives the tab content the whole screen below the top bar. Tap the
+active tab again to collapse back. Tap a different tab to switch
+content (stays in fullscreen if currently fullscreen). Per-screen
+state — resets when navigating away.
+
+**Transcript tab hidden when no transcript.** Most podcasts don't
+ship a transcript URL in their kabod metadata. Surfacing an empty
+"Transcript" tab for the 90% case was clutter. The Transcript tab
+is now driven by `episode_kabod.transcriptUrl` non-blank, falling
+back to a 2-tab strip (Notes / Details) otherwise.
+
+ai_contamination: true # claude opus 4.7
+
 ## EqScreen header links + watchdog visibility + drop the pixel font
 
 Three small UX cleanups bundled:
