@@ -56,6 +56,16 @@ class BeepPlayer(private val player: Player) {
         sampleRate = SAMPLE_RATE,
     )
 
+    /** Shorter tone for the playback-handoff cue (HTTP -> local file swap).
+     *  80 ms is just long enough to register as an intentional ping rather
+     *  than a click — short enough that a 2-beep cue lands in ~200 ms total
+     *  and partially fills the audio gap from setMediaItem + prepare. */
+    private val quickToneBuffer: ShortArray = synthesizePiezoTone(
+        freqHz = TONE_FREQ_HZ,
+        durationMs = QUICK_BEEP_DURATION_MS,
+        sampleRate = SAMPLE_RATE,
+    )
+
     /**
      * Play [count] short beeps in sequence, [BEEP_GAP_MS] apart. Ducks
      * `player.volume` to 0 for the duration of each tone and restores in a
@@ -66,6 +76,41 @@ class BeepPlayer(private val player: Player) {
         repeat(count) { i ->
             if (i > 0) delay(BEEP_GAP_MS)
             duckedBeep()
+        }
+    }
+
+    /**
+     * Two short tones, no ducking. Used as the handoff cue when the
+     * player swaps from HTTP streaming to a freshly-completed local
+     * file mid-playback — the swap itself causes a brief silent gap
+     * (setMediaItem + prepare), and these beeps land inside that gap
+     * to make the transition feel intentional rather than glitched.
+     *
+     * No `pause()/play()` ducking because the swap already silences
+     * the source for ~50–100 ms; we don't want to extend that with a
+     * full BEEP_DURATION_MS pause-and-resume cycle.
+     */
+    suspend fun playHandoffCue() {
+        repeat(2) { i ->
+            if (i > 0) delay(QUICK_BEEP_GAP_MS)
+            unduckedBeep(quickToneBuffer)
+        }
+    }
+
+    private suspend fun unduckedBeep(buf: ShortArray) {
+        var track: AudioTrack? = null
+        try {
+            track = buildTrack(buf.size)
+            runCatching { track.setVolume(BEEP_TRACK_VOLUME) }
+            track.write(buf, 0, buf.size)
+            track.play()
+            delay(buf.size * 1000L / SAMPLE_RATE)
+        } catch (e: Exception) {
+            // OEM audio quirks (rare). Degrade quietly.
+            Log.w(TAG, "Unducked beep failed; skipping handoff cue", e)
+        } finally {
+            runCatching { track?.stop() }
+            runCatching { track?.release() }
         }
     }
 
@@ -109,11 +154,10 @@ class BeepPlayer(private val player: Player) {
         }
     }
 
-    private fun buildTrack(): AudioTrack {
+    private fun buildTrack(samples: Int = toneBuffer.size): AudioTrack {
         // A fresh AudioTrack per beep keeps state simple — no need to track
         // playback-head position or reset between strikes. The allocation
-        // cost is small (~22 KB buffer at 22 kHz / 500 ms) and beeps fire at
-        // most once per minute.
+        // cost is small and beeps fire at most a few times per session.
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -126,7 +170,7 @@ class BeepPlayer(private val player: Player) {
         return AudioTrack(
             attrs,
             fmt,
-            toneBuffer.size * 2,  // bytes (int16)
+            samples * 2,  // bytes (int16)
             AudioTrack.MODE_STATIC,
             AudioManager.AUDIO_SESSION_ID_GENERATE,
         )
@@ -155,6 +199,12 @@ class BeepPlayer(private val player: Player) {
         // than a click.
         const val BEEP_DURATION_MS = 500L
         const val BEEP_GAP_MS = 500L
+
+        /** Handoff-cue tone duration. Short enough to feel like a quick
+         *  ping ("✓✓") rather than an alarm. Total cue with one gap
+         *  lands at 80 + 40 + 80 = 200 ms. */
+        const val QUICK_BEEP_DURATION_MS = 80L
+        const val QUICK_BEEP_GAP_MS = 40L
 
         // 22.05 kHz mono is plenty of headroom for a 2.7 kHz fundamental
         // (Nyquist is 11 kHz; the square wave's harmonics up to ~9 kHz pass

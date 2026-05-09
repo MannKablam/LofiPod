@@ -2,6 +2,46 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Mid-playback handoff to local file + orphan sweep + audiophile reflow
+
+Three improvements bundled:
+
+**Mid-playback handoff to local file.** When an episode is being
+streamed over HTTP and its auto-download completes mid-listen, the
+player now swaps the MediaItem to the local `file://` URI without
+making the user reset the episode. Mechanics:
+- New `observeDownloadCompletion` collector in `PlayerController` —
+  watches `downloadsApi.byId` for the currently-playing guid.
+- Trigger conditions: state flips to COMPLETED + current MediaItem
+  URI scheme is HTTP + we haven't already triggered for this guid.
+- Snapshot position + playWhenReady, build a new `file://` MediaItem
+  with the same metadata, fire a quick double-beep cue in parallel
+  via `BeepPlayer.playHandoffCue` (two 80 ms tones, 40 ms gap, no
+  player ducking — fills the brief silence from setMediaItem +
+  prepare so the swap reads as intentional rather than a glitch),
+  setMediaItem(item, savedPosMs), prepare(), play() if was playing.
+- Snackbar: "Playback branched to downloaded file."
+
+**Orphan-file sweep.** `LofiPodDownloader.cleanupOrphans()` runs once
+at startup after `hydrate()`. Lists files in `episode_audio/` and
+deletes any whose path doesn't appear in the `lofi_download` DAO.
+Safety net for the rare leak (delete failure during `remove()`, app
+crash mid-cleanup, etc.). The single-file-per-episode invariant is
+already enforced by the deterministic SHA256-derived filename + the
+delete-on-remove path; this is the catch-all.
+
+**Audiophile notes — natural-width prose reflow.** User report:
+"the text on this page is poorly formatted. lines are split to next
+lines in what appears to be arbitrary." Root cause: the `"""`-style
+raw-string constants are hard-wrapped at fixed column widths in the
+source, and Compose's `Text` honors those line breaks at render. New
+`reflowProse()` joins prose paragraph lines with single spaces (so
+they re-wrap to actual device width) while preserving indented
+blocks (the signal-chain ASCII art, latency math) by detecting
+leading-2-spaces lines and leaving those paragraphs verbatim.
+
+ai_contamination: true # claude opus 4.7
+
 ## Fix: completedFile() saw stale empty StateFlow on cold start
 
 User report: 2x on a downloaded episode hit "waiting on network"

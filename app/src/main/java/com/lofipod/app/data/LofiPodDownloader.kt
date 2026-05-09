@@ -110,7 +110,38 @@ class LofiPodDownloader(
         // the first UI collect lands. runBlocking on IO is acceptable here —
         // construction happens once at app startup, on a warmup coroutine
         // (LofiPodApp), so we're not stalling the main thread.
-        cleanupScope.launch { hydrate() }
+        cleanupScope.launch {
+            hydrate()
+            // After hydrate, sweep the downloads directory for any file
+            // whose path doesn't appear in the DAO. Belt-and-braces against
+            // a remove() whose file-delete failed mid-cleanup, an app
+            // crash between row-delete and file-delete, or any other path
+            // that could leak an orphan file. The single-file-per-episode
+            // invariant is already enforced by the deterministic SHA256-
+            // derived filename + delete-on-remove path; this is the
+            // safety net for the rare leak.
+            cleanupOrphans()
+        }
+    }
+
+    /**
+     * Walk [downloadsDir] and delete any file whose path doesn't appear in
+     * [downloadDao]. Called once at startup after [hydrate]. Single-file-per-
+     * episode invariant: each guid maps to one canonical
+     * `<sha256(guid)[0..16]>.bin` filename, [start] writes there, [remove]
+     * deletes there. With this sweep, even rare leaks (delete failure, app
+     * crash mid-remove) get cleaned up at the next launch.
+     */
+    private suspend fun cleanupOrphans() {
+        val knownPaths = withContext(Dispatchers.IO) {
+            downloadDao.getAll().map { it.filePath }.toSet()
+        }
+        val files = downloadsDir.listFiles() ?: return
+        for (f in files) {
+            if (f.absolutePath !in knownPaths) {
+                runCatching { f.delete() }
+            }
+        }
     }
 
     private suspend fun hydrate() {
