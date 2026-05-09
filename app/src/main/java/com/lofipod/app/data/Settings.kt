@@ -148,12 +148,11 @@ class Settings(private val context: Context) {
 
     /**
      * Master "Audio enhancement" toggle from the EQ screen. Default true.
-     * Distinct from the per-episode `episode_state.eqDisabled` override —
+     * Distinct from the per-podcast `podcast_state.eqDisabled` override —
      * both feed into [com.lofipod.app.player.PlayerController.applyEqOverrideFor],
-     * which applies effective enabled = (global && !episodeDisabled). Persisting
+     * which applies effective enabled = (global && !podcastDisabled). Persisting
      * here means the global toggle survives navigation and isn't silently
-     * overwritten by per-episode overrides on track transition (the bug it
-     * was added to fix).
+     * overwritten by per-podcast overrides on track transition.
      */
     val audioEnhancementEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[KEY_AUDIO_ENHANCEMENT_ENABLED] ?: true }

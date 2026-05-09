@@ -256,6 +256,25 @@ interface PodcastStateDao {
      */
     @Query("UPDATE podcast_state SET defaultSpeed = :speed WHERE feedUrl = :feedUrl")
     suspend fun setDefaultSpeed(feedUrl: String, speed: Float?)
+
+    /**
+     * Insert a row with default values for [feedUrl] if one doesn't already
+     * exist. Used by the per-podcast setters below to guarantee the row is
+     * present before issuing the targeted UPDATE.
+     */
+    @Query(
+        "INSERT OR IGNORE INTO podcast_state(feedUrl, defaultSpeed, eqDisabled, eqBandsCsvOverride) " +
+            "VALUES(:feedUrl, NULL, 0, NULL)"
+    )
+    suspend fun ensureRow(feedUrl: String)
+
+    /** Set the per-podcast "disable EQ" flag. Caller should [ensureRow] first. */
+    @Query("UPDATE podcast_state SET eqDisabled = :disabled WHERE feedUrl = :feedUrl")
+    suspend fun setEqDisabled(feedUrl: String, disabled: Boolean)
+
+    /** Set the per-podcast EQ band override (CSV of dB gains, or null to clear). */
+    @Query("UPDATE podcast_state SET eqBandsCsvOverride = :csv WHERE feedUrl = :feedUrl")
+    suspend fun setEqBandsCsvOverride(feedUrl: String, csv: String?)
 }
 
 @Dao
@@ -452,7 +471,7 @@ interface LofiDownloadDao {
         EpisodeScriptureEntity::class,
         LofiDownloadEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -757,6 +776,70 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v16 → v17: lift per-episode EQ override (eqDisabled,
+         * eqBandsCsvOverride on episode_state) up to the podcast level
+         * (podcast_state). The user's expectation was always "tweak EQ
+         * for this podcast" — per-episode granularity wasn't useful in
+         * practice. Backfill: for each feedUrl that has at least one
+         * episode with an override, copy the most-recently-played
+         * episode's override to a podcast_state row. The episode_state
+         * columns stay (SQLite ALTER TABLE can't drop columns without
+         * recreating the table) but are no longer read.
+         */
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE podcast_state ADD COLUMN eqDisabled INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE podcast_state ADD COLUMN eqBandsCsvOverride TEXT"
+                )
+                // Ensure a podcast_state row exists for every feedUrl that
+                // had an episode-level override. INSERT OR IGNORE skips
+                // any feedUrl that already has a row.
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO podcast_state(feedUrl, defaultSpeed, eqDisabled, eqBandsCsvOverride)
+                    SELECT DISTINCT feedUrl, NULL, 0, NULL
+                    FROM episode_state
+                    WHERE eqBandsCsvOverride IS NOT NULL OR eqDisabled = 1
+                    """.trimIndent()
+                )
+                // Backfill eqDisabled: if any episode of a feed had it
+                // set, the podcast inherits it. (One-way OR — we never
+                // demote a feed by aggregating across episodes.)
+                db.execSQL(
+                    """
+                    UPDATE podcast_state
+                    SET eqDisabled = 1
+                    WHERE feedUrl IN (
+                        SELECT DISTINCT feedUrl FROM episode_state WHERE eqDisabled = 1
+                    )
+                    """.trimIndent()
+                )
+                // Backfill eqBandsCsvOverride: take the most-recently-
+                // played episode's override per feed. Episodes that
+                // haven't been played (lastPlayedMillis = 0) sort last.
+                db.execSQL(
+                    """
+                    UPDATE podcast_state
+                    SET eqBandsCsvOverride = (
+                        SELECT eqBandsCsvOverride FROM episode_state e
+                        WHERE e.feedUrl = podcast_state.feedUrl
+                        AND e.eqBandsCsvOverride IS NOT NULL
+                        ORDER BY e.lastPlayedMillis DESC
+                        LIMIT 1
+                    )
+                    WHERE feedUrl IN (
+                        SELECT DISTINCT feedUrl FROM episode_state
+                        WHERE eqBandsCsvOverride IS NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
          * v15 → v16: add lofi_download table. The OkHttp-based downloader's
          * persistent state — replaces Media3's StandaloneDatabaseProvider +
          * DownloadIndex which we ditched in v0.6.9 after four versions of
@@ -860,7 +943,7 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_9_10), timed(MIGRATION_10_11),
                         timed(MIGRATION_11_12), timed(MIGRATION_12_13),
                         timed(MIGRATION_13_14), timed(MIGRATION_14_15),
-                        timed(MIGRATION_15_16)
+                        timed(MIGRATION_15_16), timed(MIGRATION_16_17)
                     )
                     .build().also { instance = it }
             }

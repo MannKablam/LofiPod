@@ -25,9 +25,10 @@ data class EpisodeStateEntity(
     val lastPlayedMillis: Long = 0L,
     val cumulativeListenMs: Long = 0L,
     /**
-     * When true, audio enhancement (EQ + boost) is forced off for this episode
-     * regardless of the global setting. Useful for guest-heavy episodes whose
-     * voice profile doesn't match the podcast's usual host-tuned EQ.
+     * **Deprecated as of v0.6.11.** EQ override moved to the podcast level
+     * (`podcast_state.eqDisabled`). Column kept on the schema so old backups
+     * round-trip cleanly and so the v16 → v17 migration's source data isn't
+     * destroyed; no code reads it. Safe to ignore on new code paths.
      */
     val eqDisabled: Boolean = false,
     /**
@@ -40,12 +41,10 @@ data class EpisodeStateEntity(
      */
     val archivedAt: Long = 0L,
     /**
-     * Per-episode EQ override bands (CSV of band gains in dB). Null = no
-     * override; the global Settings.eqBandsCsv applies. Set non-null when the
-     * user enables the "Use a one-off EQ for this episode" toggle in the
-     * audio settings screen. Independent of [eqDisabled] — that flag mutes
-     * the chain entirely; this one swaps in different band gains while still
-     * letting the chain run.
+     * **Deprecated as of v0.6.11.** EQ override moved to the podcast level
+     * (`podcast_state.eqBandsCsvOverride`). Column kept on the schema so
+     * old backups round-trip and so the v16 → v17 migration's source data
+     * isn't destroyed; no code reads it. Safe to ignore on new code paths.
      */
     val eqBandsCsvOverride: String? = null
 )
