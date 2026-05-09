@@ -2,6 +2,28 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Episode size readout: simpler format + bottom-right placement
+
+Two refinements on v0.6.23's `s=Nmb; d=Nmb` design:
+
+- **Drop the `s=`/`d=` prefixes.** Streaming and downloading both pull
+  the full enclosure, so the dual readout was redundant — just `Nmb`
+  reads cleanly and trusts the user to know what it means.
+- **Move it to the bottom-right corner.** On EpisodeRow it sits below
+  the action row (Play / Download / Queue / Heart) right-aligned; on
+  PlayerScreen it sits below the playback bar's position/duration
+  pair, right-aligned. Both screens treat it as a passive vital stat
+  rather than competing with primary controls.
+
+Plumbing on PlayerScreen: new `episodeSizeBytes` state loaded by a
+`LaunchedEffect(displayedGuid, isPreview, previewData)` that pulls
+from `previewData.episode` in preview mode and via
+`episode_state -> repo.cached(feedUrl) -> Episode` for live. Refreshes
+on track transitions + live ⇄ preview swap. Hidden when the feed
+didn't publish an enclosure length.
+
+ai_contamination: true # claude opus 4.7
+
 ## Episode size readout + stale APK cache cleanup
 
 Two fixes prompted by user reports:

@@ -130,6 +130,13 @@ fun PlayerScreen(
     // automatically as downloads progress / change state.
     val downloadsByGuid by app.downloadsApi.byId.collectAsState()
 
+    // Audio file size for the displayed episode — drives the single-figure
+    // size readout below the playback bar. For preview, comes from the
+    // already-loaded Episode in [previewData]. For live, looked up via
+    // episode_state -> repo cache -> Episode. Refreshed when [displayedGuid]
+    // changes (track transition / live-vs-preview swap).
+    var episodeSizeBytes by remember { mutableStateOf<Long?>(null) }
+
     // Resolve preview data once per [previewGuid]. Loaded async because we
     // hit the DB; stays null until ready (we render a brief loading state
     // for that window — usually invisible because the cache lookup is fast).
@@ -146,6 +153,22 @@ fun PlayerScreen(
 
     /** The guid the screen is rendering data for. Drives heart, tabs, etc. */
     val displayedGuid: String? = if (isPreview) previewGuid else state.currentEpisodeGuid
+
+    // Refresh size readout when the displayed guid changes. For preview,
+    // pulled directly from the Episode object once it's loaded. For live,
+    // looked up via episode_state -> repo cache to find the parsed Episode
+    // (single DB read + one in-memory list scan, runs off the IO dispatcher).
+    LaunchedEffect(displayedGuid, isPreview, previewData) {
+        episodeSizeBytes = when {
+            displayedGuid == null -> null
+            isPreview -> previewData?.episode?.audioByteSize
+            else -> withContext(Dispatchers.IO) {
+                val state = app.db.episodeStateDao().get(displayedGuid)
+                val pod = state?.let { app.repo.cached(it.feedUrl) }
+                pod?.episodes?.find { it.guid == displayedGuid }?.audioByteSize
+            }
+        }
+    }
 
     // Live favorite tier for whichever episode is being displayed (live or
     // preview). Observed so the top-bar heart stays in sync if the user
@@ -492,6 +515,22 @@ fun PlayerScreen(
                     Text(formatTime(positionMs), style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.weight(1f))
                     Text(formatTime(durationMs), style = MaterialTheme.typography.bodyLarge)
+                }
+                // Single-figure size readout, bottom-right of the playback
+                // bar. Streaming and downloading both pull the full
+                // enclosure file so one number covers both questions
+                // ("how much data?" / "how much disk?"). Hidden when the
+                // feed didn't publish an enclosure length.
+                episodeSizeBytes?.let { bytes ->
+                    Spacer(Modifier.height(2.dp))
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            formatMb(bytes),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1152,4 +1191,13 @@ private fun formatTime(ms: Long): String {
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+/** Same byte-size formatter the EpisodeRow uses — single number, whole
+ *  megabytes, "<1mb" floor for tiny clips. Duplicated here rather than
+ *  shared because the call sites are local to two screens; if a third
+ *  screen needs it, extract to a util. */
+private fun formatMb(bytes: Long): String {
+    val mb = bytes / 1_048_576L
+    return if (mb == 0L) "<1mb" else "${mb}mb"
 }
