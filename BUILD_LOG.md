@@ -2,6 +2,42 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Fix: completedFile() saw stale empty StateFlow on cold start
+
+User report: 2x on a downloaded episode hit "waiting on network"
+within a minute, even though the file was on disk. Streaming over
+HTTP, not playing the local file.
+
+Root cause: `LofiPodDownloader.completedFile(guid)` only checked the
+in-memory `byId` StateFlow. That map is hydrated from Room
+asynchronously via `init { cleanupScope.launch { hydrate() } }`. If
+the user taps an episode early in the app lifecycle (before hydrate
+completes), the fast path returns null and `playEpisode` falls back
+to the HTTP URL. ExoPlayer locks onto that URI for the lifetime of
+the MediaItem — so even after hydrate finishes, the player keeps
+streaming the remote source. At 2x speed that races the buffer empty
+within a minute and surfaces the misleading "waiting on network"
+snackbar despite the file being right there on disk.
+
+Fix: `completedFile` is now suspend with a two-tier lookup:
+1. Fast path reads `byId.value` (steady-state hit).
+2. Cold-start fallback queries `downloadDao.get(guid)` directly. A
+   row with state=COMPLETED + file present on disk is safe to play
+   even before the StateFlow catches up.
+
+The PlayerController call site is already inside a `scope.launch`
+coroutine, so the suspend signature change just works at the call
+site — no plumbing changes elsewhere.
+
+(Open issue not addressed here: if a download FINISHES during
+playback of the same episode, the player keeps streaming HTTP
+because MediaItem URI is fixed at construction time. That's a
+separate "swap MediaItem mid-playback" feature; would cause a brief
+audible interruption when swapping. Hold off until we see if it
+matters in practice.)
+
+ai_contamination: true # claude opus 4.7
+
 ## Stall watchdog: tighter, surfaced to the UI, snackbar feedback
 
 User report: at 2x on a downloaded episode the cycling-position
