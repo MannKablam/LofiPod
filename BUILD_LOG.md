@@ -2,6 +2,40 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Stall watchdog: auto-flush when the renderer cycles its last decoded buffer
+
+User correction on the v0.6.15 buffer-bump theory: the episodes
+exhibiting the 2x cycling-position bug were already downloaded —
+playback was reading from local files via FileDataSource, so source-
+side network buffer was never the constraint. The cycling 43:31..43:36
+loop was a **renderer underrun**: the DSP chain (probably linear-phase
+EQ + the rest of EqAudioProcessor) couldn't feed Sonic fast enough at
+2x source consumption rate, the audio sink emptied, and ExoPlayer
+recovered by replaying the last decoded ~5 s of buffer indefinitely
+until something forced a flush.
+
+The bigger source buffers from v0.6.15 don't fix this case (source is
+already fully available). The DSP path needs a watchdog.
+
+Add a stall watchdog to PlayerController:
+- Started by `Player.Listener.onIsPlayingChanged` when isPlaying flips
+  to true; stopped on the inverse.
+- Polls `Player.currentPosition` every 2 s.
+- Tracks the running max position. If max hasn't advanced in 10 s
+  while the player still claims to be playing, force a recovery via
+  `seekTo(currentPosition)` — that flushes the audio sink and re-syncs
+  the renderer chain (the same recovery the user observed naturally).
+- Logs each stall to `AppDiagnostics.recordOther("renderer_stall", ...)`
+  with the playback speed at the time, so we can see how often this
+  fires across builds. Frequent fires mean the DSP is the root issue
+  and the watchdog is a band-aid.
+
+10 s threshold chosen because the cycling cycles were ~5 s of decoded
+buffer; by 10 s of no-max-advance we're confidently in stall
+territory and not just buffering.
+
+ai_contamination: true # claude opus 4.7
+
 ## Playback robustness: bigger buffers + snackbar feedback on stuck taps
 
 Three user reports, one root cause + one UX gap:

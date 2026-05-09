@@ -24,6 +24,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -113,6 +115,31 @@ class PlayerController(private val context: Context) {
      */
     private val _transientMessages = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 4)
     val transientMessages: SharedFlow<String> = _transientMessages.asSharedFlow()
+
+    /**
+     * Stall watchdog. While the player thinks it's playing
+     * (`isPlaying && playWhenReady`), poll [Player.currentPosition] every
+     * [STALL_POLL_INTERVAL_MS] and flag a stall if the running max
+     * position hasn't advanced for [STALL_THRESHOLD_MS]. On stall, force
+     * a recovery via `seekTo(currentPosition)` — that flushes the audio
+     * sink and re-syncs the renderer chain.
+     *
+     * The cycling-position bug at high playback speeds (user-reported in
+     * v0.6.x: 2x → position cycled `43:31..43:36` for ~7 min until a
+     * manual flush) is the renderer underrunning. The DSP chain (linear-
+     * phase EQ in particular) can't feed Sonic fast enough at 2x source
+     * consumption rate, the audio sink underruns, and ExoPlayer recovers
+     * by replaying the last decoded ~5s of buffer indefinitely. The
+     * user's natural recovery — wait for a manual flush — sometimes
+     * never came. This watchdog forces it.
+     *
+     * Also logs each stall to [AppDiagnostics] so we can see how often
+     * this fires across builds. If it fires regularly, the underlying
+     * DSP perf is the real issue and the watchdog is a band-aid.
+     */
+    private var stallWatchdogJob: kotlinx.coroutines.Job? = null
+    private var lastForwardProgressPosMs: Long = 0L
+    private var lastForwardProgressAtMs: Long = 0L
 
     fun connect(onReady: () -> Unit) {
         // Pin this controller as the autoplay-confirm target for any
@@ -291,7 +318,14 @@ class PlayerController(private val context: Context) {
     val lastErrorDetails: String? get() = lastErrorVerbose
 
     private val listener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) = pushState()
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            pushState()
+            // Start the stall watchdog whenever audio is playing; cancel
+            // when paused / ended / not playing. Restart-on-resume ensures
+            // the progress-tracking baseline is always fresh — a long
+            // pause shouldn't itself trip the stall detector.
+            if (isPlaying) startStallWatchdog() else stopStallWatchdog()
+        }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             pushState()
             // Apply per-episode EQ override on transitions. Looked up from the
@@ -957,6 +991,55 @@ class PlayerController(private val context: Context) {
     }
 
     /**
+     * Begin polling [Player.currentPosition] to detect renderer stalls.
+     * Started by [Player.Listener.onIsPlayingChanged] when isPlaying flips
+     * to true; stopped on the inverse. See the field-level docstring on
+     * [stallWatchdogJob] for the why.
+     */
+    private fun startStallWatchdog() {
+        stallWatchdogJob?.cancel()
+        // Reset baseline so a freshly-started playback isn't considered
+        // stalled if the previous run left lastForwardProgressAtMs old.
+        lastForwardProgressPosMs = controller?.currentPosition ?: 0L
+        lastForwardProgressAtMs = System.currentTimeMillis()
+        stallWatchdogJob = scope.launch {
+            while (isActive) {
+                delay(STALL_POLL_INTERVAL_MS)
+                val c = controller ?: continue
+                if (!c.isPlaying || !c.playWhenReady) continue
+                val pos = c.currentPosition
+                val now = System.currentTimeMillis()
+                if (pos > lastForwardProgressPosMs) {
+                    lastForwardProgressPosMs = pos
+                    lastForwardProgressAtMs = now
+                    continue
+                }
+                // No forward progress. If we've been stalled for the full
+                // threshold AND the player still claims to be playing, the
+                // renderer is stuck. Force a flush via seek-to-self.
+                if (now - lastForwardProgressAtMs >= STALL_THRESHOLD_MS) {
+                    val recoveryPosMs = c.currentPosition
+                    c.seekTo(recoveryPosMs)
+                    com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
+                        identifier = "renderer_stall",
+                        detail = "Force-flushed at ${recoveryPosMs / 1000}s after ${(now - lastForwardProgressAtMs) / 1000}s of no progress (speed=${c.playbackParameters.speed}x).",
+                    )
+                    // Reset the baseline so we don't re-trigger immediately
+                    // if the seek itself takes a moment to register a new
+                    // currentPosition reading.
+                    lastForwardProgressPosMs = recoveryPosMs
+                    lastForwardProgressAtMs = now
+                }
+            }
+        }
+    }
+
+    private fun stopStallWatchdog() {
+        stallWatchdogJob?.cancel()
+        stallWatchdogJob = null
+    }
+
+    /**
      * Arm the autoplay-confirmation timer for [guid]. Reads the
      * `autoplayConfirmEnabled` setting first; if disabled, the autoplay
      * episode plays through with no timer (legacy behavior pre-v0.4.5).
@@ -1434,6 +1517,20 @@ class PlayerController(private val context: Context) {
         const val REASON_JUMP_FROM = "jump_from"
         const val REASON_SESSION_END = "session_end"
         const val REASON_PROMOTED_TO_MOST_EXCELLENT = "promoted_to_most_excellent"
+
+        /** Stall watchdog poll period. 2 s is fast enough that a real
+         *  stall is detected promptly (within threshold + 2 s) and slow
+         *  enough that the watchdog itself has negligible CPU cost. */
+        private const val STALL_POLL_INTERVAL_MS = 2_000L
+
+        /** No-forward-progress duration that counts as a stall. Long
+         *  enough that natural pauses for buffering / decoder warm-up
+         *  don't trip it; short enough that the user notices the
+         *  intervention rather than enduring a full 30 s of dead audio.
+         *  The cycling-position bug at 2x exhibited cycles of ~5 s, so
+         *  by 10 s of no-max-advance we're confidently in stall territory. */
+        private const val STALL_THRESHOLD_MS = 10_000L
+
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
         private const val STEP = 1024L
