@@ -178,7 +178,16 @@ fun specFor(theme: LofiTheme): LofiThemeSpec = when (theme) {
     LofiTheme.CASSETTE -> LofiThemeSpec(
         theme = theme,
         colors = CassetteScheme,
-        displayFont = PressStart2P,
+        // Used to be a bundled 8-bit pixel font (Press Start 2P / OFL). Dropped
+        // in v0.6.17 — the font itself was tying us into an OFL attribution
+        // that didn't earn its UI footprint, and the user prefers a serif
+        // wordmark anyway. System serif gives a clean Garamond-ish display
+        // family on all Android versions without bundling binaries or
+        // attribution surface. (True Adobe Garamond Pro is a paid Adobe
+        // typeface; if we ever want a specific Garamond we'd bundle a
+        // free-license Garamond like EB Garamond — same OFL footprint
+        // we just removed, so not worth it for the marginal aesthetic gain.)
+        displayFont = FontFamily.Serif,
         bodyFont = FontFamily.Default,
         accent = Color(0xFFE6B469),
         onAccent = Color(0xFF1A1B2E),

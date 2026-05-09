@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.AudioChainTelemetry
 import com.lofipod.app.audio.EqPresets
+import com.lofipod.app.diagnostics.AppDiagnostics
 import com.lofipod.app.diagnostics.StartupTimings
 import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
@@ -92,6 +93,16 @@ fun AudioDiagnosticsScreen(
     val timing = remember(tick) { AudioChainTelemetry.computeBufferTimingStats() }
     val events = remember(tick) { AudioChainTelemetry.snapshotEvents() }
     val startupPhases = remember(tick) { StartupTimings.snapshot() }
+    // Stall-watchdog firings: filtered AppDiagnostics entries. Surfaced
+    // here (not just buried in Settings → App diagnostics → Other) so the
+    // user can see at a glance whether the renderer is repeatedly
+    // recovering from underruns at high playback speeds.
+    val appEvents by AppDiagnostics.entries.collectAsState()
+    val stallEvents = remember(appEvents) {
+        appEvents.filter {
+            it.category == AppDiagnostics.Category.OTHER && it.identifier == "renderer_stall"
+        }
+    }
     val eq = PlaybackService.sharedEq
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     val gainDb = remember(playerState, tick) { eq.currentGainDb() }
@@ -196,6 +207,18 @@ fun AudioDiagnosticsScreen(
                     }
 
                     Spacer(Modifier.height(12.dp))
+                    SectionLabel("Stall watchdog (newest first)")
+                    if (stallEvents.isEmpty()) {
+                        Text(
+                            "  (no renderer stalls recorded — chain is keeping up)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(formatStallEvents(stallEvents), style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
                     SectionLabel("Startup")
                     if (startupPhases.isEmpty()) {
                         Text(
@@ -222,6 +245,7 @@ fun AudioDiagnosticsScreen(
                         playerLine = formatPlayerLine(playerState),
                         errorVerbose = errorVerbose,
                         events = events,
+                        stallEvents = stallEvents,
                         startupPhases = startupPhases,
                     )
                     copyToClipboard(ctx, text)
@@ -551,6 +575,26 @@ private fun formatEvents(events: List<AudioChainTelemetry.Event>): String {
     }
 }
 
+/**
+ * Same shape as [formatEvents] but for [AppDiagnostics.Entry] rows — used
+ * to render the stall-watchdog firings. Detail is the explanation already
+ * built by the watchdog (position + speed at recovery time).
+ */
+private fun formatStallEvents(events: List<AppDiagnostics.Entry>): String {
+    val now = System.currentTimeMillis()
+    return events.joinToString("\n") { e ->
+        val agoSec = (now - e.timestampMs) / 1000.0
+        val ago = when {
+            agoSec < 1.0 -> "<1s"
+            agoSec < 60.0 -> "${"%.0f".format(agoSec)}s"
+            agoSec < 3600.0 -> "${"%.0f".format(agoSec / 60.0)}m"
+            else -> "${"%.0f".format(agoSec / 3600.0)}h"
+        }
+        val padded = ago.padStart(5)
+        "  $padded ago  ${e.detail}"
+    }
+}
+
 private fun formatPlayerLine(p: com.lofipod.app.player.PlayerState): String {
     val playState = when {
         p.errorMessage != null -> "ERROR"
@@ -574,6 +618,7 @@ private fun buildClipboardDump(
     playerLine: String,
     errorVerbose: String?,
     events: List<AudioChainTelemetry.Event>,
+    stallEvents: List<AppDiagnostics.Entry>,
     startupPhases: List<StartupTimings.Phase>,
 ): String = buildString {
     appendLine("LofiPod audio diagnostics")
@@ -606,6 +651,10 @@ private fun buildClipboardDump(
     appendLine("[Recent events]")
     if (events.isEmpty()) appendLine("  (no events)")
     else appendLine(formatEvents(events))
+    appendLine()
+    appendLine("[Stall watchdog]")
+    if (stallEvents.isEmpty()) appendLine("  (no stalls)")
+    else appendLine(formatStallEvents(stallEvents))
     appendLine()
     appendLine("[Startup]")
     if (startupPhases.isEmpty()) appendLine("  (no phases recorded)")

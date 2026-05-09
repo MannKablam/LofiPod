@@ -2,6 +2,52 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EqScreen header links + watchdog visibility + drop the pixel font
+
+Three small UX cleanups bundled:
+
+**Audio Fine-tuning header.** Two right-justified text links at the
+very top of the screen, above the master "Audio enhancement" toggle:
+"Notes for audiophiles" first, "Audio diagnostics" below it. Reads as
+ancillary navigation rather than primary controls. Both targets were
+already reachable from Settings; this just adds a second on-ramp from
+the screen audiophiles actually live on.
+
+**Nested-parents map split.** `audioDiagnostics` and `audiophileNotes`
+used to be pinned to "settings" as their back parent in
+`NESTED_PARENTS`. With EqScreen now another entry point, that pin
+would teleport the user past EqScreen on back when they arrived from
+there. Both moved to plain `popBackStack()` so back returns to whoever
+actually navigated in. `appDiagnostics` and `notes/{guid}` stay pinned
+since they each still have one canonical parent.
+
+**Stall watchdog visibility on the diagnostics screen.** Renderer-
+stall events (the v0.6.16 watchdog firings) are now surfaced as their
+own section between "Recent events" and "Startup" on Audio
+diagnostics, with each entry showing time-ago + position + speed at
+recovery. They're also included in the "Copy to clipboard" dump so a
+bug report carries them inline. No more digging through Settings →
+App diagnostics → Other to see whether the chain is healthy.
+
+**Pixel font dropped.** The Press Start 2P bundle (TTF + OFL license
+text + `PixelFont.kt` Composable + Settings → Fonts attribution
+section) is gone. The user noted the attribution surface didn't
+earn its UI footprint; the underlying motivation ("give a nod to
+fonts we use") was the only reason it existed. Cassette theme's
+display font is now `FontFamily.Serif` — system serif renders as a
+clean Garamond-ish family on all Android versions, no binaries to
+ship, no attribution to maintain. (Adobe Garamond Pro proper is a
+paid Adobe typeface; bundling EB Garamond would have re-introduced
+the same OFL footprint we just removed, so not worth it.)
+
+**Phase mode latency / audiophile notes**: NOT affected by the recent
+playback robustness work (v0.6.15 buffer bumps, v0.6.16 stall
+watchdog). The ~6.4 ms minimum-phase / ~52 ms linear-phase chain
+latency numbers are unchanged — those are EQ-chain timings, not
+player buffer timings.
+
+ai_contamination: true # claude opus 4.7
+
 ## Stall watchdog: auto-flush when the renderer cycles its last decoded buffer
 
 User correction on the v0.6.15 buffer-bump theory: the episodes
