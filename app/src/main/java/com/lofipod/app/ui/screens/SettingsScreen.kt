@@ -50,6 +50,7 @@ fun SettingsScreen(
     onOpenAudioDiagnostics: () -> Unit = {},
     onOpenAudiophileNotes: () -> Unit = {},
     onOpenAppDiagnostics: () -> Unit = {},
+    onOpenTextSettings: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -205,6 +206,19 @@ fun SettingsScreen(
             // data when something breaks instead of "it didn't work."
             TextButton(onClick = onOpenAppDiagnostics) {
                 Text("App diagnostics (bugs)")
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Text")
+            Text(
+                "Pick a body font (system or bundled Garamond) and dial in the " +
+                    "size of the notes text + the note editor pop-up. Live preview " +
+                    "shows the result before you commit.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onOpenTextSettings) {
+                Text("Text & font")
             }
 
             Spacer(Modifier.height(20.dp))

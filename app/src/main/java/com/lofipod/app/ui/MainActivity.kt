@@ -420,6 +420,7 @@ private fun AppNav(
                     onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
                     onOpenAudiophileNotes = { nav.navigate("audiophileNotes") },
                     onOpenAppDiagnostics = { nav.navigate("appDiagnostics") },
+                    onOpenTextSettings = { nav.navigate("textSettings") },
                 )
             }
 
@@ -435,6 +436,12 @@ private fun AppNav(
 
             composable("audiophileNotes") {
                 AudiophileNotesScreen(
+                    onBack = { nav.popBackStack() }
+                )
+            }
+
+            composable("textSettings") {
+                TextSettingsScreen(
                     onBack = { nav.popBackStack() }
                 )
             }
