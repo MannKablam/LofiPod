@@ -2,6 +2,50 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EQ override moves from per-episode to per-podcast
+
+User feedback: "EQ for an episode is supposed to be applied to all
+episodes WITHIN that same podcast." The implementation was per-episode
+(`episode_state.eqDisabled`, `episode_state.eqBandsCsvOverride`), so a
+tweak made on one episode never propagated to the rest of that
+podcast's catalog. Fixed by lifting the override up to the podcast
+level.
+
+Schema:
+- New columns on `podcast_state`: `eqDisabled` (default 0),
+  `eqBandsCsvOverride` (nullable TEXT).
+- Migration v16 → v17: ADD COLUMN both, then backfill from
+  `episode_state` — for each feedUrl whose episodes had any non-default
+  EQ override, ensure a `podcast_state` row exists and copy the
+  most-recently-played episode's override values onto it. The
+  `episode_state` columns stay (SQLite ALTER doesn't drop columns
+  cleanly without table recreation) but are now marked deprecated and
+  unread.
+
+Plumbing:
+- `PlayerController.applyEqOverrideFor(guid)` looks up the episode's
+  feedUrl, then reads `podcast_state` for the effective enable/bands.
+  Same single-source-of-truth invariant as before.
+- `PodcastStateDao` gains `ensureRow`, `setEqDisabled`, and
+  `setEqBandsCsvOverride` helpers. UI calls `ensureRow` before
+  setters so the row exists for podcasts the user hasn't otherwise
+  customized.
+- `EqScreen`: section relabeled "For this podcast." Toggles read
+  `currentFeedUrl` (derived from the playing episode's row) and write
+  to `podcast_state`. Sliders persist to `podcast_state.eqBandsCsvOverride`
+  when the override toggle is on. Override-color tint logic unchanged
+  — visual reminder still shows when shaping a non-global preset.
+- `Backup.kt`: `podcastState` JSON entries now carry `eqDisabled` and
+  `eqBandsCsvOverride` so per-podcast EQ round-trips through backup +
+  restore. The legacy per-episode fields are still serialized for
+  archival but unused on restore.
+
+Behavior change: the user's existing per-episode override gets promoted
+to the podcast level on first launch of v0.6.11. From then on every
+episode of that podcast plays through the override.
+
+ai_contamination: true # claude opus 4.7
+
 ## Nav cleanup: back from miniplayer-launched player goes to natural parent
 
 User report: navigating catalog -> episodes -> player -> settings ->
