@@ -543,17 +543,6 @@ private fun EpisodeRow(
                                 if (isNotEmpty()) append(" • ")
                                 append("${it / 60} min")
                             }
-                            // Bandwidth + disk preview. Both numbers come from
-                            // the RSS enclosure `length` attribute. They're
-                            // the same because streaming and downloading both
-                            // pull the full file — the dual readout makes the
-                            // user's two distinct mental questions ("how much
-                            // data will this cost me?" and "how much disk
-                            // will this take?") legible at a glance.
-                            ep.audioByteSize?.let {
-                                if (isNotEmpty()) append(" • ")
-                                append("s=${formatMb(it)}; d=${formatMb(it)}")
-                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -681,6 +670,26 @@ private fun EpisodeRow(
                 }
                 Spacer(Modifier.weight(1f))
                 HeartTierButton(tier = state.favoriteTier, onCycle = onCycleHeart)
+            }
+            // Bandwidth + disk readout. Single number — streaming and
+            // downloading both pull the full enclosure file, so one
+            // figure covers both questions ("how much data will this
+            // cost?" and "how much disk?"). Pinned to the bottom-right
+            // corner of the card so it reads as a passive "vital stat"
+            // rather than competing with the action buttons above.
+            ep.audioByteSize?.let { bytes ->
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Text(
+                        formatMb(bytes),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                            .copy(alpha = textAlpha),
+                    )
+                }
             }
         }
     }
