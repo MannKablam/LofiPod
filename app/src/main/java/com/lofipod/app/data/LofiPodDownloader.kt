@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import kotlin.coroutines.coroutineContext
 import okhttp3.Request
@@ -451,13 +452,38 @@ class LofiPodDownloader(
      * Resolve the on-disk file for [guid], or null if no completed download
      * exists. Used by [com.lofipod.app.player.PlayerController] to prefer
      * the local file when constructing a [androidx.media3.common.MediaItem].
+     *
+     * **Two-tier lookup.** Fast path is the in-memory [byId] StateFlow, but
+     * that map is hydrated from Room asynchronously via
+     * `init { cleanupScope.launch { hydrate() } }`. If the user taps an
+     * episode early in the app lifecycle (before hydrate completes), the
+     * fast path returns null even when the file is fully downloaded on
+     * disk — ExoPlayer would then lock onto the HTTP URL for the lifetime
+     * of the MediaItem and stream the remote source instead of reading
+     * the local file. At 2x speed that races the buffer empty within
+     * a minute and surfaces the misleading "waiting on network" snackbar.
+     *
+     * Cold-start fallback: if the in-memory map doesn't know about [guid]
+     * yet, query [downloadDao] directly. Single SQLite read, low ms,
+     * runs inside the caller's existing IO scope.
      */
-    fun completedFile(guid: String): File? {
-        val state = _byId.value[guid] ?: return null
-        if (state.state != LofiDownload.State.COMPLETED) return null
-        val path = state.filePath ?: return null
-        val f = File(path)
-        return if (f.exists() && f.length() > 0L) f else null
+    suspend fun completedFile(guid: String): File? {
+        val cached = _byId.value[guid]
+        if (cached != null) {
+            if (cached.state != LofiDownload.State.COMPLETED) return null
+            val path = cached.filePath ?: return null
+            val f = File(path)
+            return if (f.exists() && f.length() > 0L) f else null
+        }
+        // In-memory state hasn't hydrated yet (cleanupScope.launch is still
+        // running). Read the DAO directly so we don't miss a previously-
+        // completed download just because the StateFlow is racing us.
+        val row = withContext(Dispatchers.IO) { downloadDao.get(guid) }
+        if (row != null && row.state == LofiDownload.State.COMPLETED.ordinal) {
+            val f = File(row.filePath)
+            if (f.exists() && f.length() > 0L) return f
+        }
+        return null
     }
 
     /** Synchronously read state. Kept for the few callers (orphan sweeps,
