@@ -577,6 +577,23 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
                     activeLevel = 0
                 }
             }
+
+            // ---- Bottom A/B button ----
+            // Mirror of the top button so the user doesn't have to scroll
+            // back up after dialing a band. Same press semantics: hold to
+            // bypass the entire EQAudioProcessor (DC blocker → biquad/FIR
+            // EQ → master gain → 2x oversample → look-ahead limiter →
+            // dither → int16 truncation), release to restore. With the
+            // band sliders directly above, the natural workflow is "tweak
+            // a band, A/B, tweak again" — having the button within thumb
+            // reach of the bands is the point.
+            Spacer(Modifier.height(20.dp))
+            HoldToBypassButton(
+                effectiveChainEnabled = audioEnhancementEnabled,
+                onPress = { eq.setEnabled(false) },
+                onRelease = { eq.setEnabled(true) },
+            )
+            Spacer(Modifier.height(20.dp))
         }
     }
 }
@@ -792,9 +809,9 @@ private fun formatHz(hz: Float): String =
  * suspends until release, and try/finally guarantees [onRelease] runs even
  * if the gesture is cancelled (drag-off, screen rotation, parent recompose).
  *
- * **Disabled state.** When the chain is already off (master toggle off, or
- * per-episode "Disable EQ" override on), pressing this button would be a
- * no-op (passthrough → passthrough). We gray it out + dim the label rather
+ * **Disabled state.** When the chain is already off (master toggle off),
+ * pressing this button would be a no-op (passthrough → passthrough). We
+ * gray it out + dim the label rather
  * than hide it, so the affordance stays discoverable on revisit.
  */
 @Composable
