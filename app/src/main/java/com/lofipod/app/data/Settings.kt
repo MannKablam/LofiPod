@@ -324,6 +324,46 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_THEME] = t.name }
     }
 
+    /**
+     * Selected body font. Stored as the [com.lofipod.app.ui.theme.BodyFontChoice]
+     * enum name; default `THEME_DEFAULT` so the theme spec's bodyFont stays
+     * in charge until the user actively picks something on the Text settings
+     * screen. Read by `LofiPodTheme` and folded into the active Material
+     * typography.
+     */
+    val bodyFontChoiceKey: Flow<String> =
+        context.dataStore.data.map { it[KEY_BODY_FONT_CHOICE] ?: "THEME_DEFAULT" }
+
+    suspend fun setBodyFontChoiceKey(key: String) {
+        context.dataStore.edit { it[KEY_BODY_FONT_CHOICE] = key }
+    }
+
+    /**
+     * Notes text size in sp. Applies to the body of each [NoteCard] (the
+     * text the user typed). 14 sp default matches the prior bodyMedium-ish
+     * sizing; range 12..22 sp gives readable body up through "I prefer
+     * larger text" without growing past the card's reasonable bounds.
+     */
+    val notesTextSizeSp: Flow<Float> =
+        context.dataStore.data.map { it[KEY_NOTES_TEXT_SIZE] ?: 14f }
+
+    suspend fun setNotesTextSizeSp(v: Float) {
+        context.dataStore.edit { it[KEY_NOTES_TEXT_SIZE] = v.coerceIn(10f, 28f) }
+    }
+
+    /**
+     * Notes pop-up (editor dialog) text size in sp. Independent from the
+     * card display size because the editing surface is a different
+     * ergonomic context — typing benefits from a larger size than reading.
+     * Default 16 sp; same 12..22 range.
+     */
+    val notesPopupTextSizeSp: Flow<Float> =
+        context.dataStore.data.map { it[KEY_NOTES_POPUP_TEXT_SIZE] ?: 16f }
+
+    suspend fun setNotesPopupTextSizeSp(v: Float) {
+        context.dataStore.edit { it[KEY_NOTES_POPUP_TEXT_SIZE] = v.coerceIn(10f, 28f) }
+    }
+
     companion object {
         private val KEY_THEME = androidx.datastore.preferences.core.stringPreferencesKey("theme")
         private val KEY_AUTO_PLAY_NEXT_FEED =
@@ -364,6 +404,12 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("update_available_version_code")
         private val KEY_UPDATE_AVAILABLE_NAME =
             androidx.datastore.preferences.core.stringPreferencesKey("update_available_version_name")
+        private val KEY_BODY_FONT_CHOICE =
+            androidx.datastore.preferences.core.stringPreferencesKey("body_font_choice")
+        private val KEY_NOTES_TEXT_SIZE =
+            androidx.datastore.preferences.core.floatPreferencesKey("notes_text_size_sp")
+        private val KEY_NOTES_POPUP_TEXT_SIZE =
+            androidx.datastore.preferences.core.floatPreferencesKey("notes_popup_text_size_sp")
     }
 }
 

@@ -2,6 +2,55 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Text settings + bundled Garamonds (EB + Cormorant)
+
+New Settings → Text & font screen. Substantive typography control:
+
+**Body-font choice.** Six options:
+- Theme default *(active theme's bodyFont — current behavior)*
+- System sans (`FontFamily.Default`)
+- System serif (`FontFamily.Serif`)
+- System monospace (`FontFamily.Monospace`)
+- **EB Garamond** *(bundled, OFL)*
+- **Cormorant Garamond** *(bundled, OFL)*
+
+Both Garamonds are variable TTFs from Google's `google/fonts` repo
+(EBGaramond[wght].ttf ~830 KB, CormorantGaramond[wght].ttf ~1.2 MB).
+Single file per family covers Regular through Bold via the `wght`
+axis — Compose handles the variable-axis selection automatically.
+
+When the user picks anything other than "Theme default," `Theme.kt`
+folds the choice into Material's typography body slots
+(titleSmall through bodyLarge + all labels). Display slots
+(displayMedium / displayLarge / headlines) stay on the active
+theme's `displayFont` so the visual character of each theme
+direction (Cassette serif, Reel/Ticker monospace) survives.
+
+**Notes-specific size sliders.**
+- `notesTextSizeSp` (default 14, range 10–28) — applied to the body
+  text on each `NoteCard` row.
+- `notesPopupTextSizeSp` (default 16, range 10–28) — applied to the
+  typing surface in `NoteEditorDialog`.
+
+Two sliders because typing benefits from a larger size than reading
+the resulting card. Both read in real time via `Settings`, so the
+slider drag updates the live preview AND any open notes UI.
+
+**Live preview.** Top of the screen renders a representative slice
+(title + body line + label + faux note card + faux editor row)
+in whatever's currently selected. No "apply" button — every change
+propagates Settings → Theme → recomposition immediately.
+
+**OFL compliance.** License files at `assets/EBGaramond-OFL.txt` +
+`assets/CormorantGaramond-OFL.txt`. Per SIL OFL 1.1, that's the full
+requirement — license must ship with the software, not be visible
+in the UI. No "Fonts" attribution panel reintroduced; the user
+removed that explicitly in v0.6.17 and the OFL doesn't need it.
+**Commercial use is fine** — OFL only prohibits selling the font
+as a font product, not bundling it in software.
+
+ai_contamination: true # claude opus 4.7
+
 ## UI roundup: Tune icon, MyLists tab hearts, history filter, tab fullscreen
 
 Five small UX cleanups shipped together:
