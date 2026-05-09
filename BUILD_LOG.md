@@ -2,6 +2,23 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EqScreen: bottom Hold-to-A/B mirror under the band sliders
+
+The existing Hold-to-A/B button sits up top (under the master "Audio
+enhancement" toggle). Once the user scrolls down to the graphic EQ
+band sliders to dial them in, the A/B button is two screens of scroll
+away — wrong tool placement for the natural "tweak band, A/B, tweak
+again" workflow.
+
+Add a second `HoldToBypassButton` instance directly below the band
+sliders, identical semantics: hold bypasses the entire `EqAudioProcessor`
+chain (DC blocker → biquad/FIR EQ → master gain → 2x oversample →
+look-ahead limiter → dither → int16 truncation), release restores.
+Same disabled state when the master toggle is off, same haptic + the
+same telemetry events.
+
+ai_contamination: true # claude opus 4.7
+
 ## EQ reshape: podcast owns the EQ; episode override is the one branch point
 
 Course-correction on v0.6.11. The right model:
