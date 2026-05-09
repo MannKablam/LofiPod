@@ -184,6 +184,13 @@ fun PlayerScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // Bottom-tabs fullscreen toggle. Tapping the currently-selected tab
+    // expands the tabs container to take the whole screen below the top
+    // bar, hiding the artwork / title / scrubber / controls block above
+    // it. Tap the active tab again to collapse back. Per-screen state
+    // (resets when the user navigates away and back).
+    var tabsFullscreen by remember { mutableStateOf(false) }
+
     // Surface controller-side transient messages as snackbars so play-button
     // taps that hit a no-op state (player not bound, no media loaded,
     // already buffering) get explicit user feedback rather than feeling
@@ -282,9 +289,13 @@ fun PlayerScreen(
                     }
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenEq) {
+                        // Tune (slider knobs) for Audio Fine-tuning, distinct
+                        // from GraphicEq (used as the live "now playing" glyph
+                        // in the top-bar title above + Catalog overflow).
+                        // Keeps the two affordances visually separable.
                         Icon(
-                            Icons.Filled.GraphicEq,
-                            contentDescription = "EQ",
+                            Icons.Filled.Tune,
+                            contentDescription = "Audio Fine-tuning",
                             modifier = Modifier.size(28.dp)
                         )
                     }
@@ -345,7 +356,9 @@ fun PlayerScreen(
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             // Top: artwork + title + scrubber + transport (compact, wraps content).
-            Column(
+            // Hidden entirely when tabsFullscreen is on so the bottom tabs
+            // get the whole screen real estate.
+            if (!tabsFullscreen) Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp, vertical = 12.dp),
@@ -628,6 +641,8 @@ fun PlayerScreen(
                 controller = controller,
                 isPreview = isPreview,
                 onOpenTranscript = onOpenTranscript,
+                fullscreen = tabsFullscreen,
+                onToggleFullscreen = { tabsFullscreen = !tabsFullscreen },
                 modifier = Modifier.weight(1f).fillMaxWidth()
             )
         }
@@ -758,30 +773,64 @@ private fun BottomTabs(
     controller: PlayerController,
     isPreview: Boolean,
     onOpenTranscript: (String) -> Unit,
+    fullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var tabIndex by remember { mutableStateOf(0) }
-    val tabs = listOf("Notes", "Details", "Transcript")
+
+    // Transcript tab visibility. Driven by whether kabod metadata for this
+    // episode has a non-blank transcriptUrl. Most podcasts won't have a
+    // transcript URL bundled, so by default the tab is hidden — surface
+    // it only when there's actually something to show.
+    val app = LocalContext.current.applicationContext as LofiPodApp
+    var hasTranscript by remember(episodeGuid) { mutableStateOf(false) }
+    LaunchedEffect(episodeGuid) {
+        if (episodeGuid == null) {
+            hasTranscript = false
+            return@LaunchedEffect
+        }
+        val url = withContext(Dispatchers.IO) {
+            app.db.episodeKabodDao().get(episodeGuid)?.transcriptUrl
+        }
+        hasTranscript = !url.isNullOrBlank()
+    }
+
+    val tabs = remember(hasTranscript) {
+        if (hasTranscript) listOf("Notes", "Details", "Transcript")
+        else listOf("Notes", "Details")
+    }
+    // If the user was on the Transcript tab and it disappears (episode
+    // change to a non-transcript one), fall back to Notes so we don't
+    // render against an out-of-range index.
+    if (tabIndex >= tabs.size) tabIndex = 0
 
     Column(modifier = modifier) {
         TabRow(selectedTabIndex = tabIndex) {
             tabs.forEachIndexed { i, label ->
                 Tab(
                     selected = tabIndex == i,
-                    onClick = { tabIndex = i },
+                    onClick = {
+                        // Tap the active tab → toggle fullscreen.
+                        // Tap a different tab → switch (keep fullscreen
+                        // state as it is). Lets the user switch between
+                        // tabs while staying in fullscreen reading mode.
+                        if (tabIndex == i) onToggleFullscreen()
+                        else tabIndex = i
+                    },
                     text = { Text(label) }
                 )
             }
         }
         Box(modifier = Modifier.fillMaxSize()) {
-            when (tabIndex) {
-                0 -> NotesTab(
+            when (tabs[tabIndex]) {
+                "Notes" -> NotesTab(
                     episodeGuid = episodeGuid,
                     controller = controller,
                     isPreview = isPreview,
                 )
-                1 -> DetailsTab(episodeGuid = episodeGuid, controller = controller)
-                else -> TranscriptContent(
+                "Details" -> DetailsTab(episodeGuid = episodeGuid, controller = controller)
+                "Transcript" -> TranscriptContent(
                     episodeGuid = episodeGuid,
                     showFullPageButton = true,
                     onOpenFullPage = { episodeGuid?.let(onOpenTranscript) },

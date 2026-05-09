@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
@@ -214,9 +215,9 @@ fun CatalogScreen(
                                 leadingIcon = { Icon(Icons.Filled.BarChart, null) }
                             )
                             DropdownMenuItem(
-                                text = { Text("EQ & speed") },
+                                text = { Text("Audio Fine-tuning") },
                                 onClick = { menuExpanded = false; onOpenEq() },
-                                leadingIcon = { Icon(Icons.Filled.GraphicEq, null) }
+                                leadingIcon = { Icon(Icons.Filled.Tune, null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Refresh feeds") },
