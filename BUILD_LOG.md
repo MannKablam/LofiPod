@@ -2,6 +2,39 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Nav cleanup: back from miniplayer-launched player goes to natural parent
+
+User report: navigating catalog -> episodes -> player -> settings ->
+[miniplayer launches player] -> settings -> [miniplayer launches player]
+left a literal-history back stack — each system-back walked back through
+every visited screen. Expected: back from a player launched via the
+miniplayer should go to episodes (the screen the user originally
+navigated into player from), not retrace the whole spiral.
+
+Fix: new `navigateToPlayerCleanly(nav)` helper in `MainActivity`. Before
+pushing player, walks the back stack to find the most recent
+"player flavor" entry (`player`, `player/preview/*`, `player/transcript/*`)
+and pops up to (and excluding) the route immediately below it. End
+state is `[..., naturalParent, player]` regardless of how many
+player <-> settings cycles preceded the click.
+
+Wired into the three "shortcut to player" entry points:
+- Miniplayer tap
+- Catalog's "Now Playing" link
+- System media notification's `ACTION_OPEN_PLAYER` intent
+
+NOT wired into the "explicit play" paths (tap an episode in
+EpisodesScreen / MyListsScreen / SearchScreen) — those plays establish
+a new natural parent and should push fresh.
+
+Edge: no player has ever been in the stack this session (cold-start
+with audio resumed but player never opened). Helper falls through to
+a plain `navigate("player")`, accepting that back goes to whatever
+the user was on. Reasonable since there's no "natural parent" to
+infer.
+
+ai_contamination: true # claude opus 4.7
+
 ## v0.6.9 — Ditch Media3's offline framework; OkHttp downloader from scratch
 
 After v0.6.5–v0.6.8 each fixed a different Media3 download-stack quirk

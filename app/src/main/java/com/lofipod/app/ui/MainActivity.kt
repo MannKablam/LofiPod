@@ -161,6 +161,50 @@ private val NESTED_PARENTS = mapOf(
 )
 
 /**
+ * Navigate to the player in a way that doesn't accumulate historical
+ * entries. Walks the current back stack to find the most recent
+ * "player flavor" entry (`player`, `player/preview/...`, or
+ * `player/transcript/...`), pops up to (and excluding) the route
+ * immediately below it, and then pushes a fresh `player` on top.
+ *
+ * The end-state stack is therefore `[..., naturalParent, player]` — where
+ * `naturalParent` is whatever the user was on when they last navigated
+ * into the player. Back from player goes there, regardless of how many
+ * `player -> settings -> miniplayer -> player -> ...` cycles preceded it.
+ *
+ * Used by every "shortcut" entry to player: miniplayer tap, the
+ * Catalog "Now Playing" link, and the system-media-notification's
+ * `ACTION_OPEN_PLAYER` intent. NOT used for the explicit-play paths
+ * (tap an episode in EpisodesScreen / MyLists / Search) — those
+ * establish a new natural parent and should push fresh.
+ *
+ * Edge case: no player has ever been in the stack this session (e.g.
+ * cold-start where audio resumed without the player being shown). In
+ * that case we fall through to a plain navigate, accepting that "back
+ * from player" goes to whatever screen the user was just on.
+ */
+private fun navigateToPlayerCleanly(nav: NavController) {
+    val routes = nav.currentBackStack.value.map { it.destination.route }
+    val lastPlayerIdx = routes.indexOfLast { route ->
+        route == "player" ||
+            route?.startsWith("player/preview/") == true ||
+            route?.startsWith("player/transcript/") == true
+    }
+    if (lastPlayerIdx > 0) {
+        val belowPlayer = routes[lastPlayerIdx - 1]
+        if (belowPlayer != null) {
+            // popBackStack(name, inclusive=false) pops top-down to the
+            // FIRST (most recent) entry whose route template matches.
+            // For `episodes/{feed}` this means we pop to the most-recent
+            // episodes screen — the right one for the most-recent
+            // player's natural parent in any multi-feed listening session.
+            nav.popBackStack(belowPlayer, inclusive = false)
+        }
+    }
+    nav.navigate("player") { launchSingleTop = true }
+}
+
+/**
  * Single back-handler used by every screen + the system back gesture so the
  * stack walks the right way regardless of the historical navigation order.
  *
@@ -221,12 +265,13 @@ private fun AppNav(
     }
 
     // Route to the Player whenever the system media notification (or any other
-    // out-of-Compose source) asks us to. launchSingleTop avoids stacking
-    // duplicate Player entries when the notification is tapped repeatedly.
+    // out-of-Compose source) asks us to. Use the cleaning helper so the back
+    // chain lands on the player's natural parent rather than walking through
+    // whatever the user was incidentally on when the notification fired.
     LaunchedEffect(Unit) {
         openPlayerEvents.collect {
             if (nav.currentDestination?.route != "player") {
-                nav.navigate("player") { launchSingleTop = true }
+                navigateToPlayerCleanly(nav)
             }
         }
     }
@@ -245,7 +290,7 @@ private fun AppNav(
                 MiniPlayer(
                     controller = controller,
                     state = playerState,
-                    onClick = { nav.navigate("player") }
+                    onClick = { navigateToPlayerCleanly(nav) }
                 )
             }
         }
@@ -267,7 +312,7 @@ private fun AppNav(
                     onOpenMetrics = { nav.navigate("metrics") },
                     onOpenNotes = { nav.navigate("notesBrowser") },
                     onOpenSettings = { nav.navigate("settings") },
-                    onOpenNowPlaying = { nav.navigate("player") },
+                    onOpenNowPlaying = { navigateToPlayerCleanly(nav) },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenSearch = { nav.navigate("search") },
                     onOpenCanonBrowse = { nav.navigate("canonBrowse") },
