@@ -136,6 +136,7 @@ object RssParser {
         var desc: String? = null
         var audioUrl: String? = null
         var audioType: String? = null
+        var audioBytes: Long? = null
         var duration: String? = null
         var epArt: String? = null
 
@@ -154,6 +155,7 @@ object RssParser {
                 "enclosure" -> {
                     audioUrl = parser.getAttributeValue(null, "url")
                     audioType = parser.getAttributeValue(null, "type")
+                    audioBytes = parser.getAttributeValue(null, "length")?.toLongOrNull()
                     skip(parser)
                 }
                 else -> {
@@ -188,7 +190,8 @@ object RssParser {
             audioUrl = audioUrl!!,
             audioMimeType = audioType,
             durationSeconds = parseDuration(duration),
-            episodeArtworkUrl = epArt
+            episodeArtworkUrl = epArt,
+            audioByteSize = audioBytes,
         )
     }
 

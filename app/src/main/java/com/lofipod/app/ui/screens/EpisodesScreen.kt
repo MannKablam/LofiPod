@@ -543,6 +543,17 @@ private fun EpisodeRow(
                                 if (isNotEmpty()) append(" • ")
                                 append("${it / 60} min")
                             }
+                            // Bandwidth + disk preview. Both numbers come from
+                            // the RSS enclosure `length` attribute. They're
+                            // the same because streaming and downloading both
+                            // pull the full file — the dual readout makes the
+                            // user's two distinct mental questions ("how much
+                            // data will this cost me?" and "how much disk
+                            // will this take?") legible at a glance.
+                            ep.audioByteSize?.let {
+                                if (isNotEmpty()) append(" • ")
+                                append("s=${formatMb(it)}; d=${formatMb(it)}")
+                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -738,6 +749,15 @@ private fun HeartTierButton(tier: Int, onCycle: () -> Unit) {
 }
 
 /** Best-effort plain-text view of an HTML-ish description. */
+/** Format byte count as a compact "Nmb" string for the episode-row meta
+ *  line. Sub-megabyte sizes show as "<1mb" rather than rounding to "0mb"
+ *  (which would mis-imply zero bytes). Whole megabytes only — fractional
+ *  precision isn't useful for a quick budget read. */
+private fun formatMb(bytes: Long): String {
+    val mb = bytes / 1_048_576L  // 1024 * 1024
+    return if (mb == 0L) "<1mb" else "${mb}mb"
+}
+
 private fun String.stripHtml(): String =
     this.replace(Regex("<[^>]*>"), "")
         .replace(Regex("&nbsp;"), " ")

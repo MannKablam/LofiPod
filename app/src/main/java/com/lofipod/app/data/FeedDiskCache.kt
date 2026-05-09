@@ -138,6 +138,7 @@ class FeedDiskCache(context: Context) {
             if (e.audioMimeType != null) put("audioMimeType", e.audioMimeType)
             if (e.durationSeconds != null) put("durationSeconds", e.durationSeconds)
             if (e.episodeArtworkUrl != null) put("episodeArtworkUrl", e.episodeArtworkUrl)
+            if (e.audioByteSize != null) put("audioByteSize", e.audioByteSize)
         }
 
         private fun decodeEpisode(o: JSONObject): Episode = Episode(
@@ -150,6 +151,7 @@ class FeedDiskCache(context: Context) {
             audioMimeType = o.optStringOrNull("audioMimeType"),
             durationSeconds = if (o.has("durationSeconds")) o.getLong("durationSeconds") else null,
             episodeArtworkUrl = o.optStringOrNull("episodeArtworkUrl"),
+            audioByteSize = if (o.has("audioByteSize")) o.getLong("audioByteSize") else null,
         )
 
         /** org.json's optString returns "" for missing keys; for our
