@@ -620,9 +620,13 @@ private fun MiniPlayer(
                         // Subtle buffering ring on the mini-player play
                         // button — gives the user the same "I'm trying"
                         // signal the full player shows, without taking extra
-                        // vertical space. Suppressed during the countdown so
-                        // the two indicators don't stack.
-                        state.isBuffering -> CircularProgressIndicator(
+                        // vertical space. Driven by buffering OR stall so
+                        // a renderer underrun on the audio chain (the
+                        // watchdog's domain) is visible at the bottom of
+                        // every screen, not only the full Player.
+                        // Suppressed during the countdown so the two
+                        // indicators don't stack.
+                        (state.isBuffering || state.isStalled) -> CircularProgressIndicator(
                             modifier = Modifier.size(48.dp),
                             strokeWidth = 2.dp,
                         )

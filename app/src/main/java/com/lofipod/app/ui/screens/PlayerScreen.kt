@@ -566,11 +566,13 @@ fun PlayerScreen(
                             )
                             // Buffering ring — drawn on top of the play button
                             // when the player is in BUFFERING with
-                            // playWhenReady=true. Tells the user "I heard your
-                            // tap, I'm trying" rather than letting them wonder
+                            // playWhenReady=true OR when the stall watchdog
+                            // has flagged a renderer underrun. Tells the user
+                            // "I heard your tap / I see this is stuck, I'm
+                            // working on it" rather than letting them wonder
                             // if the button is dead. Suppressed during the
                             // countdown so the two indicators don't stack.
-                            state.isBuffering && !isPreview -> CircularProgressIndicator(
+                            (state.isBuffering || state.isStalled) && !isPreview -> CircularProgressIndicator(
                                 modifier = Modifier.size(88.dp),
                                 strokeWidth = 3.dp,
                             )
