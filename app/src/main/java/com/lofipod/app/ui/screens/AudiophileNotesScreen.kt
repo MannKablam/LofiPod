@@ -88,10 +88,34 @@ private fun Section(title: String, body: String) {
         color = MaterialTheme.colorScheme.primary,
     )
     Spacer(Modifier.height(4.dp))
-    // body.trim() strips the leading/trailing newlines that the """ raw
-    // string literals introduce — without this every section would render
-    // a blank line at the top and bottom.
-    Text(body.trim(), style = MaterialTheme.typography.bodySmall)
+    // Reflow handles two issues with the """ raw-string consts:
+    //   1. Leading + trailing newlines from the """ delimiters that would
+    //      otherwise render as blank lines.
+    //   2. Hard-wrapped lines that the source has at fixed column widths —
+    //      Compose's Text honors those line breaks, so the result reads
+    //      "split to next line in arbitrary places" on actual phone widths.
+    // [reflowProse] joins prose-paragraph lines with spaces (letting Compose
+    // wrap them naturally to the device width) while preserving indented
+    // diagram blocks (the chain ASCII art, latency math, etc.) intact.
+    Text(reflowProse(body), style = MaterialTheme.typography.bodySmall)
+}
+
+/**
+ * Convert the """-style raw-string constants into prose with natural
+ * device-width wrapping. Paragraph boundaries (double newlines) survive;
+ * lines within a paragraph are joined by a single space — UNLESS any line
+ * in that paragraph starts with two or more spaces, which we treat as a
+ * code/diagram block whose alignment must be preserved (the signal-chain
+ * ASCII, the latency math, etc.).
+ */
+private fun reflowProse(s: String): String {
+    val trimmed = s.trim()
+    return trimmed.split("\n\n").joinToString("\n\n") { paragraph ->
+        val lines = paragraph.lines()
+        val isDiagram = lines.any { it.startsWith("  ") }
+        if (isDiagram) paragraph
+        else lines.joinToString(" ") { it.trim() }
+    }
 }
 
 private const val OVERVIEW = """

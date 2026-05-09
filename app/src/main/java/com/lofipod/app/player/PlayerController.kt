@@ -145,6 +145,12 @@ class PlayerController(private val context: Context) {
      *  cycling-stall doesn't spam the user with a snackbar every recovery. */
     private var lastStallMessageAtMs: Long = 0L
 
+    /** Guard against re-triggering the same handoff if the user transitions
+     *  through the swap state (e.g., a brief race between byId emission and
+     *  the new MediaItem propagating). Cleared when the current episode
+     *  changes. */
+    private var handoffTriggeredForGuid: String? = null
+
     fun connect(onReady: () -> Unit) {
         // Pin this controller as the autoplay-confirm target for any
         // service-side media-button intercept (BT, vehicle, system-
@@ -194,6 +200,13 @@ class PlayerController(private val context: Context) {
                     pushState()
                 }
             }
+            // Mid-playback download-handoff observer. If the currently-
+            // playing episode is being streamed over HTTP and its
+            // download completes, swap the MediaItem to the local file
+            // so the rest of playback runs from disk. See
+            // [observeDownloadCompletion] for the swap mechanics + the
+            // audible cue + the snackbar.
+            scope.launch { observeDownloadCompletion() }
             // Cold-start restore: if the session has nothing loaded after the
             // sync settles, surface the last-played episode (paused) so the
             // mini-player + Player screen show "where I left off" without
@@ -1078,6 +1091,94 @@ class PlayerController(private val context: Context) {
     private fun stopStallWatchdog() {
         stallWatchdogJob?.cancel()
         stallWatchdogJob = null
+    }
+
+    /**
+     * Observe [LofiPodDownloader.byId] for the currently-playing episode.
+     * When a download completes for the same guid the player is currently
+     * streaming over HTTP, swap the MediaItem to the local `file://` URI
+     * so the remainder of playback reads from disk — saves bandwidth +
+     * eliminates the buffer-runs-empty-at-2x failure mode.
+     *
+     * Mechanics:
+     *   1. Snapshot current position + playWhenReady.
+     *   2. Build a new MediaItem with the file:// URI (same metadata).
+     *   3. Fire a quick double-beep cue in parallel via [BeepPlayer.playHandoffCue]
+     *      — the cue fills the brief silence from setMediaItem + prepare,
+     *      partially disguising the swap so the user reads it as
+     *      intentional rather than a glitch.
+     *   4. setMediaItem(newItem, savedPos); prepare(); play() if was playing.
+     *   5. Emit a snackbar via [transientMessages]: "Playback branched to
+     *      downloaded file."
+     *
+     * Skipped when:
+     *   - No episode currently playing
+     *   - The current MediaItem is already a `file://` URI (already on disk)
+     *   - We've already triggered handoff for this guid (race guard)
+     */
+    private suspend fun observeDownloadCompletion() {
+        val app = context.applicationContext as LofiPodApp
+        app.downloadsApi.byId.collect { map ->
+            val c = controller ?: return@collect
+            val currentGuid = c.currentMediaItem?.mediaId ?: return@collect
+            // Reset the per-guid handoff guard if the episode changed —
+            // a new episode might also need a handoff later.
+            if (handoffTriggeredForGuid != null && handoffTriggeredForGuid != currentGuid) {
+                handoffTriggeredForGuid = null
+            }
+            if (handoffTriggeredForGuid == currentGuid) return@collect
+            val download = map[currentGuid] ?: return@collect
+            if (download.state != com.lofipod.app.data.LofiDownload.State.COMPLETED) return@collect
+            // Already playing from disk?
+            val currentUri = c.currentMediaItem?.localConfiguration?.uri ?: return@collect
+            val scheme = currentUri.scheme?.lowercase()
+            if (scheme == "file") return@collect
+            // Get the local file (race-safe via the suspend completedFile).
+            val localFile = app.downloadsApi.completedFile(currentGuid) ?: return@collect
+
+            handoffTriggeredForGuid = currentGuid
+            triggerDownloadHandoff(c, currentGuid, localFile)
+        }
+    }
+
+    private suspend fun triggerDownloadHandoff(
+        c: MediaController,
+        guid: String,
+        localFile: java.io.File,
+    ) {
+        val savedPosMs = c.currentPosition
+        val wasPlaying = c.playWhenReady
+        // Reuse the existing MediaMetadata so the title / artist / artwork
+        // don't blink during the swap.
+        val metadata = c.mediaMetadata
+        val newItem = MediaItem.Builder()
+            .setMediaId(guid)
+            .setUri(android.net.Uri.fromFile(localFile))
+            .setMediaMetadata(metadata)
+            .build()
+
+        // Fire the audible cue + snackbar in parallel with the swap. The
+        // cue uses a fresh BeepPlayer (light — buffers + a transient
+        // AudioTrack per beep) and is released in finally.
+        val cuePlayer = com.lofipod.app.audio.BeepPlayer(c)
+        scope.launch {
+            try {
+                cuePlayer.playHandoffCue()
+            } finally {
+                cuePlayer.release()
+            }
+        }
+        _transientMessages.tryEmit("Playback branched to downloaded file.")
+
+        // Swap. setMediaItem(item, position) bundles a seek so the player
+        // prepares the new source AT savedPosMs rather than 0; saves a
+        // separate seekTo call and the latency that comes with it.
+        c.setMediaItem(newItem, savedPosMs)
+        c.prepare()
+        // Restore play state. ExoPlayer respects playWhenReady across a
+        // setMediaItem; explicit play() is belt-and-braces in case the
+        // controller's flag was reset by the swap.
+        if (wasPlaying) c.play()
     }
 
     /**
