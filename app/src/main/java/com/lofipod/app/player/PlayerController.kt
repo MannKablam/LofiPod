@@ -369,46 +369,51 @@ class PlayerController(private val context: Context) {
     }
 
     /**
-     * Re-evaluate the EQ enabled flag for the episode at [guid]. Effective
-     * state is the AND of the master "Audio enhancement" toggle
-     * (Settings.audioEnhancementEnabled) and the inverse of the per-PODCAST
-     * override (podcast_state.eqDisabled, looked up by the episode's feedUrl).
+     * Re-evaluate the live EQ for the episode at [guid]. There's no global
+     * EQ — each podcast owns its own tuning. An episode normally inherits
+     * its podcast's EQ; the per-episode "use a one-off EQ" toggle lets a
+     * single episode branch off (e.g. a guest-heavy episode where the
+     * usual host tuning doesn't fit).
      *
-     * Per-podcast (not per-episode) since v0.6.11 — see PodcastStateEntity
-     * docstring. Settles the same way at three writer sites (track
-     * transitions, EQ screen toggle, master toggle): single source of truth
-     * here so the processor's enabled flag doesn't get clobbered by the
-     * last-wins of three competing writers.
+     * Resolution order: `episode_state.eqBandsCsvOverride` →
+     * `podcast_state.eqBandsCsvOverride` → FLAT. The first non-null wins.
+     *
+     * Enable state is purely the master "Audio enhancement" switch — there
+     * are no separate disable flags. "Disabling EQ" is just the override
+     * toggle on with all bands at 0 dB. Keeping disable as a separate
+     * concept was redundant and confused two layers of "off."
+     *
+     * Called on item transitions, after the user toggles the per-episode
+     * override on the EQ screen, and after the user flips the master
+     * toggle — three writer sites, single source of truth here so the
+     * processor's enabled flag and band state don't get clobbered by the
+     * last-wins of competing writers.
      */
     fun applyEqOverrideFor(guid: String) {
         scope.launch {
             val state = withContext(Dispatchers.IO) { dao.get(guid) }
             val feedUrl = state?.feedUrl
+            val episodeOverrideCsv = state?.eqBandsCsvOverride
             val podcastState = if (feedUrl != null) {
                 withContext(Dispatchers.IO) { podcastStateDao.get(feedUrl) }
             } else null
-            val podcastDisabled = podcastState?.eqDisabled ?: false
-            val podcastOverrideCsv = podcastState?.eqBandsCsvOverride
-            val settings = com.lofipod.app.data.Settings(context)
-            val globalEnabled = settings.audioEnhancementEnabled.first()
-            // setEnabled is volatile-safe; no need to bounce back to main.
-            PlaybackService.sharedEq.setEnabled(globalEnabled && !podcastDisabled)
+            val podcastEqCsv = podcastState?.eqBandsCsvOverride
 
-            // Per-podcast EQ override: when the user has dialed in custom band
-            // gains for the current podcast, apply them in place of the global
-            // preset. When no override exists (CSV is null), reapply the
-            // global bands — matters on cross-podcast transitions where the
-            // previous podcast had an override and we need to swap back to
-            // the global tuning. settings.eqBandsCsv.first() can be null
-            // (Settings stores it as nullable) which is fine — we skip
-            // applying bands and leave the processor on whatever it had.
-            val targetCsv: String? = podcastOverrideCsv ?: settings.eqBandsCsv.first()
-            if (targetCsv != null) {
-                val parsed = parseEqBandsCsv(targetCsv)
-                if (parsed != null) {
-                    PlaybackService.sharedEq.setBands(parsed)
-                }
+            val settings = com.lofipod.app.data.Settings(context)
+            val masterEnabled = settings.audioEnhancementEnabled.first()
+            // setEnabled is volatile-safe; no need to bounce back to main.
+            PlaybackService.sharedEq.setEnabled(masterEnabled)
+
+            // Episode override branches off the podcast's EQ. Without an
+            // override, the podcast's EQ applies. Without a podcast EQ,
+            // the chain runs flat — there's no global EQ to fall back on.
+            val targetCsv: String? = episodeOverrideCsv ?: podcastEqCsv
+            val targetBands = if (targetCsv != null) {
+                parseEqBandsCsv(targetCsv) ?: com.lofipod.app.audio.EqPresets.FLAT
+            } else {
+                com.lofipod.app.audio.EqPresets.FLAT
             }
+            PlaybackService.sharedEq.setBands(targetBands)
         }
     }
 

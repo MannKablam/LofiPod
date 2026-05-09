@@ -41,10 +41,15 @@ data class EpisodeStateEntity(
      */
     val archivedAt: Long = 0L,
     /**
-     * **Deprecated as of v0.6.11.** EQ override moved to the podcast level
-     * (`podcast_state.eqBandsCsvOverride`). Column kept on the schema so
-     * old backups round-trip and so the v16 → v17 migration's source data
-     * isn't destroyed; no code reads it. Safe to ignore on new code paths.
+     * Per-episode EQ override (CSV of band gains in dB). Null = inherit
+     * from the podcast (`podcast_state.eqBandsCsvOverride`); non-null = a
+     * one-off branch for this single episode. Set by the "Use a one-off
+     * EQ for this episode" toggle in the EQ screen — useful for guest-
+     * heavy episodes whose tonal balance doesn't match the podcast's
+     * usual host-tuned EQ.
+     *
+     * (Briefly deprecated in v0.6.11 when EQ moved to podcast-level; the
+     * v0.6.12 reshape brings it back as the override layer.)
      */
     val eqBandsCsvOverride: String? = null
 )

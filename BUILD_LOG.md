@@ -2,6 +2,45 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EQ reshape: podcast owns the EQ; episode override is the one branch point
+
+Course-correction on v0.6.11. The right model:
+
+- **No global EQ.** Each podcast owns its own tuning, full stop.
+- **Episode inherits from its podcast** by default.
+- **One-off episode override** is the only per-episode knob — branches
+  off the podcast's tuning for that single episode.
+- **No "disable EQ" toggles.** Disabling = setting bands to flat. The
+  master "Audio enhancement" toggle still gates the whole DSP chain
+  globally; per-podcast or per-episode disable was redundant noise.
+
+Resolution chain in `PlayerController.applyEqOverrideFor`:
+`episode_state.eqBandsCsvOverride` → `podcast_state.eqBandsCsvOverride`
+→ `EqPresets.FLAT`. The first non-null wins. Enabled state is purely
+the master toggle.
+
+EqScreen reshape:
+- "For this podcast" section + its disable + its override toggle: **gone**.
+- "Disable EQ for this episode" toggle: **gone**.
+- One toggle remains: "Use a one-off EQ for this episode" (new copy
+  reflects inheritance: "Branches off this podcast's EQ for this
+  episode only. Toggle off to re-inherit the podcast's tuning.").
+- Slider routing: when the override toggle is on, edits write to
+  `episode_state.eqBandsCsvOverride` for the current guid. When off,
+  edits write to `podcast_state.eqBandsCsvOverride` for the current
+  feedUrl — i.e. the slider IS the podcast's tuning interface. With
+  no episode loaded, edits are transient (live processor only, no
+  persistence).
+
+Schema: no migration. The existing `podcast_state.eqBandsCsvOverride`
+column is repurposed as the podcast's primary EQ store; the
+`eqDisabled` columns on both `episode_state` and `podcast_state` are
+marked deprecated and unread (kept on the schema for backup
+round-trip compat). The `episode_state.eqBandsCsvOverride` column,
+briefly deprecated in v0.6.11, is now back as the override layer.
+
+ai_contamination: true # claude opus 4.7
+
 ## EQ override moves from per-episode to per-podcast
 
 User feedback: "EQ for an episode is supposed to be applied to all
