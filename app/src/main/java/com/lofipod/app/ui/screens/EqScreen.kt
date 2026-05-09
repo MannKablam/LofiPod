@@ -3,9 +3,11 @@ package com.lofipod.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -20,9 +22,13 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
@@ -226,7 +232,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Audio") },
+                title = { Text("Audio Fine-tuning") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -566,7 +572,7 @@ fun EqScreen(controller: PlayerController, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
             bands.forEachIndexed { idx, band ->
-                BandRow(band, sliderColors) { newGain ->
+                BandRow(band, accentColor) { newGain ->
                     val newBands = bands.toMutableList()
                     newBands[idx] = band.copy(gainDb = newGain)
                     bands = newBands
@@ -761,7 +767,7 @@ private fun PresetButton(
 }
 
 @Composable
-private fun BandRow(band: EqBand, sliderColors: SliderColors, onChange: (Float) -> Unit) {
+private fun BandRow(band: EqBand, accentColor: Color, onChange: (Float) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
@@ -771,18 +777,171 @@ private fun BandRow(band: EqBand, sliderColors: SliderColors, onChange: (Float) 
             modifier = Modifier.width(56.dp),
             style = MaterialTheme.typography.bodyMedium
         )
-        Slider(
+        BandSlider(
             value = band.gainDb,
             onValueChange = onChange,
             valueRange = -12f..12f,
             steps = 23,
-            colors = sliderColors,
-            modifier = Modifier.weight(1f)
+            activeColor = accentColor,
+            modifier = Modifier.weight(1f),
         )
         Text(
             "%+.0f".format(band.gainDb),
             modifier = Modifier.width(40.dp),
             style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+/**
+ * Thumb-only horizontal slider for the graphic EQ bands. Replaces
+ * Material3's `Slider` to fix a UX problem: the standard slider listens
+ * for taps + drags across the entire track, so vertical scrolls of the
+ * EQ screen kept getting hijacked into accidental band tweaks whenever
+ * the user's finger landed on (or dragged across) a slider track.
+ *
+ * Behavior contract:
+ *   - **Drag the thumb** (the small circle): moves the band, snapped to
+ *     [steps] discrete positions across [valueRange]. Standard slider UX.
+ *   - **Touch anywhere else on the row**: pass-through. The pointer event
+ *     never lands inside this composable's `pointerInput` because only
+ *     the thumb has one. Vertical scrolls of the parent Column work as
+ *     expected.
+ *
+ * Visual: full-width inactive track + center tick at the 0 dB home
+ * position + active track segment from center to thumb (in
+ * [activeColor]). The center tick is the visual "zero is here" reference
+ * that lets the user see how far each band is shaped relative to flat.
+ *
+ * Trade-offs accepted vs. Material3 Slider:
+ *   - No tap-to-jump (the very behavior we're fixing).
+ *   - No keyboard / accessibility nav (we're touch-only).
+ *   - Slightly less visual polish (no ripple, no thumb scale animation).
+ *     Acceptable; the band sliders are dense and small visual changes
+ *     would clutter.
+ */
+@Composable
+private fun BandSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    activeColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val thumbDp = 28.dp
+    val thumbPx = with(density) { thumbDp.toPx() }
+    val span = valueRange.endInclusive - valueRange.start
+    val rowHeight = 36.dp
+    val trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+    val tickColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+
+    // rememberUpdatedState so the suspending pointerInput block always
+    // sees the latest external value/callback without re-keying (which
+    // would tear down + restart the gesture detector).
+    val currentValue by rememberUpdatedState(value)
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+
+    BoxWithConstraints(modifier = modifier.height(rowHeight)) {
+        val widthPx = with(density) { maxWidth.toPx() }
+        val travelPx = (widthPx - thumbPx).coerceAtLeast(0f)
+
+        fun valueToOffsetPx(v: Float): Float {
+            val f = ((v - valueRange.start) / span).coerceIn(0f, 1f)
+            return f * travelPx
+        }
+
+        fun offsetPxToValue(px: Float): Float {
+            val f = (px / travelPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            val raw = valueRange.start + f * span
+            return if (steps > 0) {
+                val stepSize = span / (steps + 1)
+                (kotlin.math.round(raw / stepSize) * stepSize)
+                    .coerceIn(valueRange.start, valueRange.endInclusive)
+            } else raw.coerceIn(valueRange.start, valueRange.endInclusive)
+        }
+
+        val thumbOffsetPx = valueToOffsetPx(value)
+        val centerPx = widthPx / 2f
+        val thumbCenterPx = thumbOffsetPx + thumbPx / 2f
+        val activeLeftPx = minOf(centerPx, thumbCenterPx)
+        val activeWidthPx = abs(thumbCenterPx - centerPx)
+
+        // Inactive track — runs the full width minus the thumb's radius
+        // on each side so the painted track aligns with the thumb's
+        // travel range.
+        Box(
+            modifier = Modifier
+                .padding(horizontal = thumbDp / 2)
+                .fillMaxWidth()
+                .height(3.dp)
+                .clip(RoundedCornerShape(50))
+                .background(trackColor)
+                .align(Alignment.Center)
+        )
+        // Center tick at 0 dB — visual home position.
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .height(10.dp)
+                .background(tickColor)
+                .align(Alignment.Center)
+        )
+        // Active track from center tick to thumb center.
+        if (activeWidthPx > 0f) {
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(activeLeftPx.roundToInt(), 0) }
+                    .align(Alignment.CenterStart)
+                    .width(with(density) { activeWidthPx.toDp() })
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(activeColor)
+            )
+        }
+        // Thumb — ONLY this composable has a pointerInput. Touches
+        // outside its bounds bypass us entirely so the parent
+        // verticalScroll Column stays responsive.
+        //
+        // Drag math: cumulative-delta from drag start position. We
+        // snapshot the value at onDragStart and accumulate dragAmount
+        // across onDrag events; the thumb's target offset is always
+        // computed from the start position + total drag, not from
+        // the (already-snapped) current value. That keeps the snap
+        // boundaries crisp instead of drifting one step per snap.
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(thumbOffsetPx.roundToInt(), 0) }
+                .align(Alignment.CenterStart)
+                .size(thumbDp)
+                .clip(CircleShape)
+                .background(activeColor)
+                .pointerInput(travelPx, valueRange.start, valueRange.endInclusive, steps) {
+                    if (travelPx <= 0f) return@pointerInput
+                    var dragAccumPx = 0f
+                    var startValue = currentValue
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            startValue = currentValue
+                            dragAccumPx = 0f
+                        },
+                        onDragEnd = {
+                            dragAccumPx = 0f
+                        },
+                        onDragCancel = {
+                            dragAccumPx = 0f
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragAccumPx += dragAmount
+                            val target = (valueToOffsetPx(startValue) + dragAccumPx)
+                                .coerceIn(0f, travelPx)
+                            val newValue = offsetPxToValue(target)
+                            if (newValue != currentValue) currentOnValueChange(newValue)
+                        },
+                    )
+                }
         )
     }
 }
