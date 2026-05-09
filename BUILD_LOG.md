@@ -2,6 +2,37 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Episode size readout + stale APK cache cleanup
+
+Two fixes prompted by user reports:
+
+**Per-episode size readout.** New `audioByteSize` field on `Episode`,
+parsed from RSS `<enclosure length="...">` and persisted through
+`FeedDiskCache`. Rendered on each episode row in the meta line as
+`s=Nmb; d=Nmb` so the user can see bandwidth + disk cost at a
+glance before tapping play or download. Both numbers are the same
+(streaming and downloading both pull the full enclosure file) — the
+dual readout matches the user's two distinct mental questions
+("how much data?" vs "how much disk?") legible at a glance.
+Sub-megabyte sizes show as `<1mb` rather than rounding to `0mb`.
+
+**Stale APK update cache cleanup.** User report: app data hit 214 MB
+despite having only a few episodes played. Root cause was
+`UpdateChecker` accumulating cached APKs at
+`cacheDir/updates/lofipod-<versionCode>.apk` — one ~57 MB file per
+shipped tag the user had downloaded, never cleaned up. After 4 tags
+shipped, that's ~228 MB of stale APKs alone.
+
+`LofiPodApp.onCreate` now runs a one-shot startup cleanup alongside
+the existing legacy-cache wipe: lists `cacheDir/updates/`, keeps the
+APK matching the currently-installed `versionCode` (in case the user
+is mid-install when this fires), deletes everything else. Idempotent.
+Combined with the v0.6.22 orphan sweep on `episode_audio/`, app data
+should now stay roughly proportional to actually-downloaded
+episodes + one current update APK at most.
+
+ai_contamination: true # claude opus 4.7
+
 ## Mid-playback handoff to local file + orphan sweep + audiophile reflow
 
 Three improvements bundled:

@@ -148,6 +148,38 @@ class LofiPodApp : Application() {
             }
         }
 
+        // Stale APK update cache cleanup. UpdateChecker writes downloaded
+        // APKs to cacheDir/updates/lofipod-<versionCode>.apk and reuses
+        // them across "Check now" presses, but never deletes older
+        // versions. After several updates this can balloon to hundreds of
+        // MB of stale APKs (each ~57 MB through the v0.6.x line) under
+        // the user's "Storage → Data" reading. We delete every APK whose
+        // versionCode != the currently-installed code, plus any leftover
+        // .tmp files. The current versionCode's APK survives in case the
+        // user is mid-install when this fires.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                val updatesDir = java.io.File(cacheDir, "updates")
+                if (!updatesDir.exists()) return@launch
+                val installedCode = runCatching {
+                    val pkg = packageManager.getPackageInfo(packageName, 0)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        pkg.longVersionCode.toInt()
+                    } else {
+                        @Suppress("DEPRECATION") pkg.versionCode
+                    }
+                }.getOrDefault(-1)
+                val keep = "lofipod-$installedCode.apk"
+                updatesDir.listFiles()?.forEach { f ->
+                    if (f.name != keep) {
+                        runCatching { f.delete() }
+                    }
+                }
+            } catch (e: Exception) {
+                System.err.println("Stale APK cleanup failed: ${e.message}")
+            }
+        }
+
         // Coil's default OkHttp uses a generic UA that some podcast art hosts (e.g.
         // cloudfront fronts) reject. Force the same browser-ish UA we use for feed
         // fetches so artwork downloads succeed.
