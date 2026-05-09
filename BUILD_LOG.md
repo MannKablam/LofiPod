@@ -2,6 +2,42 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Stall watchdog: tighter, surfaced to the UI, snackbar feedback
+
+User report: at 2x on a downloaded episode the cycling-position
+freeze hit "almost immediately" with no UI signal — no buffering ring
+around the play button, no snackbar, just frozen audio for ~10 s
+until the v0.6.16 watchdog's silent recovery seek.
+
+Three fixes:
+
+1. **Surface the stall to UI.** New `PlayerState.isStalled` flag,
+   owned by the watchdog (Media3 keeps the player in STATE_READY
+   during DSP-side stalls so `isBuffering` stays false — the audio
+   data is loaded, the audio thread just can't keep up). When the
+   watchdog detects a stall, it sets `isStalled = true` and clears
+   it 2 s after the recovery seek. PlayerScreen + MiniPlayer treat
+   `isBuffering || isStalled` as the loading-ring trigger.
+
+2. **Snackbar feedback on stall.** Watchdog emits a one-shot via
+   `transientMessages` at first detection: "Audio chain stalled at
+   2.00× — recovering. Try a lower speed or disabling linear-phase
+   EQ if this keeps happening." Throttled to once per 30 s so a
+   chronic-stall cycle doesn't spam the user every recovery.
+
+3. **Tighter detection.** Stall threshold dropped from 10 s → 6 s
+   (the cycling-position bug exhibits ~5 s cycles, so 6 s catches
+   the first complete cycle without false-positive on legitimate
+   buffering). Poll period dropped from 2 s → 1 s so the indicator
+   + snackbar appear within a second of the watchdog's decision.
+
+`pushState()` updated to `_state.update { ... }` and to PRESERVE
+`isStalled` across calls — without that, a routine
+`onIsPlayingChanged` after a stall recovery would silently flip
+`isStalled` back to its default mid-recovery.
+
+ai_contamination: true # claude opus 4.7
+
 ## Text settings + bundled Garamonds (EB + Cormorant)
 
 New Settings → Text & font screen. Substantive typography control:

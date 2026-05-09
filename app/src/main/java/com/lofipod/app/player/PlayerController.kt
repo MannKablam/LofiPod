@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -140,6 +141,9 @@ class PlayerController(private val context: Context) {
     private var stallWatchdogJob: kotlinx.coroutines.Job? = null
     private var lastForwardProgressPosMs: Long = 0L
     private var lastForwardProgressAtMs: Long = 0L
+    /** Wall-clock of the most recent stall snackbar. Used to throttle so a
+     *  cycling-stall doesn't spam the user with a snackbar every recovery. */
+    private var lastStallMessageAtMs: Long = 0L
 
     fun connect(onReady: () -> Unit) {
         // Pin this controller as the autoplay-confirm target for any
@@ -480,20 +484,27 @@ class PlayerController(private val context: Context) {
 
     private fun pushState() {
         val c = controller ?: return
-        _state.value = PlayerState(
-            isPlaying = c.isPlaying,
-            isReady = c.playbackState == Player.STATE_READY,
-            // Buffering counts only when we WANT to play (playWhenReady). A
-            // paused player may also pass through BUFFERING but we shouldn't
-            // surface a "Buffering…" indicator to the user in that case.
-            isBuffering = c.playbackState == Player.STATE_BUFFERING && c.playWhenReady,
-            errorMessage = lastError,
-            currentTitle = c.mediaMetadata.title?.toString(),
-            currentArtist = c.mediaMetadata.artist?.toString(),
-            currentArtworkUri = c.mediaMetadata.artworkUri?.toString(),
-            currentEpisodeGuid = c.currentMediaItem?.mediaId,
-            speed = c.playbackParameters.speed
-        )
+        // Preserve isStalled across pushState — it's owned by the watchdog
+        // (set/cleared on its own timer), not by Media3's player state.
+        // Without preservation a routine onIsPlayingChanged after a stall
+        // recovery would silently flip isStalled back to its default.
+        _state.update { prev ->
+            PlayerState(
+                isPlaying = c.isPlaying,
+                isReady = c.playbackState == Player.STATE_READY,
+                // Buffering counts only when we WANT to play (playWhenReady). A
+                // paused player may also pass through BUFFERING but we shouldn't
+                // surface a "Buffering…" indicator to the user in that case.
+                isBuffering = c.playbackState == Player.STATE_BUFFERING && c.playWhenReady,
+                isStalled = prev.isStalled,
+                errorMessage = lastError,
+                currentTitle = c.mediaMetadata.title?.toString(),
+                currentArtist = c.mediaMetadata.artist?.toString(),
+                currentArtworkUri = c.mediaMetadata.artworkUri?.toString(),
+                currentEpisodeGuid = c.currentMediaItem?.mediaId,
+                speed = c.playbackParameters.speed
+            )
+        }
     }
 
     /**
@@ -1016,14 +1027,44 @@ class PlayerController(private val context: Context) {
                 }
                 // No forward progress. If we've been stalled for the full
                 // threshold AND the player still claims to be playing, the
-                // renderer is stuck. Force a flush via seek-to-self.
+                // renderer is stuck. Force a flush via seek-to-self AND
+                // surface the stall to the UI so the user gets explicit
+                // feedback rather than silent dead audio.
                 if (now - lastForwardProgressAtMs >= STALL_THRESHOLD_MS) {
                     val recoveryPosMs = c.currentPosition
+                    val speed = c.playbackParameters.speed
+
+                    // 1. Mark stalled so the play-button buffering ring
+                    //    appears (UI treats isStalled == isBuffering for
+                    //    indicator purposes). Cleared after a brief delay
+                    //    so the ring doesn't linger past recovery.
+                    _state.update { it.copy(isStalled = true) }
+                    scope.launch {
+                        delay(STALL_INDICATOR_LINGER_MS)
+                        _state.update { it.copy(isStalled = false) }
+                    }
+
+                    // 2. Snackbar feedback, throttled so a cycling-stall
+                    //    doesn't fire one per recovery. The hint nudges
+                    //    the user toward lower playback speed or
+                    //    disabling linear-phase EQ — the most common
+                    //    DSP-can't-keep-up causes.
+                    if (now - lastStallMessageAtMs >= STALL_MESSAGE_THROTTLE_MS) {
+                        _transientMessages.tryEmit(
+                            "Audio chain stalled at ${"%.2fx".format(speed)} — recovering. " +
+                                "Try a lower speed or disabling linear-phase EQ if this keeps happening."
+                        )
+                        lastStallMessageAtMs = now
+                    }
+
+                    // 3. The actual recovery: seek-to-self flushes the
+                    //    audio sink and re-syncs the renderer chain.
                     c.seekTo(recoveryPosMs)
                     com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
                         identifier = "renderer_stall",
-                        detail = "Force-flushed at ${recoveryPosMs / 1000}s after ${(now - lastForwardProgressAtMs) / 1000}s of no progress (speed=${c.playbackParameters.speed}x).",
+                        detail = "Force-flushed at ${recoveryPosMs / 1000}s after ${(now - lastForwardProgressAtMs) / 1000}s of no progress (speed=${"%.2fx".format(speed)}).",
                     )
+
                     // Reset the baseline so we don't re-trigger immediately
                     // if the seek itself takes a moment to register a new
                     // currentPosition reading.
@@ -1518,18 +1559,30 @@ class PlayerController(private val context: Context) {
         const val REASON_SESSION_END = "session_end"
         const val REASON_PROMOTED_TO_MOST_EXCELLENT = "promoted_to_most_excellent"
 
-        /** Stall watchdog poll period. 2 s is fast enough that a real
-         *  stall is detected promptly (within threshold + 2 s) and slow
-         *  enough that the watchdog itself has negligible CPU cost. */
-        private const val STALL_POLL_INTERVAL_MS = 2_000L
+        /** Stall watchdog poll period. 1 s — twice as frequent as v0.6.16
+         *  so the user sees the indicator + snackbar within a second of
+         *  the watchdog deciding to act. CPU cost is negligible (one
+         *  position read + a few comparisons per second). */
+        private const val STALL_POLL_INTERVAL_MS = 1_000L
 
-        /** No-forward-progress duration that counts as a stall. Long
-         *  enough that natural pauses for buffering / decoder warm-up
-         *  don't trip it; short enough that the user notices the
-         *  intervention rather than enduring a full 30 s of dead audio.
-         *  The cycling-position bug at 2x exhibited cycles of ~5 s, so
-         *  by 10 s of no-max-advance we're confidently in stall territory. */
-        private const val STALL_THRESHOLD_MS = 10_000L
+        /** No-forward-progress duration that counts as a stall. Tightened
+         *  from 10 s (v0.6.16) → 6 s after a user report of "almost
+         *  immediate" cycling on a downloaded episode at 2x. The cycling
+         *  has a ~5 s period; 6 s catches the first complete cycle
+         *  without false-positive on legitimate buffering. */
+        private const val STALL_THRESHOLD_MS = 6_000L
+
+        /** How long [PlayerState.isStalled] stays true after a recovery
+         *  seek before it's auto-cleared. Long enough for the user to see
+         *  the indicator + read the snackbar; short enough that the ring
+         *  doesn't linger past the recovery itself if it succeeded. */
+        private const val STALL_INDICATOR_LINGER_MS = 2_000L
+
+        /** Minimum gap between stall snackbars. Stops a chronic-stall
+         *  cycle from spamming the user every recovery — first occurrence
+         *  fires the message, the next ~30 s of stalls just get the
+         *  indicator + diagnostics log. */
+        private const val STALL_MESSAGE_THROTTLE_MS = 30_000L
 
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
@@ -1570,6 +1623,17 @@ data class PlayerState(
      * is trying rather than silently broken.
      */
     val isBuffering: Boolean = false,
+    /**
+     * True when the stall watchdog has detected the renderer is stuck
+     * (cycling-position underrun). Distinct from [isBuffering] because
+     * Media3 keeps the player in STATE_READY during DSP-side stalls — the
+     * audio data is loaded, the audio thread just can't keep up. Without
+     * this flag the UI would show "playing" while nothing is audible.
+     * Cleared automatically a couple of seconds after the watchdog's
+     * recovery seek so the indicator doesn't linger longer than the
+     * recovery itself takes.
+     */
+    val isStalled: Boolean = false,
     /**
      * Most recent ExoPlayer error message, if any. Cleared on the next
      * successful state transition (BUFFERING / READY) so a transient failure
