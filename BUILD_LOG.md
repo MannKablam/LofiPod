@@ -2,6 +2,72 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Playback hang at 2x: bigger AudioTrack buffer + harder watchdog flush
+
+User report (continued): "playback often hangs and needs to be flushed.
+episode is downloaded. playback speed is x2. after a minute or so
+playback is volatile and can stop." Watchdog landed in v0.6.16 + tuned
+in v0.6.18 wasn't fully solving it.
+
+Three compounding causes, all addressed:
+
+**1. AudioTrack output buffer too small at 2×.** Media3's default
+`DefaultAudioTrackBufferSizeProvider` gives a 250 ms minimum PCM
+buffer with a 4× multiplier of the OS minimum. Two ways the 2× speed
+case lands in trouble:
+  - When AudioTrack is doing the speed natively (modern phones,
+    `enableAudioTrackPlaybackParams=true`), the 250 ms buffer drains
+    in **125 ms wall-clock** at 2×. Any GC pause, thermal throttle,
+    or kernel scheduling jitter longer than 125 ms starves the
+    AudioTrack.
+  - When Sonic in the chain is doing the speed, our DSP chain has to
+    feed Sonic at 2× source rate, so per-buffer wallclock load is
+    doubled — small jitter that's a non-event at 1× becomes an
+    underrun at 2×.
+
+Fix in `EqRenderersFactory.buildAudioSink`: pass a
+`DefaultAudioTrackBufferSizeProvider` configured with 1.5 s
+minimum / 3.0 s max / 8× multiplier. ~576 KB of extra audio
+buffer at 48 kHz stereo int16 — negligible memory cost, ~6×
+larger headroom against jitter. Trade-off: EQ-tweak responsiveness
+drops from ~250 ms to ~1.5 s of "old EQ before new takes effect."
+Acceptable — the hang was a real bug, EQ-while-listening is a
+niche workflow.
+
+**2. Watchdog recovery seek-to-self can be deduped to a no-op.** The
+v0.6.16 / v0.6.18 watchdog called `seekTo(currentPosition)` to flush
+the audio sink. Media3 / DefaultAudioSink may dedup a same-position
+seek and skip the flush — which is why the user kept observing
+stalls even though the watchdog log said "force-flushed at Xs". A
+100 ms backward offset (`seekTo(currentPosition - 100)`) guarantees
+a real seek + flushes the renderer chain + replays the last 100 ms
+of audio the user likely missed during the stall. New
+`STALL_RECOVERY_REWIND_MS` constant = 100.
+
+**3. Watchdog stopped during BUFFERING.** The previous lifecycle was
+"start when isPlaying flips true, stop when it flips false." When
+the AudioTrack underruns badly enough, ExoPlayer transitions out of
+`STATE_READY` into `STATE_BUFFERING` with isPlaying=false — which
+killed the watchdog right when arm B should have been catching it.
+
+Lifecycle moved from `onIsPlayingChanged` to `onPlayWhenReadyChanged`
+so the watchdog tracks user intent, not moment-to-moment isPlaying.
+Cold-launch path (already-playing session) explicitly starts the
+watchdog after addListener since Media3 doesn't replay state-change
+callbacks for the listener's initial state. New arm B in the
+watchdog body: when `playbackState == STATE_BUFFERING && playWhenReady`,
+track a separate buffering-start timestamp. After
+`BUFFERING_STALL_THRESHOLD_MS = 8 s` of buffering, fire the same
+recovery as arm A. 8 s is longer than arm A's 6 s because legitimate
+buffering on a far scrub or first remote-stream play can take
+several seconds — but on a downloaded local file 8 s of buffering
+means the renderer chain is wedged.
+
+`triggerStallRecovery` extracted as a shared helper so both arms
+emit the same UI/diagnostics surface.
+
+ai_contamination: true # claude opus 4.7
+
 ## Episode size readout: simpler format + bottom-right placement
 
 Two refinements on v0.6.23's `s=Nmb; d=Nmb` design:
