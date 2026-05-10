@@ -65,8 +65,8 @@ class EqRenderersFactory(
         // before the AudioTrack runs dry. ~576 KB at 48 kHz stereo int16 —
         // negligible on any modern device, large win against the hang.
         val bufferSizeProvider = DefaultAudioTrackBufferSizeProvider.Builder()
-            .setMinPcmBufferDurationUs(1_500_000L)
-            .setMaxPcmBufferDurationUs(3_000_000L)
+            .setMinPcmBufferDurationUs(1_500_000)
+            .setMaxPcmBufferDurationUs(3_000_000)
             .setPcmBufferMultiplicationFactor(8)
             .build()
         return DefaultAudioSink.Builder(context)
