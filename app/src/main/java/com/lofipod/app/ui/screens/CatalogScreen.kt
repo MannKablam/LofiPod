@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -144,8 +143,14 @@ fun CatalogScreen(
                 actions = {
                     if (playerState.currentEpisodeGuid != null) {
                         IconButton(onClick = onOpenNowPlaying) {
+                            // GraphicEq (pulsing-bar live-audio glyph) for the
+                            // Now Playing top-bar action — matches the same
+                            // glyph used on PlayerScreen's top-bar title and
+                            // EpisodesScreen's per-row "currently playing"
+                            // marker. Replaced MusicNote here as part of the
+                            // Audio Fine-tuning ↔ Now Playing icon split.
                             Icon(
-                                Icons.Filled.MusicNote,
+                                Icons.Filled.GraphicEq,
                                 contentDescription = "Now playing",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(28.dp)
