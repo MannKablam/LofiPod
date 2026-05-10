@@ -2,6 +2,109 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Performance Hint API + audio-thread priority diagnostics
+
+Two more upstream attacks on the same scheduling-jitter problem v0.7.0
+absorbed downstream. Both surface in Settings -> Audio diagnostics under a
+new "Scheduler" section so any future stutter report includes the OS-level
+facts (priority, hint session state) right next to the existing wallclock
+load factor.
+
+**1. Performance Hint API (Android 12+).** New
+`audio/PerformanceHintBridge.kt` wraps `android.os.PerformanceHintManager`.
+On API 31+ devices it creates a hint session keyed to the audio sink's TID
+with target = wall-clock budget per buffer (= frame_count / sample_rate),
+and reports actual elapsed wallclock after each DSP pass. The OS uses both
+to keep the CPU at the right frequency for the workload — eliminates the
+"governor downclocked, then had to spin back up under the FIR convolution"
+pattern that dominated the high-load tail at 2x speed.
+
+   - All API 31+ types stored as `Any?` so the class loader never has to
+     resolve `PerformanceHintManager` on lower-SDK devices. Methods gate on
+     `Build.VERSION.SDK_INT >= S` and cast at call sites.
+   - Defensive try/catch around every API call; some OEM builds ship broken
+     implementations. Failure drops the session silently and remembers the
+     last error for diagnostics — never disrupts audio.
+   - Wired through `AudioChainTelemetry.installPerformanceHintBridge` from
+     `LofiPodApp.onCreate` (new `perf_hint_install` startup phase). The
+     audio thread reaches it via the existing per-buffer
+     `recordBufferTiming` call — one TID compare + a JNI hop into the perf
+     hint service per buffer when supported.
+
+**2. Audio-thread identity + priority readout.** Same
+`recordBufferTiming` path now also captures `Process.myTid()` +
+`Thread.currentThread().name` on the first buffer (and on the rare event of
+the sink swapping threads), and re-reads `Process.getThreadPriority(tid)`
+every buffer. The diagnostic surfaces the priority with a label:
+  - **-19 URGENT_AUDIO** = best
+  - **-16 AUDIO** = expected (Media3's `AudioSink` callback thread)
+  - **0 DEFAULT** = WRONG; the chain would be competing with normal app
+    threads and underruns expected on any CPU contention
+  - **>0 BELOW normal** = WRONG; thermal demotion or aggressive power
+    saving has clobbered audio prioritization
+
+If the readout ever shows DEFAULT or positive, that's a real bug to chase.
+Re-reading every buffer (cheap — one syscall) catches OEM kernels that
+demote the audio thread under thermal pressure mid-session.
+
+   - **Auto-detect + log on demotion.** Every buffer compares the live
+     priority against `>= 0`. On the transition into a wrong state, logs
+     a `priority_demoted` breadcrumb (with TID + observed priority) and
+     bumps a `priorityDemotions` counter. On transition back to good,
+     logs `priority_recovered`. Logged on transitions only, not per
+     buffer — otherwise a sustained demotion would flood the 50-slot
+     event ring within a second. The Scheduler section surfaces the
+     cumulative `demotions` count; tap into Recent Events to see the
+     per-event timestamps.
+
+**Surface.** New "Scheduler" section in `AudioDiagnosticsScreen` between
+Performance and Counters: shows TID + name + priority label + perf-hint
+state (unsupported / active / target ms). Clipboard dump includes it so
+bug reports carry the full OS-level picture. HELP_TEXT updated.
+
+For the primary user (Android 14, recent Pixel-class device) this should
+read "perf_hint = active, target = ~23 ms / buffer" and "thread_priority
+= -16 AUDIO" once playback starts. Watching how often the load factor's
+max stays bounded vs. spikes will be the empirical test of whether the
+hint is actually moving the needle.
+
+ai_contamination: true # claude opus 4.7
+
+## Battery-optimization opt-out prompt in Settings
+
+Followup to v0.7.0's playback-hang fix. The buffer expansion + watchdog
+hardening absorbs scheduling jitter downstream; this attacks one of the
+upstream causes for users on devices with aggressive Doze / App Standby
+defaults (Xiaomi, OnePlus, Samsung's "deep sleep" lists, etc.).
+
+**Manifest:** added `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. Required for
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` to fire — without it the
+system rejects the intent with SecurityException. Declaring the permission
+only enables the *request*, not the exemption itself; the user still
+confirms the system dialog.
+
+**Settings:** new "System" section (between Audio and Data) with a
+`BatteryOptimizationRow`. Reads `PowerManager.isIgnoringBatteryOptimizations`
+on every recomposition triggered by a tick, and bumps the tick from a
+`rememberLauncherForActivityResult` callback so status auto-refreshes when
+the user returns from the system prompt. Two states:
+  - **Optimized** (default): "Allow unrestricted" button fires
+    `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+  - **Unrestricted**: "Open settings" button fires
+    `ACTION_APPLICATION_DETAILS_SETTINGS` so the user can revert.
+
+No first-launch nudge — surfaced as a discoverable Settings entry rather
+than a modal interrupt. Users who already manually disabled battery opt
+(e.g. the primary user) see the unrestricted-confirmation state and won't
+be re-prompted.
+
+For the primary user this is zero-impact (already unrestricted, manual fix
+didn't move the needle for the 2x hang — that was the buffer/watchdog
+issue, fixed in v0.7.0). The value is for sideload recipients on stock
+Android 12+ and especially on aggressive-Doze vendor skins.
+
+ai_contamination: true # claude opus 4.7
+
 ## Playback hang at 2x: bigger AudioTrack buffer + harder watchdog flush
 
 User report (continued): "playback often hangs and needs to be flushed.
