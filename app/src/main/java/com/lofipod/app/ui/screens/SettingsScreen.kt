@@ -162,6 +162,10 @@ fun SettingsScreen(
             )
 
             Spacer(Modifier.height(20.dp))
+            SectionHeader("System")
+            BatteryOptimizationRow()
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("Data")
             AutoBackupRow()
             Spacer(Modifier.height(8.dp))
@@ -643,6 +647,92 @@ private fun ShareApkRow() {
             Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Share link")
+        }
+    }
+}
+
+/**
+ * Battery-optimization request row. Reads `PowerManager.isIgnoringBatteryOptimizations`
+ * for the live status and offers a button that fires the system prompt to
+ * mark LofiPod as "Unrestricted."
+ *
+ * Why this exists: even with a `mediaPlayback` foreground service, Doze + App
+ * Standby Buckets can throttle background CPU scheduling, network sockets,
+ * and timer fidelity in ways that surface as playback jitter — particularly
+ * during long sessions, with the screen off, or at >1x speed where each
+ * scheduling hiccup eats more wall-clock budget. Granting unrestricted
+ * status removes that throttling. Vendor skins (Xiaomi, OnePlus, Samsung's
+ * "deep sleep" lists, etc.) ship even more aggressive defaults than stock
+ * AOSP, so this can be a real fix for users on those devices.
+ *
+ * Status auto-refreshes when the user returns from the system Settings page
+ * via the [rememberLauncherForActivityResult] callback — no lifecycle
+ * observer needed, and matches the existing pattern used by
+ * [AutoBackupRow]'s folder picker.
+ */
+@Composable
+private fun BatteryOptimizationRow() {
+    val ctx = LocalContext.current
+    val pm = remember { ctx.getSystemService(android.os.PowerManager::class.java) }
+
+    // Recompose-tracked tick so the launcher callback can force a re-read
+    // of isIgnoringBatteryOptimizations after the user returns from the
+    // system prompt. The PowerManager API has no broadcast for this.
+    var refreshTick by remember { mutableStateOf(0) }
+    val isUnrestricted = remember(refreshTick) {
+        pm?.isIgnoringBatteryOptimizations(ctx.packageName) ?: false
+    }
+
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // User returned from either the request prompt or the per-app
+        // battery details page. Bump the tick so we re-read the live state.
+        refreshTick++
+    }
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text("Battery optimization", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "Android can throttle background CPU and wake-up scheduling to " +
+                "save battery. That throttling can cause occasional playback " +
+                "stutters or hangs, especially during long sessions with the " +
+                "screen off or at >1x speed. Marking LofiPod as " +
+                "\"Unrestricted\" lets the audio thread run smoothly. " +
+                "Vendor skins (Xiaomi, OnePlus, Samsung) are stricter than " +
+                "stock Android — recommended on those devices.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (isUnrestricted) "Status: unrestricted"
+                else "Status: optimized (may throttle background playback)",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (isUnrestricted) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (isUnrestricted) {
+                // Already unrestricted — give the user a way back into the
+                // per-app system page in case they want to revert or verify.
+                TextButton(onClick = {
+                    val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(android.net.Uri.parse("package:${ctx.packageName}"))
+                    runCatching { launcher.launch(intent) }
+                }) { Text("Open settings") }
+            } else {
+                FilledTonalButton(onClick = {
+                    // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS pops the
+                    // system "Allow [app] to use battery without restrictions?"
+                    // dialog. Requires REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                    // declared in the manifest, otherwise SecurityException.
+                    val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                        .setData(android.net.Uri.parse("package:${ctx.packageName}"))
+                    runCatching { launcher.launch(intent) }
+                }) { Text("Allow unrestricted") }
+            }
         }
     }
 }

@@ -18,6 +18,15 @@
          per-app "Install unknown apps" permission once via system Settings;
          the app detects that and prompts. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Lets the app launch ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS to
+         prompt the user to mark LofiPod as "Unrestricted." Doze and App
+         Standby can throttle background CPU/scheduling even with a
+         mediaPlayback foreground service, causing playback jitter at long
+         sessions or >1x speed. Without this permission the system rejects
+         the intent with SecurityException. The user still has to confirm
+         the prompt — declaring this permission only enables the request,
+         not the exemption itself. Surfaced in Settings -> System. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".LofiPodApp"

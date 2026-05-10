@@ -155,6 +155,10 @@ fun AudioDiagnosticsScreen(
                     Text(formatPerformance(snap, timing), style = MaterialTheme.typography.bodySmall)
 
                     Spacer(Modifier.height(12.dp))
+                    SectionLabel("Scheduler")
+                    Text(formatScheduler(snap), style = MaterialTheme.typography.bodySmall)
+
+                    Spacer(Modifier.height(12.dp))
                     SectionLabel("Counters")
                     Text(formatCounters(snap), style = MaterialTheme.typography.bodySmall)
 
@@ -369,6 +373,12 @@ private val HELP_TEXT: String = """
       max_proc        peak observed since last counters reset.
       load_factor     processing / audio-time, as a percentage. 5% means the chain finished in 5% of the audio's duration (95% headroom). Values approaching 100% mean the audio thread is saturated and underruns are imminent.
 
+    Scheduler — OS-level facts about the thread running the DSP chain.
+      audio_thread     Linux TID + Java thread name of the audio sink thread. Captured on the first buffer; bumps if the sink is rebuilt mid-session.
+      thread_priority  Process.getThreadPriority for that TID. Should be -16 (AUDIO) or -19 (URGENT_AUDIO). 0 (DEFAULT) means the chain is competing with normal app threads for CPU and underruns are expected on any contention — that's a bug.
+      demotions        How many times the priority has been observed >= 0 (i.e. demoted out of audio priority) since process start. Each transition logs a 'priority_demoted' (and matching 'priority_recovered') event in Recent events with a timestamp — so if this number is non-zero, scroll down to the event log to see when each demotion happened.
+      perf_hint        State of the Android 12+ PerformanceHintManager wiring. When "active", the OS scheduler keeps the CPU at the right frequency for the audio chain's measured workload — fewer downclock-then-spinup events and fewer max-load spikes during sustained playback. "unsupported" on API <31 or OEMs without the service.
+
     EQ / Player / Last error — same data the inline panel in Settings shows, kept here so a screenshot of this screen captures the full picture.
 
     Recent events — circular log of the last ~50 chain transitions. Read newest first; "ago" is wall-clock time since the event.
@@ -420,6 +430,14 @@ private data class TelemetrySnapshot(
     val lastBufferProcessingNs: Long,
     val lastBufferAudioNs: Long,
     val maxBufferProcessingNs: Long,
+    val audioThreadId: Int,
+    val audioThreadName: String,
+    val audioThreadPriority: Int,
+    val perfHintApiSupported: Boolean,
+    val perfHintSessionActive: Boolean,
+    val perfHintTargetNs: Long,
+    val perfHintLastError: String?,
+    val priorityDemotions: Int,
 ) {
     companion object {
         fun capture(): TelemetrySnapshot = with(AudioChainTelemetry) {
@@ -451,6 +469,14 @@ private data class TelemetrySnapshot(
                 lastBufferProcessingNs = lastBufferProcessingNs,
                 lastBufferAudioNs = lastBufferAudioNs,
                 maxBufferProcessingNs = maxBufferProcessingNs,
+                audioThreadId = audioThreadId,
+                audioThreadName = audioThreadName,
+                audioThreadPriority = audioThreadPriority,
+                perfHintApiSupported = perfHintApiSupported,
+                perfHintSessionActive = perfHintSessionActive,
+                perfHintTargetNs = perfHintTargetNs,
+                perfHintLastError = perfHintLastError,
+                priorityDemotions = priorityDemotionCount(),
             )
         }
     }
@@ -503,6 +529,55 @@ private fun formatCounters(s: TelemetrySnapshot): String {
         append("  passthrough_bufs = ${s.passthroughBuffers} ($passPct)\n")
         append("  dsp_bufs         = ${s.dspBuffers}\n")
         append("  frames_processed = ${s.framesProcessed}")
+    }
+}
+
+/**
+ * Format the Scheduler section: audio thread identity + priority + the
+ * Performance Hint API status. Surfaces two distinct things the user (or
+ * a bug-report reader) needs to triage stutters:
+ *   1. Is the DSP actually running at THREAD_PRIORITY_AUDIO (= -16)? If
+ *      not, it's competing with normal app threads and underruns are
+ *      expected on any CPU contention.
+ *   2. Did we successfully wire up PerformanceHintManager? On a supported
+ *      device with an active session, the OS scheduler keeps the CPU at
+ *      the right frequency for the workload — visible as fewer max-load
+ *      spikes after sustained playback.
+ */
+private fun formatScheduler(s: TelemetrySnapshot): String {
+    if (s.audioThreadId <= 0) {
+        return "  (no audio buffers processed yet — thread info captured on first buffer)"
+    }
+    val priorityLabel = when (s.audioThreadPriority) {
+        Int.MIN_VALUE -> "?"
+        // Process.THREAD_PRIORITY_* constants; the audio sink's BG callback
+        // thread should land on AUDIO (-16) or URGENT_AUDIO (-19).
+        -19 -> "${s.audioThreadPriority} (URGENT_AUDIO — best)"
+        -16 -> "${s.audioThreadPriority} (AUDIO — expected)"
+        in -15..-1 -> "${s.audioThreadPriority} (above normal)"
+        0 -> "${s.audioThreadPriority} (DEFAULT — WRONG, thread should be AUDIO)"
+        in 1..19 -> "${s.audioThreadPriority} (BELOW normal — WRONG)"
+        else -> s.audioThreadPriority.toString()
+    }
+    val hintLine = if (!s.perfHintApiSupported) {
+        "unsupported (Android 12+ required — running on older / OEM without service)"
+    } else if (!s.perfHintSessionActive) {
+        val err = s.perfHintLastError
+        if (err != null) "supported but no active session ($err)"
+        else "supported, no session yet (will create on first buffer)"
+    } else {
+        val targetMs = s.perfHintTargetNs / 1_000_000.0
+        "active, target = ${"%.2f".format(targetMs)} ms / buffer"
+    }
+    return buildString {
+        append("  audio_thread     = tid=${s.audioThreadId} name='${s.audioThreadName}'\n")
+        append("  thread_priority  = $priorityLabel\n")
+        append("  demotions        = ${s.priorityDemotions}")
+        if (s.priorityDemotions > 0) {
+            append("  (see 'priority_demoted' in Recent events for timestamps)")
+        }
+        append("\n  perf_hint        = $hintLine")
+        s.perfHintLastError?.let { append("\n  perf_hint_error  = $it") }
     }
 }
 
@@ -632,6 +707,9 @@ private fun buildClipboardDump(
     appendLine()
     appendLine("[Performance]")
     appendLine(formatPerformance(snap, timing))
+    appendLine()
+    appendLine("[Scheduler]")
+    appendLine(formatScheduler(snap))
     appendLine()
     appendLine("[Counters]")
     appendLine(formatCounters(snap))

@@ -3,6 +3,7 @@ package com.lofipod.app
 import android.app.Application
 import coil.Coil
 import coil.ImageLoader
+import com.lofipod.app.audio.AudioChainTelemetry
 import com.lofipod.app.bible.ScriptureIndexer
 import com.lofipod.app.data.BackupWorker
 import com.lofipod.app.data.DownloadHolder
@@ -61,6 +62,15 @@ class LofiPodApp : Application() {
         val tOnCreate = System.nanoTime()
         super.onCreate()
         instance = this
+        // Wire the API 31+ PerformanceHintManager bridge before anything in
+        // the audio path runs. The audio thread reaches it via
+        // AudioChainTelemetry on the first buffer it processes; installing
+        // here means that first buffer already has a target+actual report
+        // path. No-op on API <31 — the bridge stores null internally and
+        // every call short-circuits cheaply.
+        StartupTimings.phase("perf_hint_install") {
+            AudioChainTelemetry.installPerformanceHintBridge(this)
+        }
         repo = StartupTimings.phase("repo_init") { PodcastRepository(this) }
         db = StartupTimings.phase("db_get") { AppDatabase.get(this) }
         kabodLoader = StartupTimings.phase("kabod_loader_init") {
