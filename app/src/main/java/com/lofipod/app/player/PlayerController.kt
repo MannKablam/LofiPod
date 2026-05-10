@@ -118,12 +118,25 @@ class PlayerController(private val context: Context) {
     val transientMessages: SharedFlow<String> = _transientMessages.asSharedFlow()
 
     /**
-     * Stall watchdog. While the player thinks it's playing
-     * (`isPlaying && playWhenReady`), poll [Player.currentPosition] every
-     * [STALL_POLL_INTERVAL_MS] and flag a stall if the running max
-     * position hasn't advanced for [STALL_THRESHOLD_MS]. On stall, force
-     * a recovery via `seekTo(currentPosition)` — that flushes the audio
-     * sink and re-syncs the renderer chain.
+     * Stall watchdog. While the player wants to play
+     * (`playWhenReady`), poll [Player.currentPosition] every
+     * [STALL_POLL_INTERVAL_MS] and flag a stall under either condition:
+     *   1. The player reports `isPlaying=true` (state=READY) but the
+     *      running max position hasn't advanced for [STALL_THRESHOLD_MS]
+     *      — the cycling-position underrun loop where the renderer
+     *      replays its last decoded ~5 s of buffer indefinitely.
+     *   2. The player has been stuck in `STATE_BUFFERING` (isPlaying=false
+     *      but playWhenReady=true) for [BUFFERING_STALL_THRESHOLD_MS] —
+     *      "trying to play but the source/decoder/renderer can't deliver".
+     *      For local files this should be near-instant; multi-second
+     *      buffering on disk content means the chain is wedged.
+     *
+     * On stall, force a recovery via `seekTo(currentPosition - 100 ms)`.
+     * The negative offset is deliberate: a same-position seek can be
+     * deduplicated by Media3 / the audio sink and produce no flush, while
+     * a 100 ms backward seek always triggers a full audio-sink + decoder
+     * flush AND gives the user a brief replay of the audio they likely
+     * missed during the stall.
      *
      * The cycling-position bug at high playback speeds (user-reported in
      * v0.6.x: 2x → position cycled `43:31..43:36` for ~7 min until a
@@ -141,6 +154,11 @@ class PlayerController(private val context: Context) {
     private var stallWatchdogJob: kotlinx.coroutines.Job? = null
     private var lastForwardProgressPosMs: Long = 0L
     private var lastForwardProgressAtMs: Long = 0L
+    /** Wall-clock when the player most recently entered STATE_BUFFERING with
+     *  playWhenReady=true. Used by the watchdog to detect chronic buffering
+     *  stalls (the renderer is wedged trying to deliver audio). 0 when not
+     *  currently in a buffering window. */
+    private var bufferingStartedAtMs: Long = 0L
     /** Wall-clock of the most recent stall snackbar. Used to throttle so a
      *  cycling-stall doesn't spam the user with a snackbar every recovery. */
     private var lastStallMessageAtMs: Long = 0L
@@ -166,6 +184,11 @@ class PlayerController(private val context: Context) {
             controller = future.get().also { c ->
                 c.addListener(listener)
                 pushState()
+                // Cold launch with audio already playing: addListener doesn't
+                // replay state-change callbacks, so onPlayWhenReadyChanged
+                // won't fire for the existing playWhenReady=true. Start the
+                // watchdog manually if the session is already in play state.
+                if (c.playWhenReady) startStallWatchdog()
             }
             onReady()
             // Drain any play attempt the user fired while we were still
@@ -337,11 +360,26 @@ class PlayerController(private val context: Context) {
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             pushState()
-            // Start the stall watchdog whenever audio is playing; cancel
-            // when paused / ended / not playing. Restart-on-resume ensures
-            // the progress-tracking baseline is always fresh — a long
-            // pause shouldn't itself trip the stall detector.
-            if (isPlaying) startStallWatchdog() else stopStallWatchdog()
+            // Refresh the forward-progress baseline whenever audio actually
+            // resumes — a buffering window before this transition wouldn't
+            // have advanced position, so without this refresh the stall
+            // detector would see "no forward progress for N seconds" the
+            // moment playback resumes and could false-positive. The
+            // watchdog's lifecycle is owned by [onPlayWhenReadyChanged] so
+            // it can keep running ACROSS buffering windows (arm B
+            // explicitly handles "playWhenReady=true but state=BUFFERING").
+            if (isPlaying) {
+                lastForwardProgressPosMs = controller?.currentPosition ?: 0L
+                lastForwardProgressAtMs = System.currentTimeMillis()
+            }
+        }
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            pushState()
+            // Watchdog lifecycle tracks user intent (= playWhenReady), not
+            // moment-to-moment isPlaying. Otherwise a transient
+            // BUFFERING-during-play (which flips isPlaying to false) would
+            // kill the watchdog right as arm B should be running.
+            if (playWhenReady) startStallWatchdog() else stopStallWatchdog()
         }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             pushState()
@@ -1022,70 +1060,112 @@ class PlayerController(private val context: Context) {
      */
     private fun startStallWatchdog() {
         stallWatchdogJob?.cancel()
-        // Reset baseline so a freshly-started playback isn't considered
-        // stalled if the previous run left lastForwardProgressAtMs old.
+        // Reset baselines so a freshly-started playback isn't considered
+        // stalled if the previous run left timestamps stale.
         lastForwardProgressPosMs = controller?.currentPosition ?: 0L
         lastForwardProgressAtMs = System.currentTimeMillis()
+        bufferingStartedAtMs = 0L
         stallWatchdogJob = scope.launch {
             while (isActive) {
                 delay(STALL_POLL_INTERVAL_MS)
                 val c = controller ?: continue
-                if (!c.isPlaying || !c.playWhenReady) continue
-                val pos = c.currentPosition
+                if (!c.playWhenReady) {
+                    // User paused. Reset both timers so a long pause doesn't
+                    // pre-trip either watchdog arm on resume.
+                    bufferingStartedAtMs = 0L
+                    lastForwardProgressAtMs = System.currentTimeMillis()
+                    continue
+                }
                 val now = System.currentTimeMillis()
+
+                // Arm B — chronic STATE_BUFFERING with playWhenReady=true.
+                // Distinct from arm A: when the AudioTrack underruns badly
+                // enough, ExoPlayer transitions out of STATE_READY into
+                // STATE_BUFFERING with isPlaying=false, so arm A's
+                // forward-progress check stops running. Arm B picks up that
+                // slack — multi-second buffering on a local file means the
+                // renderer chain is wedged, not "waiting for network."
+                if (c.playbackState == Player.STATE_BUFFERING) {
+                    if (bufferingStartedAtMs == 0L) {
+                        bufferingStartedAtMs = now
+                    } else if (now - bufferingStartedAtMs >= BUFFERING_STALL_THRESHOLD_MS) {
+                        triggerStallRecovery(c, now, "buffering_${(now - bufferingStartedAtMs) / 1000}s")
+                        bufferingStartedAtMs = now
+                        lastForwardProgressPosMs = c.currentPosition
+                        lastForwardProgressAtMs = now
+                    }
+                    continue
+                } else {
+                    bufferingStartedAtMs = 0L
+                }
+
+                // Arm A — cycling-position underrun. State is READY/PLAYING
+                // but currentPosition isn't advancing. Track a running max so
+                // a position-cycle (43:31→43:36→43:31→...) trips this even
+                // though the position is "moving" within a cycle.
+                if (!c.isPlaying) continue
+                val pos = c.currentPosition
                 if (pos > lastForwardProgressPosMs) {
                     lastForwardProgressPosMs = pos
                     lastForwardProgressAtMs = now
                     continue
                 }
-                // No forward progress. If we've been stalled for the full
-                // threshold AND the player still claims to be playing, the
-                // renderer is stuck. Force a flush via seek-to-self AND
-                // surface the stall to the UI so the user gets explicit
-                // feedback rather than silent dead audio.
                 if (now - lastForwardProgressAtMs >= STALL_THRESHOLD_MS) {
-                    val recoveryPosMs = c.currentPosition
-                    val speed = c.playbackParameters.speed
-
-                    // 1. Mark stalled so the play-button buffering ring
-                    //    appears (UI treats isStalled == isBuffering for
-                    //    indicator purposes). Cleared after a brief delay
-                    //    so the ring doesn't linger past recovery.
-                    _state.update { it.copy(isStalled = true) }
-                    scope.launch {
-                        delay(STALL_INDICATOR_LINGER_MS)
-                        _state.update { it.copy(isStalled = false) }
-                    }
-
-                    // 2. Snackbar feedback, throttled so a cycling-stall
-                    //    doesn't fire one per recovery. The hint nudges
-                    //    the user toward lower playback speed or
-                    //    disabling linear-phase EQ — the most common
-                    //    DSP-can't-keep-up causes.
-                    if (now - lastStallMessageAtMs >= STALL_MESSAGE_THROTTLE_MS) {
-                        _transientMessages.tryEmit(
-                            "Audio chain stalled at ${"%.2fx".format(speed)} — recovering. " +
-                                "Try a lower speed or disabling linear-phase EQ if this keeps happening."
-                        )
-                        lastStallMessageAtMs = now
-                    }
-
-                    // 3. The actual recovery: seek-to-self flushes the
-                    //    audio sink and re-syncs the renderer chain.
-                    c.seekTo(recoveryPosMs)
-                    com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
-                        identifier = "renderer_stall",
-                        detail = "Force-flushed at ${recoveryPosMs / 1000}s after ${(now - lastForwardProgressAtMs) / 1000}s of no progress (speed=${"%.2fx".format(speed)}).",
-                    )
-
-                    // Reset the baseline so we don't re-trigger immediately
-                    // if the seek itself takes a moment to register a new
+                    val stalledForMs = now - lastForwardProgressAtMs
+                    triggerStallRecovery(c, now, "no_progress_${stalledForMs / 1000}s")
+                    // Reset baseline so we don't re-trigger immediately if
+                    // the seek itself takes a moment to register a new
                     // currentPosition reading.
-                    lastForwardProgressPosMs = recoveryPosMs
+                    lastForwardProgressPosMs = c.currentPosition
                     lastForwardProgressAtMs = now
                 }
             }
         }
+    }
+
+    /**
+     * Force-flush the renderer chain after the watchdog detects either a
+     * cycling-position stall (arm A) or chronic buffering (arm B). Steps:
+     *   1. Mark [PlayerState.isStalled] so the UI shows the buffering ring
+     *      around the play button. Auto-cleared after a short linger.
+     *   2. Emit a throttled snackbar nudging the user toward a lower speed
+     *      or disabling linear-phase EQ — the most common DSP-can't-keep-up
+     *      causes for the underrun.
+     *   3. Seek to currentPosition − 100 ms. The negative offset is the
+     *      important part: a same-position seek can be deduped by Media3 /
+     *      the audio sink and produce no flush at all (which is what made
+     *      the previous `seekTo(currentPosition)` recovery sometimes silently
+     *      fail). 100 ms back guarantees a real flush + a brief replay of
+     *      the audio that was likely lost during the stall.
+     *   4. Append a breadcrumb to AppDiagnostics so the diagnostics screen
+     *      can show how often this fires across builds.
+     */
+    private fun triggerStallRecovery(c: MediaController, nowMs: Long, kind: String) {
+        val recoveryPosMs = c.currentPosition
+        val speed = c.playbackParameters.speed
+
+        _state.update { it.copy(isStalled = true) }
+        scope.launch {
+            delay(STALL_INDICATOR_LINGER_MS)
+            _state.update { it.copy(isStalled = false) }
+        }
+
+        if (nowMs - lastStallMessageAtMs >= STALL_MESSAGE_THROTTLE_MS) {
+            _transientMessages.tryEmit(
+                "Audio chain stalled at ${"%.2fx".format(speed)} — recovering. " +
+                    "Try a lower speed or disabling linear-phase EQ if this keeps happening."
+            )
+            lastStallMessageAtMs = nowMs
+        }
+
+        // Seek-back-100ms forces a real flush. Same-position seek can be
+        // deduped; this can't.
+        val flushTarget = (recoveryPosMs - STALL_RECOVERY_REWIND_MS).coerceAtLeast(0L)
+        c.seekTo(flushTarget)
+        com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
+            identifier = "renderer_stall",
+            detail = "Force-flushed at ${recoveryPosMs / 1000}s ($kind, speed=${"%.2fx".format(speed)}).",
+        )
     }
 
     private fun stopStallWatchdog() {
@@ -1684,6 +1764,22 @@ class PlayerController(private val context: Context) {
          *  fires the message, the next ~30 s of stalls just get the
          *  indicator + diagnostics log. */
         private const val STALL_MESSAGE_THROTTLE_MS = 30_000L
+
+        /** How long the player can sit in `STATE_BUFFERING` with
+         *  `playWhenReady=true` before arm B of the watchdog flags it as a
+         *  stall. Longer than [STALL_THRESHOLD_MS] because legitimate
+         *  buffering on a far scrub or first play of a remote stream can
+         *  legitimately take several seconds — but on a downloaded local
+         *  file 8 s of buffering means the renderer chain is wedged. */
+        private const val BUFFERING_STALL_THRESHOLD_MS = 8_000L
+
+        /** How far back to seek when force-flushing on a stall. A
+         *  same-position seek can be deduped by Media3 / the audio sink
+         *  and produce no flush at all (which is exactly what made the
+         *  previous `seekTo(currentPosition)` recovery silently fail in
+         *  some cases). 100 ms guarantees a real flush + a brief replay
+         *  of the audio likely missed during the stall. */
+        private const val STALL_RECOVERY_REWIND_MS = 100L
 
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
