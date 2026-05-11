@@ -49,6 +49,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAudioDiagnostics: () -> Unit = {},
     onOpenAudiophileNotes: () -> Unit = {},
+    onOpenLofiNotes: () -> Unit = {},
     onOpenAppDiagnostics: () -> Unit = {},
     onOpenTextSettings: () -> Unit = {},
 ) {
@@ -198,18 +199,32 @@ fun SettingsScreen(
             TextButton(onClick = onOpenAudioDiagnostics) {
                 Text("Open full audio diagnostics")
             }
-            // Sister page to diagnostics: design notes vs live state. Opens
-            // the AudiophileNotesScreen with the full chain spec, latency
-            // math, CPU footprint, and license attribution.
-            TextButton(onClick = onOpenAudiophileNotes) {
-                Text("Notes for audiophiles")
-            }
             // App-wide bug telemetry — feed failures, download failures,
             // scripture-tag skips, etc. Distinct from Audio diagnostics
             // (chain-specific). Lands here so a user can capture concrete
             // data when something breaks instead of "it didn't work."
             TextButton(onClick = onOpenAppDiagnostics) {
                 Text("App diagnostics (bugs)")
+            }
+
+            // Notes about audio — both pages exposed equally so a reader
+            // who self-identifies as a non-audiophile can find the
+            // plain-language guide without having to tap an
+            // audiophile-flavored entry first. Both pages cross-link to
+            // each other; this section is the canonical entry to either.
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Notes about audio")
+            Text(
+                "Two takes on the same audio chain. Pick the one that " +
+                    "matches how you want to think about it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onOpenLofiNotes) {
+                Text("Audio guide (plain language)")
+            }
+            TextButton(onClick = onOpenAudiophileNotes) {
+                Text("Notes for audiophiles")
             }
 
             Spacer(Modifier.height(20.dp))

@@ -405,6 +405,7 @@ private fun AppNav(
                     controller = controller,
                     onBack = { smartBack(nav, "eq") },
                     onOpenAudiophileNotes = { nav.navigate("audiophileNotes") },
+                    onOpenLofiNotes = { nav.navigate("lofiNotes") },
                     onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
                 )
             }
@@ -419,6 +420,7 @@ private fun AppNav(
                     onBack = { smartBack(nav, "settings") },
                     onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
                     onOpenAudiophileNotes = { nav.navigate("audiophileNotes") },
+                    onOpenLofiNotes = { nav.navigate("lofiNotes") },
                     onOpenAppDiagnostics = { nav.navigate("appDiagnostics") },
                     onOpenTextSettings = { nav.navigate("textSettings") },
                 )
@@ -436,7 +438,23 @@ private fun AppNav(
 
             composable("audiophileNotes") {
                 AudiophileNotesScreen(
-                    onBack = { nav.popBackStack() }
+                    onBack = { nav.popBackStack() },
+                    onOpenLofiNotes = {
+                        // launchSingleTop so flipping back-and-forth between
+                        // the two notes pages doesn't accumulate stack
+                        // entries; popBackStack first if we're already
+                        // descended from the lofi-notes screen.
+                        nav.navigate("lofiNotes") { launchSingleTop = true }
+                    },
+                )
+            }
+
+            composable("lofiNotes") {
+                NonAudiophileLofiNotesScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenAudiophileNotes = {
+                        nav.navigate("audiophileNotes") { launchSingleTop = true }
+                    },
                 )
             }
 

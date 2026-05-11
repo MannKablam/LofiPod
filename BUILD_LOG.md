@@ -2,6 +2,136 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EQ tooltips + Settings discoverability for the lofi notes
+
+Two followups to the lofi-notes shipping in the previous entry, addressing
+the discoverability + tooltip flags I'd noted there.
+
+**Tooltips on the EQ screen.** Material3 `TooltipBox` + `PlainTooltip` —
+long-press a label to see a one-line explanation. Two locations:
+
+  - **Volume boost label.** Tooltip distills the dB intuitions: "+6 dB is
+    roughly 2x linear amplitude; +10 dB is roughly 2x perceived loudness;
+    the limiter catches peaks so cranking stays clean." Lifted from the
+    lofi-notes glossary, condensed for the tooltip width budget.
+  - **Each band-row Hz label** (31, 62, 125, 500, 2k, 8k). Each tooltip
+    is the band's plain-language one-liner from the lofi notes screen
+    (e.g. 125 Hz: "Low-mid / warmth — where boomy rooms live. Cut 2 to
+    4 dB if a podcast sounds like a small kitchen."). New
+    `bandTooltipText(centerHz)` helper next to `formatHz` so future band
+    changes can extend the table without touching the layout.
+
+Long-press is the standard Material3 tooltip trigger and doesn't conflict
+with vertical scroll (different gesture) or the band slider's drag (only
+the thumb has a pointerInput; the label is a sibling Text). Q tooltip
+deliberately omitted — Q isn't exposed in the EqScreen UI, so there's
+nothing to attach to.
+
+**Discoverability — Settings restructure.** The "Notes for audiophiles"
+button used to live inside the "Audio diagnostics" section, which made it
+look like another diagnostic surface and meant a non-audiophile reader
+might never click it. Restructured:
+
+  - **Audio diagnostics** section now holds just the inline mini-readout,
+    "Open full audio diagnostics", and "App diagnostics (bugs)".
+  - **New "Notes about audio"** section sits below it. Both notes pages
+    exposed equally as parallel options:
+      - "Audio guide (plain language)" -> lofi notes
+      - "Notes for audiophiles" -> audiophile notes
+    Section subtitle: "Two takes on the same audio chain. Pick the one
+    that matches how you want to think about it."
+
+**EqScreen also gets the lofi link.** The Audio Fine-tuning screen
+already had right-justified links to "Notes for audiophiles" and "Audio
+diagnostics" at the top. Added "Audio guide (plain language)" above
+those two, so a curious slider tweaker can reach the friendly guide
+without first having to land on the audiophile-flavored page.
+
+Both new entry points wire to the same `lofiNotes` route added in the
+previous entry. Cross-links between the two notes screens still work as
+before.
+
+ai_contamination: true # claude opus 4.7
+
+## Non-audiophile Lofi notes: plain-language companion to the spec page
+
+New Settings reference page for the curious-but-not-yet-trained listener
+who's noticed the EQ sliders and wants to know what they do without having
+to learn what a biquad is first. Written as a sister screen to the existing
+Notes for audiophiles — both pages cover the same audio chain, but in
+different registers for different audiences.
+
+**New screen** `NonAudiophileLofiNotesScreen.kt`. Sections (with the
+ordering chosen to walk a reader from definitions out to recipes):
+
+  1. Who this page is for
+  2. Words to know — Lofi, Audiophile, DSP, Hz/kHz, dB, dBFS, PCM, sample
+     rate, EQ, latency. First mention of every abbreviation expanded
+     inline; each entry is one short technical sentence followed by a
+     friendly expansion.
+  3. What LofiPod does to your audio — high-level chain diagram with the
+     defaults-are-passthrough story up front so a reader knows the chain
+     is opt-in.
+  4. Master gain — what it is vs master volume; when to use; how the
+     limiter keeps boosts safe.
+  5. Equalizer — three sub-sections: introduction, ASCII frequency map
+     anchored to real-world content (male / female voice fundamentals,
+     sibilance, phone-call bandwidth), band-by-band tendencies for each
+     of the six bands.
+  6. Q (band width) — explained as "you probably don't need to touch it."
+  7. Phase modes — minimum vs linear with the "leave it on minimum"
+     guidance up front.
+  8. DC blocker — what it is, when to flip on (low-bitrate MP3 sermons,
+     etc.).
+  9. Skip silence — levels and the trade-off (clipping thoughtful pauses).
+ 10. Limiter — always-on safety net; explained without slider.
+ 11. Pass-through and Hold to A/B — the comparison workflow.
+ 12. Recipes — six "I want to..." goals with concrete starting EQ moves
+     (clarity, boom, thinness, sibilance, low-volume listening, FLAT
+     reset, just-make-it-louder).
+ 13. How to tell if it's actually working — Hold to A/B + Audio
+     diagnostics screen.
+ 14. If you want to go deeper — pointer back to Notes for audiophiles +
+     diagnostics.
+
+Style: hand-written original prose, no external sources cited (every
+concept covered is generic audio knowledge). Concise technical line
+followed by friendlier expansion, per the audience brief. ASCII frequency
+spectrum + band-purpose grid in the EQ section. Subtle horizontal
+dividers between sections for visual breath.
+
+**Polish on `AudiophileNotesScreen.kt`.** Same content; restructured
+visually to match the new sister page:
+
+  - New `CrossLink` helper renders a right-justified TextButton row, used
+    at the top AND bottom of the page to navigate to the lofi-notes
+    screen ("Non-audiophile Lofi notes"). Mirrored on the lofi-notes
+    side with the inverse label.
+  - Subtle `SectionDivider` (1 dp horizontal rule at 25% outline alpha)
+    inserted between every top-level section. Quieter than a hard
+    section break, gives the eye a place to land between dense
+    technical paragraphs.
+  - Tightened import list (no more wildcard imports for foundation.layout
+    + material3) so the dependencies are explicit.
+
+**Navigation wiring** in `MainActivity.kt`. New `lofiNotes` route plus an
+`onOpenLofiNotes` callback into the audiophile-notes composable; both
+routes use `launchSingleTop` so flipping back and forth between them
+doesn't accumulate stack entries. Plain `popBackStack` for back so the
+user returns to whichever screen sent them in (Settings, EqScreen, or
+the sister notes page).
+
+**Discoverability note for future work.** Both notes pages are reachable
+only via Settings -> "Notes for audiophiles" (the existing entry) and
+then the cross-link. A reader who self-identifies as a non-audiophile
+might skip the audiophile-flavored entry and never find the lofi-notes
+page. If usage data later suggests this is a real problem, the right
+fix is probably renaming the Settings entry to something more inviting
+("Notes about audio") with both pages exposed equally; left for a
+future pass.
+
+ai_contamination: true # claude opus 4.7
+
 ## Performance Hint API + audio-thread priority diagnostics
 
 Two more upstream attacks on the same scheduling-jitter problem v0.7.0

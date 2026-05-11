@@ -52,6 +52,7 @@ fun EqScreen(
     controller: PlayerController,
     onBack: () -> Unit,
     onOpenAudiophileNotes: () -> Unit = {},
+    onOpenLofiNotes: () -> Unit = {},
     onOpenAudioDiagnostics: () -> Unit = {},
 ) {
     val eq: EqAudioProcessor = PlaybackService.sharedEq
@@ -261,9 +262,17 @@ fun EqScreen(
             // sister screens. Right-justified so they read as ancillary
             // navigation rather than primary controls — the master "Audio
             // enhancement" toggle below is the actual top-of-page action.
-            // Notes for audiophiles sits above audio diagnostics because
-            // most users want the spec/explanation more often than the
-            // live counters. ----
+            // Order top-to-bottom: plain-language audio guide (the gentlest
+            // entry, in case a curious listener landed here without the
+            // vocabulary), then the audiophile spec, then live diagnostics. ----
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onOpenLofiNotes) {
+                    Text("Audio guide (plain language)")
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -468,7 +477,28 @@ fun EqScreen(
             )
             Spacer(Modifier.height(20.dp))
 
-            Text("Volume boost: ${"%+.1f".format(gainDb)} dB", style = MaterialTheme.typography.titleSmall)
+            // Long-press the label to surface a quick dB intuition tooltip
+            // — the "+6 dB doubles linear amplitude, +10 dB doubles
+            // perceived loudness" cheat sheet, distilled from the lofi
+            // notes screen so a slider tweaker doesn't need to flip pages.
+            TooltipBox(
+                positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                tooltip = {
+                    PlainTooltip {
+                        Text(
+                            "dB intuition: +6 dB is roughly 2x linear amplitude. " +
+                                "+10 dB is roughly 2x perceived loudness. " +
+                                "The limiter catches peaks so cranking stays clean."
+                        )
+                    }
+                },
+                state = rememberTooltipState(),
+            ) {
+                Text(
+                    "Volume boost: ${"%+.1f".format(gainDb)} dB",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+            }
             Slider(
                 value = gainDb,
                 onValueChange = {
@@ -796,17 +826,30 @@ private fun PresetButton(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BandRow(band: EqBand, accentColor: Color, onChange: (Float) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
     ) {
-        Text(
-            formatHz(band.centerHz),
-            modifier = Modifier.width(56.dp),
-            style = MaterialTheme.typography.bodyMedium
-        )
+        // Long-press the frequency label to surface a one-liner about what
+        // that band tends to control. Mirrors the band-by-band section of
+        // the lofi notes screen, condensed for the tooltip width budget. The
+        // tooltip doesn't conflict with vertical scroll (long-press is a
+        // separate gesture) or with the slider thumb's drag (only the thumb
+        // has a pointerInput; the label is a sibling Text).
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+            tooltip = { PlainTooltip { Text(bandTooltipText(band.centerHz)) } },
+            state = rememberTooltipState(),
+        ) {
+            Text(
+                formatHz(band.centerHz),
+                modifier = Modifier.width(56.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
         BandSlider(
             value = band.gainDb,
             onValueChange = onChange,
@@ -978,6 +1021,25 @@ private fun BandSlider(
 
 private fun formatHz(hz: Float): String =
     if (hz >= 1000) "${(hz / 1000).toInt()}kHz" else "${hz.toInt()}Hz"
+
+/**
+ * Plain-language one-liner for each EQ band frequency. Surfaced as a
+ * PlainTooltip on the band-row Hz label — long-press a band's label to
+ * see what that band tends to do. Mirrors the band-by-band section of
+ * [NonAudiophileLofiNotesScreen] but condensed for tooltip width budget.
+ *
+ * Falls back to a generic message for any unknown center frequency so a
+ * future preset that introduces a new band still gets a useful tooltip.
+ */
+private fun bandTooltipText(centerHz: Float): String = when (centerHz.toInt()) {
+    31 -> "Sub-bass — felt more than heard. Most podcasts have nothing useful here; cutting can clean up rumble."
+    62 -> "Bass — male voice fundamentals, bass guitar. Small boost warms a thin voice; small cut cleans muddy mics."
+    125 -> "Low-mid / warmth — where boomy rooms live. Cut 2 to 4 dB if a podcast sounds like a small kitchen."
+    500 -> "Midrange / body — voice articulation. Big cuts make voices hollow; small boost adds presence."
+    2000 -> "Presence / consonant clarity — +2 to +4 dB on a muffled recording dramatically improves intelligibility."
+    8000 -> "Air / sparkle — and where sibilance lives. Small boost adds openness; cut to tame piercing 'S' sounds."
+    else -> "EQ band centered at ${formatHz(centerHz)}."
+}
 
 /**
  * Press-and-hold A/B compare button. While held, the audio chain runs in
