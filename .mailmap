@@ -1,0 +1,20 @@
+# .mailmap — re-attributes commit authorship and Co-Authored-By trailers
+# for GitHub's Contributors graph and `git shortlog --use-mailmap`.
+#
+# Format: <canonical-name> <canonical-email> <bad-name> <bad-email>
+# Each line maps the bad identity on the right to the canonical one on the
+# left, anywhere it appears in author / committer / Co-Authored-By fields.
+#
+# Why this exists: a stretch of commits in v0.4.x — v0.6.x carried
+# `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>` trailers from
+# AI-assisted work. Those have been removed from default-branch history via
+# `git filter-branch` (see git reflog for the rewrite), but the orphan
+# commits still exist behind the v0.7.2 tag (preserved to keep the existing
+# Release intact). This mapping ensures GitHub does not surface Claude as a
+# contributor regardless of which path it walks to find commits.
+#
+# The newer `ai_contamination: true # claude opus 4.7` footer convention
+# is a free-form trailer that GitHub does not parse as authorship — that's
+# the whole point of the convention — so no mapping needed for it.
+
+עמנואל <git.stainless133@passinbox.com> Claude Opus 4.7 <noreply@anthropic.com>
