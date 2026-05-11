@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -235,6 +236,14 @@ fun EqScreen(
         scrollToBands()
     }
 
+    // Reference / diagnostics overflow menu in the TopAppBar. Used to live
+    // as three full-width right-justified TextButton rows at the top of the
+    // screen body, which left a wide blank stripe on the left of each row
+    // and ate three rows of vertical real estate before the actual controls
+    // started. Collapsed into a single kebab icon in the app bar's actions
+    // slot — standard Material pattern, zero body real estate, all three
+    // destinations one tap away.
+    var refMenuExpanded by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -247,7 +256,45 @@ fun EqScreen(
                             modifier = Modifier.size(28.dp)
                         )
                     }
-                }
+                },
+                actions = {
+                    IconButton(onClick = { refMenuExpanded = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "Reference and diagnostics",
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = refMenuExpanded,
+                        onDismissRequest = { refMenuExpanded = false },
+                    ) {
+                        // Order: plain-language guide first (gentlest entry,
+                        // discoverable for non-audiophiles); then the
+                        // audiophile spec; then live diagnostics.
+                        DropdownMenuItem(
+                            text = { Text("Audio guide (plain language)") },
+                            onClick = {
+                                refMenuExpanded = false
+                                onOpenLofiNotes()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Notes for audiophiles") },
+                            onClick = {
+                                refMenuExpanded = false
+                                onOpenAudiophileNotes()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Audio diagnostics") },
+                            onClick = {
+                                refMenuExpanded = false
+                                onOpenAudioDiagnostics()
+                            },
+                        )
+                    }
+                },
             )
         }
     ) { padding ->
@@ -258,38 +305,6 @@ fun EqScreen(
                 .fillMaxSize()
                 .verticalScroll(scrollState)
         ) {
-            // ---- Top-of-screen links to the documentation + diagnostics
-            // sister screens. Right-justified so they read as ancillary
-            // navigation rather than primary controls — the master "Audio
-            // enhancement" toggle below is the actual top-of-page action.
-            // Order top-to-bottom: plain-language audio guide (the gentlest
-            // entry, in case a curious listener landed here without the
-            // vocabulary), then the audiophile spec, then live diagnostics. ----
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onOpenLofiNotes) {
-                    Text("Audio guide (plain language)")
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onOpenAudiophileNotes) {
-                    Text("Notes for audiophiles")
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onOpenAudioDiagnostics) {
-                    Text("Audio diagnostics")
-                }
-            }
-            Spacer(Modifier.height(8.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = audioEnhancementEnabled, onCheckedChange = { v ->
@@ -621,15 +636,32 @@ fun EqScreen(
             }
             Spacer(Modifier.height(24.dp))
 
-            Text(
-                "Graphic EQ",
-                style = MaterialTheme.typography.titleSmall,
+            // Graphic EQ heading + tooltip-discoverability hint inline.
+            // Without the hint, users have no way to discover that
+            // long-pressing the Hz labels reveals per-band tooltips —
+            // long-press is a hidden gesture by convention. Putting the
+            // hint right next to the heading makes it visible exactly
+            // when the bands come into view. Smaller / quieter type so it
+            // reads as ancillary copy, not as a control label.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.onGloballyPositioned { coords ->
                     // Capture the section's y-offset within the scrolled Column
                     // so preset taps can animate the bands into view.
                     graphicEqY = coords.positionInParent().y.toInt()
-                }
-            )
+                },
+            ) {
+                Text(
+                    "Graphic EQ",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "long-press a frequency for more info",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(8.dp))
             bands.forEachIndexed { idx, band ->
                 BandRow(band, accentColor) { newGain ->

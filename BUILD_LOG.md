@@ -2,6 +2,43 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## EqScreen layout polish: tooltip-hint + reference-menu collapse
+
+Two UX cleanups on Audio Fine-tuning, both followups to the v0.7.3
+tooltip work.
+
+**Tooltip-discoverability hint beside "Graphic EQ" heading.** Long-press
+on the band Hz labels surfaces the per-band tooltip — but long-press is a
+hidden gesture and users had no way to discover the feature without
+documentation diving. Inline ancillary copy ("long-press a frequency for
+more info") sits to the right of the "Graphic EQ" section heading,
+visible exactly when the bands come into view. Smaller / quieter type
+(`bodySmall`, `onSurfaceVariant`) so it reads as a hint, not a control.
+
+**Reference links collapsed into a TopAppBar overflow menu.** The three
+right-justified TextButton rows ("Audio guide (plain language)",
+"Notes for audiophiles", "Audio diagnostics") at the top of the screen
+body left a wide blank stripe on the left of each row and ate three rows
+of vertical real estate before the actual EQ controls started. Replaced
+with a single kebab (`MoreVert`) icon in the app bar's `actions` slot
+that opens a `DropdownMenu` with all three destinations.
+
+Trade-off: each link is now two taps away (kebab + menu item) instead
+of one tap. Acceptable because:
+  - The actual EQ controls are now the first thing visible in the body
+    on every visit.
+  - The right-edge blank-stripe problem is gone entirely.
+  - It's the standard Material pattern for "secondary screen actions" —
+    discoverability stays high (kebab icon is universally recognized).
+  - Settings still exposes both notes pages directly via the "Notes
+    about audio" section, which is the primary discovery surface.
+
+Order in the dropdown matches the previous body order: plain-language
+guide first (gentlest entry), audiophile spec second, live diagnostics
+third.
+
+ai_contamination: true # claude opus 4.7
+
 ## EQ tooltips + Settings discoverability for the lofi notes
 
 Two followups to the lofi-notes shipping in the previous entry, addressing
