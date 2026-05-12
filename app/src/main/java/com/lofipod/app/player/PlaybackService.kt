@@ -69,6 +69,21 @@ class PlaybackService : MediaSessionService() {
         val sharedSkipSilence = SilenceSkippingProcessor()
         private const val SAVE_INTERVAL_MS = 10_000L
 
+        /**
+         * Volatile snapshot of whether the playback wake lock is currently
+         * held. Read by the in-Player diagnostics tab so the user can see at
+         * a glance "yes, the kernel is being asked to stay clocked." Set by
+         * acquirePlaybackWakeLock / releasePlaybackWakeLock right after the
+         * actual acquire/release; read-only from outside.
+         *
+         * Lives on the companion (not the instance) because diagnostics
+         * code reads it without needing a service reference — the audio
+         * thread + UI consumers can hit this directly the same way they
+         * hit [sharedEq].
+         */
+        @Volatile var wakeLockHeld: Boolean = false
+            internal set
+
         /** Intent action used by the media-session tap target to ask MainActivity
          *  to navigate straight to the Player screen instead of resuming on Catalog. */
         const val ACTION_OPEN_PLAYER = "com.lofipod.app.OPEN_PLAYER"
@@ -329,8 +344,10 @@ class PlaybackService : MediaSessionService() {
         val wl = playbackWakeLock ?: return
         try {
             if (!wl.isHeld) wl.acquire()
+            wakeLockHeld = wl.isHeld
         } catch (t: Throwable) {
             Log.w("LofiPodPlayback", "WakeLock acquire failed: ${t.message}")
+            wakeLockHeld = false
         }
     }
 
@@ -341,6 +358,8 @@ class PlaybackService : MediaSessionService() {
             if (wl.isHeld) wl.release()
         } catch (t: Throwable) {
             Log.w("LofiPodPlayback", "WakeLock release failed: ${t.message}")
+        } finally {
+            wakeLockHeld = wl.isHeld
         }
     }
 }

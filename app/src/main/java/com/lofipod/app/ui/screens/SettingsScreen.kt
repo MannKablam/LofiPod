@@ -199,6 +199,15 @@ fun SettingsScreen(
             TextButton(onClick = onOpenAudioDiagnostics) {
                 Text("Open full audio diagnostics")
             }
+            // In-Player diagnostics tab. When on, PlayerScreen's bottom tab
+            // strip grows a 4th "Diagnostics" tab next to Notes / Details /
+            // Transcript. Useful when something sounds wrong while you're
+            // actively listening — fastest path from "wait, that's not
+            // right" to live readouts is one tap on the tab strip, no nav
+            // hop required. Includes its own full-screen mode that keeps
+            // the mini-player visible at the bottom for transport while
+            // you read.
+            DiagnosticsTabToggleRow()
             // App-wide bug telemetry — feed failures, download failures,
             // scripture-tag skips, etc. Distinct from Audio diagnostics
             // (chain-specific). Lands here so a user can capture concrete
@@ -291,6 +300,42 @@ private fun SwitchRow(
  * skip-silence level) so a user can sanity-check that what the EQ screen
  * shows matches what the running [PlaybackService.sharedEq] actually has.
  */
+/**
+ * "Show Diagnostics tab on Player" row. A simple [SwitchRow] would work, but
+ * doing it inline lets the subtitle copy explain the in-player full-screen
+ * mode + mini-player anchor — a behavior subtle enough to warrant a couple of
+ * extra words rather than burying it in About / Help.
+ */
+@Composable
+private fun DiagnosticsTabToggleRow() {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
+    val settings = remember { Settings(app) }
+    val scope = rememberCoroutineScope()
+    val enabled by settings.showDiagnosticsTabInPlayer.collectAsState(initial = false)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Switch(
+            checked = enabled,
+            onCheckedChange = { v -> scope.launch { settings.setShowDiagnosticsTabInPlayer(v) } },
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Show Diagnostics tab on Player",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                "Adds a 4th tab next to Notes / Details / Transcript with live audio-chain health, watchpoints, and a one-tap snapshot-to-note. Includes a full-screen mode that keeps the mini-player visible for transport.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 @Composable
 private fun AudioDiagnosticsRow(controller: PlayerController) {
     val ctx = LocalContext.current

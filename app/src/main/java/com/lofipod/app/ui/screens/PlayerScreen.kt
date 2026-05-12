@@ -116,6 +116,17 @@ fun PlayerScreen(
     previewGuid: String? = null,
     /** Open the full-page Transcript route for the given guid. */
     onOpenTranscript: (String) -> Unit = {},
+    /**
+     * Notifies the host (MainActivity / AppNav) when the bottom-tabs region
+     * enters or exits full-screen mode. The host uses this to keep the
+     * mini-player anchored to the bottom of the screen during full-screen
+     * — without it, full-screen mode hides every transport control along
+     * with the player chrome, which is fine for reading-mode Notes but
+     * leaves the user stranded if they want to pause / skip while watching
+     * Diagnostics scroll by. Default no-op so existing call sites don't
+     * have to change.
+     */
+    onPlayerTabsFullscreenChange: (Boolean) -> Unit = {},
 ) {
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
@@ -213,6 +224,26 @@ fun PlayerScreen(
     // it. Tap the active tab again to collapse back. Per-screen state
     // (resets when the user navigates away and back).
     var tabsFullscreen by remember { mutableStateOf(false) }
+
+    // Mirror the fullscreen flag up to the host (MainActivity / AppNav) so
+    // it can flip the mini-player from hidden (default on player route) to
+    // visible during full-screen — necessary so the user keeps transport
+    // controls when the full-screen tab hides the player chrome above. Also
+    // resets to false on dispose so a back-navigation while still in
+    // fullscreen mode doesn't leave the host with a stale flag.
+    LaunchedEffect(tabsFullscreen) {
+        onPlayerTabsFullscreenChange(tabsFullscreen)
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { onPlayerTabsFullscreenChange(false) }
+    }
+
+    // Diagnostics-tab toggle from Settings. When false (default) the player
+    // tab strip is Notes / Details / Transcript only. When true, a 4th
+    // "Diagnostics" tab joins for in-player live audio-chain health.
+    val showDiagnosticsTab by remember(app) {
+        com.lofipod.app.data.Settings(app).showDiagnosticsTabInPlayer
+    }.collectAsState(initial = false)
 
     // Surface controller-side transient messages as snackbars so play-button
     // taps that hit a no-op state (player not bound, no media loaded,
@@ -684,6 +715,7 @@ fun PlayerScreen(
                 onOpenTranscript = onOpenTranscript,
                 fullscreen = tabsFullscreen,
                 onToggleFullscreen = { tabsFullscreen = !tabsFullscreen },
+                showDiagnosticsTab = showDiagnosticsTab,
                 modifier = Modifier.weight(1f).fillMaxWidth()
             )
         }
@@ -816,6 +848,7 @@ private fun BottomTabs(
     onOpenTranscript: (String) -> Unit,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
+    showDiagnosticsTab: Boolean,
     modifier: Modifier = Modifier
 ) {
     var tabIndex by remember { mutableStateOf(0) }
@@ -837,13 +870,19 @@ private fun BottomTabs(
         hasTranscript = !url.isNullOrBlank()
     }
 
-    val tabs = remember(hasTranscript) {
-        if (hasTranscript) listOf("Notes", "Details", "Transcript")
-        else listOf("Notes", "Details")
+    // Build the tabs list dynamically. Transcript only when the episode
+    // has one; Diagnostics only when the user has opted in via Settings.
+    // remember key includes both flags so the list rebuilds when either
+    // flips. tabIndex bounds-check after the rebuild keeps the strip from
+    // rendering against a stale index when a tab disappears.
+    val tabs = remember(hasTranscript, showDiagnosticsTab) {
+        buildList {
+            add("Notes")
+            add("Details")
+            if (hasTranscript) add("Transcript")
+            if (showDiagnosticsTab) add("Diagnostics")
+        }
     }
-    // If the user was on the Transcript tab and it disappears (episode
-    // change to a non-transcript one), fall back to Notes so we don't
-    // render against an out-of-range index.
     if (tabIndex >= tabs.size) tabIndex = 0
 
     Column(modifier = modifier) {
@@ -875,6 +914,17 @@ private fun BottomTabs(
                     episodeGuid = episodeGuid,
                     showFullPageButton = true,
                     onOpenFullPage = { episodeGuid?.let(onOpenTranscript) },
+                )
+                "Diagnostics" -> PlayerDiagnosticsTab(
+                    episodeGuid = episodeGuid,
+                    controller = controller,
+                    isFullScreen = fullscreen,
+                    // The chip-style "Full-screen" button in the
+                    // Diagnostics tab is the third path into / out of
+                    // fullscreen mode (the others being a tap on the
+                    // active tab in the strip and back-navigation off
+                    // the player). Reuses the existing toggle.
+                    onToggleFullScreen = onToggleFullscreen,
                 )
             }
         }

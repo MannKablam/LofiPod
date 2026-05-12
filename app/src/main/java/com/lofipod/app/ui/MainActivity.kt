@@ -289,9 +289,23 @@ private fun AppNav(
         currentRoute?.startsWith("player/preview/") == true ||
         currentRoute?.startsWith("player/transcript/") == true
 
+    // Lifted state: when PlayerScreen's bottom-tab region is full-screen
+    // (Diagnostics live-readout mode in particular, but also reading-mode
+    // Notes / Transcript), the player chrome above the tabs is hidden.
+    // Without this override the user would lose transport controls in
+    // full-screen — keep the mini-player visible at the bottom so they
+    // can pause / skip / scrub while the tab content fills the screen.
+    // Reset by PlayerScreen on disposal so navigating away cleans up.
+    var forceMiniPlayerOnPlayer by remember { mutableStateOf(false) }
+    val miniPlayerVisible =
+        playerState.currentEpisodeGuid != null && (
+            !onPlayerRoute ||
+                (onPlayerRoute && forceMiniPlayerOnPlayer)
+            )
+
     Scaffold(
         bottomBar = {
-            if (!onPlayerRoute && playerState.currentEpisodeGuid != null) {
+            if (miniPlayerVisible) {
                 MiniPlayer(
                     controller = controller,
                     state = playerState,
@@ -363,7 +377,8 @@ private fun AppNav(
                     onOpenTranscript = { guid ->
                         val encoded = URLEncoder.encode(guid, "UTF-8")
                         nav.navigate("player/transcript/$encoded")
-                    }
+                    },
+                    onPlayerTabsFullscreenChange = { fs -> forceMiniPlayerOnPlayer = fs },
                 )
             }
 
@@ -396,7 +411,8 @@ private fun AppNav(
                     onOpenTranscript = { g ->
                         val enc = URLEncoder.encode(g, "UTF-8")
                         nav.navigate("player/transcript/$enc")
-                    }
+                    },
+                    onPlayerTabsFullscreenChange = { fs -> forceMiniPlayerOnPlayer = fs },
                 )
             }
 

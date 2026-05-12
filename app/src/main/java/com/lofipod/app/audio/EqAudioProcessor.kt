@@ -161,6 +161,11 @@ class EqAudioProcessor : BaseAudioProcessor() {
         AudioChainTelemetry.logEvent("phase_mode", if (on) "linear" else "minimum")
     }
 
+    /** Read-only accessor for the current phase mode. Used by the in-Player
+     *  diagnostics tab to surface "Linear (4096-tap FIR)" vs "Minimum
+     *  (biquad)" without needing a Settings round-trip on every recompose. */
+    fun isPhaseModeLinear(): Boolean = phaseModeLinear
+
     /**
      * True when the chain would have no audible effect — every band is at 0 dB,
      * no global gain, AND the DC blocker is off. Cheap O(bands) check run per

@@ -120,6 +120,28 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Surfaces an extra "Diagnostics" tab on the Player screen alongside
+     * Notes / Details / Transcript. When the user is actively listening and
+     * something sounds wrong, this is the fastest path to the audio-chain
+     * telemetry — no top-bar trip → Settings → Audio Fine-tuning →
+     * Diagnostics. Default false: the tab is off-the-shelf only useful for
+     * users actively diagnosing, and a 4th tab crowds the strip on narrow
+     * devices.
+     *
+     * Toggle lives in the Settings → Audio diagnostics section (alongside
+     * the "Open full audio diagnostics" entry point); when on, the Player
+     * screen auto-grows a 4th tab + the tab supports an in-player
+     * full-screen mode that keeps the mini-player at the bottom for
+     * transport while you read the live readouts.
+     */
+    val showDiagnosticsTabInPlayer: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER] ?: false }
+
+    suspend fun setShowDiagnosticsTabInPlayer(v: Boolean) {
+        context.dataStore.edit { it[KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER] = v }
+    }
+
+    /**
      * How many days a *played* episode lingers in the per-podcast list before
      * the auto-archive sweep moves it to the archive. 0 = off (never
      * auto-archive). Default 3 days, matching the original hardcoded constant.
@@ -376,6 +398,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
         private val KEY_SHOW_PLAYED =
             androidx.datastore.preferences.core.booleanPreferencesKey("show_played_in_list")
+        private val KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER =
+            androidx.datastore.preferences.core.booleanPreferencesKey("show_diagnostics_tab_in_player")
         private val KEY_AUTO_ARCHIVE_DAYS =
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
         private val KEY_SKIP_SILENCE_LEVEL =

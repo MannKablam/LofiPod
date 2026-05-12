@@ -2,6 +2,120 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.8.0 — In-Player Diagnostics tab + full-screen mode + snapshot-to-note
+
+Bigger than a patch release. Adds a fast-path for the user to inspect
+audio-chain health from inside the listening experience itself rather
+than navigating out to Settings → Audio Fine-tuning → Diagnostics every
+time something sounds wrong.
+
+**Settings → "Show Diagnostics tab on Player"** (default off). When on,
+PlayerScreen's bottom tab strip grows a 4th tab "Diagnostics" alongside
+Notes / Details / Transcript. Conditional rendering — turning the
+setting off restores the original three-tab strip without leaving any
+ghost tab UI behind.
+
+**The tab itself** is structured top-down to mirror the triage workflow
+("at a glance → in detail → forensic"):
+
+  1. **Watchpoints ribbon.** Six color-coded chips (Green OK / Yellow
+     warning / Red bad / Neutral) for the failure modes the v0.7.5
+     pest-control sweep cared about: audio-thread priority, PerfHint
+     session state, wake lock + isPlaying, load factor avg/max, recent
+     renderer stalls (60 s window), player state + error. Each chip
+     carries a one-line tooltip explaining what the value means.
+
+  2. **Action chips.** "Save as note", "Copy", "Full-screen". The first
+     two pin or transcribe the current diagnostic state for later;
+     the third toggles in-Player full-screen mode (see below).
+
+  3. **Live readout.** Same compact selectable text block the existing
+     AudioDiagnosticsScreen surfaces — but only the rows that matter
+     while live: audio_enhancement, phase_mode, speed, passthrough,
+     audio_thread (tid + name + priority + demotions), perf_hint
+     (supported + active + targetUs — note this is the *speed-scaled*
+     target after the v0.7.5 D2 fix), wake_lock, load_factor,
+     player state, last_error.
+
+  4. **Load-factor sparkline.** Rolling 30-second bar chart of
+     avgLoadFactor (60 samples at the 500 ms tick). Bars colored OK /
+     warn / bad against the 1.0 deadline; a thin axis line marks the
+     deadline itself. Trend toward 1.0 is visible at a glance —
+     point-in-time readings hide trends.
+
+  5. **Recent events.** Newest-first slice of the breadcrumb log (top
+     12 shown in-tab; full log on the dedicated AudioDiagnosticsScreen).
+
+**Snapshot to note.** Tapping "Save as note" builds a timestamped text
+block — header line + reason + the Live readout + the load-factor
+history sequence + the most-recent 25 events — and writes it to the
+existing `episode_note_entry` table for the currently-playing episode
+at the current playback position. Notes browser, episode timeline,
+backups, and search all light up for free; the diagnostic dump
+naturally lives alongside the user's manual notes for the same moment.
+Pragmatic anchor: `Toast` confirms; no SnackbarHost plumbing needed
+into the tab.
+
+**Auto-snapshot on bad events.** When the audio thread emits one of
+the high-signal kinds (`priority_demoted`, `renderer_stall`,
+`no_progress`), the tab auto-fires a snapshot-to-note with the
+triggering event's name + detail as the reason. Rate-limited to one
+per 60 s total so a sustained demotion can't spam the Notes browser
+with dozens of duplicates. Detection uses event timestamps not buffer
+size, so the underlying 50-slot ring's wrap-around evictions don't
+fool the detector into thinking nothing new happened. Surfaces a
+transient banner ("Auto-snapshot saved (...)") in the tab so the user
+knows forensics were captured even if they were looking at the
+Diagnostics tab when the event hit.
+
+**Full-screen mode.** Tapping the active tab toggles the existing
+bottom-tabs full-screen flag (Notes / Transcript already had this).
+In full-screen the player chrome above the strip — artwork, title,
+scrubber, transport — hides; the tab content fills the screen below
+the top app bar. New in v0.8.0: **the mini-player stays anchored at
+the bottom of the screen during full-screen on the player route**.
+That keeps transport (play / pause / scrub / ±15s / ±30s) reachable
+while the Diagnostics tab is scrolling live; works for the other
+fullscreen tabs (Notes / Transcript) too — a pre-existing UX gap that
+this work happens to close as a side effect. State propagates via a
+hoist into AppNav: `PlayerScreen` invokes
+`onPlayerTabsFullscreenChange(Boolean)` on every change, and a
+`DisposableEffect` resets the host's flag to false on disposal so a
+back-navigation while still in fullscreen mode can't leave the host
+with a stale override.
+
+**Wake-lock exposure.** `PlaybackService.wakeLockHeld: Boolean`
+@Volatile companion field, written by `acquirePlaybackWakeLock` /
+`releasePlaybackWakeLock` right after the actual acquire/release.
+Read by the in-Player diagnostics tab so the "Wake lock: held /
+missing / lingering / idle" watchpoint reflects what's actually on
+the kernel side, not what the code intended.
+
+**EqAudioProcessor.isPhaseModeLinear() accessor.** Read-only accessor
+for the phase-mode flag so the diagnostics tab can render "Minimum
+(biquad)" vs "Linear (4096-tap FIR)" without a Settings round-trip
+on every recompose. The existing setter (`setPhaseModeLinear`)
+remains the single writer; the getter pairs with it cleanly.
+
+Files affected:
+- `app/src/main/java/com/lofipod/app/data/Settings.kt`
+  (`showDiagnosticsTabInPlayer` flow + setter + DataStore key)
+- `app/src/main/java/com/lofipod/app/ui/screens/SettingsScreen.kt`
+  (new `DiagnosticsTabToggleRow` slotted into the Audio diagnostics
+  section)
+- `app/src/main/java/com/lofipod/app/ui/screens/PlayerDiagnosticsTab.kt`
+  (new — the entire tab + watchpoints + sparkline + snapshot logic)
+- `app/src/main/java/com/lofipod/app/ui/screens/PlayerScreen.kt`
+  (conditional 4th tab plumbing + fullscreen-state hoist)
+- `app/src/main/java/com/lofipod/app/ui/MainActivity.kt`
+  (mini-player override during full-screen on the player route)
+- `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+  (wake-lock state companion field)
+- `app/src/main/java/com/lofipod/app/audio/EqAudioProcessor.kt`
+  (`isPhaseModeLinear()` getter)
+
+ai_contamination: true # claude opus 4.7
+
 ## Audio-thread hardening: wake lock + speed-aware PerfHint + re-elevation + TID swap
 
 Pest-control sweep against the screen-off-DSP-chop pattern reported on
