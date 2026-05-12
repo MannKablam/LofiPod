@@ -2,6 +2,1965 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.8.0 — In-Player Diagnostics tab + full-screen mode + snapshot-to-note
+
+Bigger than a patch release. Adds a fast-path for the user to inspect
+audio-chain health from inside the listening experience itself rather
+than navigating out to Settings → Audio Fine-tuning → Diagnostics every
+time something sounds wrong.
+
+**Settings → "Show Diagnostics tab on Player"** (default off). When on,
+PlayerScreen's bottom tab strip grows a 4th tab "Diagnostics" alongside
+Notes / Details / Transcript. Conditional rendering — turning the
+setting off restores the original three-tab strip without leaving any
+ghost tab UI behind.
+
+**The tab itself** is structured top-down to mirror the triage workflow
+("at a glance → in detail → forensic"):
+
+  1. **Watchpoints ribbon.** Six color-coded chips (Green OK / Yellow
+     warning / Red bad / Neutral) for the failure modes the v0.7.5
+     pest-control sweep cared about: audio-thread priority, PerfHint
+     session state, wake lock + isPlaying, load factor avg/max, recent
+     renderer stalls (60 s window), player state + error. Each chip
+     carries a one-line tooltip explaining what the value means.
+
+  2. **Action chips.** "Save as note", "Copy", "Full-screen". The first
+     two pin or transcribe the current diagnostic state for later;
+     the third toggles in-Player full-screen mode (see below).
+
+  3. **Live readout.** Same compact selectable text block the existing
+     AudioDiagnosticsScreen surfaces — but only the rows that matter
+     while live: audio_enhancement, phase_mode, speed, passthrough,
+     audio_thread (tid + name + priority + demotions), perf_hint
+     (supported + active + targetUs — note this is the *speed-scaled*
+     target after the v0.7.5 D2 fix), wake_lock, load_factor,
+     player state, last_error.
+
+  4. **Load-factor sparkline.** Rolling 30-second bar chart of
+     avgLoadFactor (60 samples at the 500 ms tick). Bars colored OK /
+     warn / bad against the 1.0 deadline; a thin axis line marks the
+     deadline itself. Trend toward 1.0 is visible at a glance —
+     point-in-time readings hide trends.
+
+  5. **Recent events.** Newest-first slice of the breadcrumb log (top
+     12 shown in-tab; full log on the dedicated AudioDiagnosticsScreen).
+
+**Snapshot to note.** Tapping "Save as note" builds a timestamped text
+block — header line + reason + the Live readout + the load-factor
+history sequence + the most-recent 25 events — and writes it to the
+existing `episode_note_entry` table for the currently-playing episode
+at the current playback position. Notes browser, episode timeline,
+backups, and search all light up for free; the diagnostic dump
+naturally lives alongside the user's manual notes for the same moment.
+Pragmatic anchor: `Toast` confirms; no SnackbarHost plumbing needed
+into the tab.
+
+**Auto-snapshot on bad events.** When the audio thread emits one of
+the high-signal kinds (`priority_demoted`, `renderer_stall`,
+`no_progress`), the tab auto-fires a snapshot-to-note with the
+triggering event's name + detail as the reason. Rate-limited to one
+per 60 s total so a sustained demotion can't spam the Notes browser
+with dozens of duplicates. Detection uses event timestamps not buffer
+size, so the underlying 50-slot ring's wrap-around evictions don't
+fool the detector into thinking nothing new happened. Surfaces a
+transient banner ("Auto-snapshot saved (...)") in the tab so the user
+knows forensics were captured even if they were looking at the
+Diagnostics tab when the event hit.
+
+**Full-screen mode.** Tapping the active tab toggles the existing
+bottom-tabs full-screen flag (Notes / Transcript already had this).
+In full-screen the player chrome above the strip — artwork, title,
+scrubber, transport — hides; the tab content fills the screen below
+the top app bar. New in v0.8.0: **the mini-player stays anchored at
+the bottom of the screen during full-screen on the player route**.
+That keeps transport (play / pause / scrub / ±15s / ±30s) reachable
+while the Diagnostics tab is scrolling live; works for the other
+fullscreen tabs (Notes / Transcript) too — a pre-existing UX gap that
+this work happens to close as a side effect. State propagates via a
+hoist into AppNav: `PlayerScreen` invokes
+`onPlayerTabsFullscreenChange(Boolean)` on every change, and a
+`DisposableEffect` resets the host's flag to false on disposal so a
+back-navigation while still in fullscreen mode can't leave the host
+with a stale override.
+
+**Wake-lock exposure.** `PlaybackService.wakeLockHeld: Boolean`
+@Volatile companion field, written by `acquirePlaybackWakeLock` /
+`releasePlaybackWakeLock` right after the actual acquire/release.
+Read by the in-Player diagnostics tab so the "Wake lock: held /
+missing / lingering / idle" watchpoint reflects what's actually on
+the kernel side, not what the code intended.
+
+**EqAudioProcessor.isPhaseModeLinear() accessor.** Read-only accessor
+for the phase-mode flag so the diagnostics tab can render "Minimum
+(biquad)" vs "Linear (4096-tap FIR)" without a Settings round-trip
+on every recompose. The existing setter (`setPhaseModeLinear`)
+remains the single writer; the getter pairs with it cleanly.
+
+Files affected:
+- `app/src/main/java/com/lofipod/app/data/Settings.kt`
+  (`showDiagnosticsTabInPlayer` flow + setter + DataStore key)
+- `app/src/main/java/com/lofipod/app/ui/screens/SettingsScreen.kt`
+  (new `DiagnosticsTabToggleRow` slotted into the Audio diagnostics
+  section)
+- `app/src/main/java/com/lofipod/app/ui/screens/PlayerDiagnosticsTab.kt`
+  (new — the entire tab + watchpoints + sparkline + snapshot logic)
+- `app/src/main/java/com/lofipod/app/ui/screens/PlayerScreen.kt`
+  (conditional 4th tab plumbing + fullscreen-state hoist)
+- `app/src/main/java/com/lofipod/app/ui/MainActivity.kt`
+  (mini-player override during full-screen on the player route)
+- `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+  (wake-lock state companion field)
+- `app/src/main/java/com/lofipod/app/audio/EqAudioProcessor.kt`
+  (`isPhaseModeLinear()` getter)
+
+ai_contamination: true # claude opus 4.7
+
+## Audio-thread hardening: wake lock + speed-aware PerfHint + re-elevation + TID swap
+
+Pest-control sweep against the screen-off-DSP-chop pattern reported on
+S7 plus the post-auto-download freeze observed 2026-05-11. Four
+independent fixes targeting the audio-thread / scheduling surface; the
+playback state-machine fixes that explain the autoplay-style beep on
+manual playback land in a separate commit.
+
+**PARTIAL_WAKE_LOCK acquired during `isPlaying`.** `WAKE_LOCK`
+permission was declared but never acquired anywhere in `app/src/main`.
+Foreground service (`mediaPlayback` type) keeps the process alive
+across Doze but doesn't constrain the CPU governor from downclocking
+when the screen goes off. PARTIAL_WAKE_LOCK acquired on
+`Player.Listener.onIsPlayingChanged(true)` and released on `false`;
+also released in `onDestroy` as a safety net. `setReferenceCounted(false)`
+because acquire/release follow the listener strictly. `isHeld` guards
+on both sides tolerate accidental double-call without the under-locked
+warning. Try/catch around acquire so a hostile SELinux denial can't
+crash playback.
+
+**PerformanceHintBridge target now scaled by playback speed.** Bridge
+was passing `targetNs = frameCount * 1e9 / sampleRate` — the audio
+duration of the buffer, not the wall-clock budget. At 2× playback the
+budget is half that. The governor was choosing a CPU frequency for a
+deadline twice as generous as reality; screen-on the compositor masked
+the slack, screen-off the DSP path started missing deadlines (the
+S7-reported chop pattern). Added `@Volatile var playbackSpeed: Float`
+on `AudioChainTelemetry`, written by `PlayerController` from
+`onPlaybackParametersChanged`, `setSpeed`, and the per-podcast default
+override branch in `playEpisode`. `recordBufferTiming` divides
+`audioNs` by the current speed before calling `bridge.ensureSession`.
+
+**PerformanceHintBridge invalidates session on TID change.**
+`ensureSession` previously had create + retarget branches only; a TID
+swap (sink rebuild on format change, low-power audio path swap on some
+OEMs) left the hint session pinned to a dead thread and the new audio
+thread ran unhinted forever. Added `currentThreadId` tracking and a
+TID-swap branch that closes the existing session before the create
+path runs. AudioChainTelemetry already detected the swap and logged
+the `audio_thread` breadcrumb — now the hint follows the breadcrumb.
+
+**Active priority re-elevation on demotion detection.** When
+`Process.getThreadPriority(tid) >= 0` (audio thread no longer above
+normal scheduler priority), the previous code only logged + counted.
+Now it calls `Process.setThreadPriority(tid, THREAD_PRIORITY_AUDIO)`
+once per demotion transition and reads back the new priority. The
+breadcrumb message reflects whether re-elevation succeeded
+("re-elevated to AUDIO") or didn't ("re-elevation failed; likely
+cgroup-bound"). Free mitigation for pure-nice-value demotions
+(e.g. Media3 didn't elevate after a thread recreate); inert on OEM
+cgroup migrations (cpuset/cpu group caps survive nice changes — the
+"D1" blind spot still warrants direct `/proc/self/task/<tid>/cgroup`
+reading, not addressed in this sweep).
+
+Files affected:
+- `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+- `app/src/main/java/com/lofipod/app/audio/AudioChainTelemetry.kt`
+- `app/src/main/java/com/lofipod/app/audio/PerformanceHintBridge.kt`
+- `app/src/main/java/com/lofipod/app/player/PlayerController.kt` (speed
+  mirror writes; the rest of this file's changes land in the
+  state-machine commit)
+
+ai_contamination: true # claude opus 4.7
+
+## Playback state-machine: autoplay-flag leak + already-downloaded handoff misfire
+
+Two narrow defects in the playback startup path observed during the
+Pattern B repro 2026-05-11. Both produced user-visible "weird beep at
+play start, then freeze ~5 s later" without an obvious cause because
+each defect on its own was silent — they only made noise when they
+compounded.
+
+**`lastPlayWasAutoplay` leaked across a controller-null bail.**
+`playEpisode` used to consume the flag immediately AFTER the
+`controller == null` early-return — so a call from
+`advanceToNextInQueue` (which sets the flag) that arrived while the
+MediaController was still binding stored the play in `pendingPlay` and
+returned without consuming the flag. A subsequent user-initiated
+`playEpisode` (a manual tap) consumed the stale flag and armed the
+autoplay-confirmation timer; the user heard the 60-second countdown
+beep on a play they perceived as manual. Fix: consume the flag
+unconditionally at function entry, pass it through `PendingPlay` so
+the drain in `connect()` can restore it on the replayed call.
+
+**Auto-download fired for already-downloaded episodes during
+`_byId` hydrate window.** The `needsStart` check at the auto-download
+trigger gated on `app.downloadsApi.byId.value[guid] == null ||
+state == FAILED`. `_byId` is hydrated asynchronously at app launch
+(`LofiPodDownloader.init { cleanupScope.launch { hydrate() } }`), so a
+fast-play on cold start saw `null` even when the DAO row existed and
+the file was fully on disk. The auto-download start emitted a
+COMPLETED transition on `byId`, which `observeDownloadCompletion`
+interpreted as "download just finished, mid-playback handoff!" —
+firing `playHandoffCue` (two unducked quick beeps) plus a
+`setMediaItem` swap right at the moment audio finally started. The
+`setMediaItem(newItem, savedPosMs); prepare()` cycle dropped the
+player back into STATE_BUFFERING for `bufferForPlaybackAfterRebufferMs
+= 8 s` — the observed "playback froze 5 seconds after the beeps."
+Toggling Audio Enhancement off didn't help because the freeze was in
+the rebuffer cycle, not in DSP. Fix: use the already-suspending
+`completedFile()` helper (DAO-fallback aware) as the authoritative
+"is this on disk?" check; only fire start() when no file exists AND
+the in-memory state agrees.
+
+Files affected:
+- `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+
+ai_contamination: true # claude opus 4.7
+
+## EqScreen layout polish: tooltip-hint + reference-menu collapse
+
+Two UX cleanups on Audio Fine-tuning, both followups to the v0.7.3
+tooltip work.
+
+**Tooltip-discoverability hint beside "Graphic EQ" heading.** Long-press
+on the band Hz labels surfaces the per-band tooltip — but long-press is a
+hidden gesture and users had no way to discover the feature without
+documentation diving. Inline ancillary copy ("long-press a frequency for
+more info") sits to the right of the "Graphic EQ" section heading,
+visible exactly when the bands come into view. Smaller / quieter type
+(`bodySmall`, `onSurfaceVariant`) so it reads as a hint, not a control.
+
+**Reference links collapsed into a TopAppBar overflow menu.** The three
+right-justified TextButton rows ("Audio guide (plain language)",
+"Notes for audiophiles", "Audio diagnostics") at the top of the screen
+body left a wide blank stripe on the left of each row and ate three rows
+of vertical real estate before the actual EQ controls started. Replaced
+with a single kebab (`MoreVert`) icon in the app bar's `actions` slot
+that opens a `DropdownMenu` with all three destinations.
+
+Trade-off: each link is now two taps away (kebab + menu item) instead
+of one tap. Acceptable because:
+  - The actual EQ controls are now the first thing visible in the body
+    on every visit.
+  - The right-edge blank-stripe problem is gone entirely.
+  - It's the standard Material pattern for "secondary screen actions" —
+    discoverability stays high (kebab icon is universally recognized).
+  - Settings still exposes both notes pages directly via the "Notes
+    about audio" section, which is the primary discovery surface.
+
+Order in the dropdown matches the previous body order: plain-language
+guide first (gentlest entry), audiophile spec second, live diagnostics
+third.
+
+ai_contamination: true # claude opus 4.7
+
+## EQ tooltips + Settings discoverability for the lofi notes
+
+Two followups to the lofi-notes shipping in the previous entry, addressing
+the discoverability + tooltip flags I'd noted there.
+
+**Tooltips on the EQ screen.** Material3 `TooltipBox` + `PlainTooltip` —
+long-press a label to see a one-line explanation. Two locations:
+
+  - **Volume boost label.** Tooltip distills the dB intuitions: "+6 dB is
+    roughly 2x linear amplitude; +10 dB is roughly 2x perceived loudness;
+    the limiter catches peaks so cranking stays clean." Lifted from the
+    lofi-notes glossary, condensed for the tooltip width budget.
+  - **Each band-row Hz label** (31, 62, 125, 500, 2k, 8k). Each tooltip
+    is the band's plain-language one-liner from the lofi notes screen
+    (e.g. 125 Hz: "Low-mid / warmth — where boomy rooms live. Cut 2 to
+    4 dB if a podcast sounds like a small kitchen."). New
+    `bandTooltipText(centerHz)` helper next to `formatHz` so future band
+    changes can extend the table without touching the layout.
+
+Long-press is the standard Material3 tooltip trigger and doesn't conflict
+with vertical scroll (different gesture) or the band slider's drag (only
+the thumb has a pointerInput; the label is a sibling Text). Q tooltip
+deliberately omitted — Q isn't exposed in the EqScreen UI, so there's
+nothing to attach to.
+
+**Discoverability — Settings restructure.** The "Notes for audiophiles"
+button used to live inside the "Audio diagnostics" section, which made it
+look like another diagnostic surface and meant a non-audiophile reader
+might never click it. Restructured:
+
+  - **Audio diagnostics** section now holds just the inline mini-readout,
+    "Open full audio diagnostics", and "App diagnostics (bugs)".
+  - **New "Notes about audio"** section sits below it. Both notes pages
+    exposed equally as parallel options:
+      - "Audio guide (plain language)" -> lofi notes
+      - "Notes for audiophiles" -> audiophile notes
+    Section subtitle: "Two takes on the same audio chain. Pick the one
+    that matches how you want to think about it."
+
+**EqScreen also gets the lofi link.** The Audio Fine-tuning screen
+already had right-justified links to "Notes for audiophiles" and "Audio
+diagnostics" at the top. Added "Audio guide (plain language)" above
+those two, so a curious slider tweaker can reach the friendly guide
+without first having to land on the audiophile-flavored page.
+
+Both new entry points wire to the same `lofiNotes` route added in the
+previous entry. Cross-links between the two notes screens still work as
+before.
+
+ai_contamination: true # claude opus 4.7
+
+## Non-audiophile Lofi notes: plain-language companion to the spec page
+
+New Settings reference page for the curious-but-not-yet-trained listener
+who's noticed the EQ sliders and wants to know what they do without having
+to learn what a biquad is first. Written as a sister screen to the existing
+Notes for audiophiles — both pages cover the same audio chain, but in
+different registers for different audiences.
+
+**New screen** `NonAudiophileLofiNotesScreen.kt`. Sections (with the
+ordering chosen to walk a reader from definitions out to recipes):
+
+  1. Who this page is for
+  2. Words to know — Lofi, Audiophile, DSP, Hz/kHz, dB, dBFS, PCM, sample
+     rate, EQ, latency. First mention of every abbreviation expanded
+     inline; each entry is one short technical sentence followed by a
+     friendly expansion.
+  3. What LofiPod does to your audio — high-level chain diagram with the
+     defaults-are-passthrough story up front so a reader knows the chain
+     is opt-in.
+  4. Master gain — what it is vs master volume; when to use; how the
+     limiter keeps boosts safe.
+  5. Equalizer — three sub-sections: introduction, ASCII frequency map
+     anchored to real-world content (male / female voice fundamentals,
+     sibilance, phone-call bandwidth), band-by-band tendencies for each
+     of the six bands.
+  6. Q (band width) — explained as "you probably don't need to touch it."
+  7. Phase modes — minimum vs linear with the "leave it on minimum"
+     guidance up front.
+  8. DC blocker — what it is, when to flip on (low-bitrate MP3 sermons,
+     etc.).
+  9. Skip silence — levels and the trade-off (clipping thoughtful pauses).
+ 10. Limiter — always-on safety net; explained without slider.
+ 11. Pass-through and Hold to A/B — the comparison workflow.
+ 12. Recipes — six "I want to..." goals with concrete starting EQ moves
+     (clarity, boom, thinness, sibilance, low-volume listening, FLAT
+     reset, just-make-it-louder).
+ 13. How to tell if it's actually working — Hold to A/B + Audio
+     diagnostics screen.
+ 14. If you want to go deeper — pointer back to Notes for audiophiles +
+     diagnostics.
+
+Style: hand-written original prose, no external sources cited (every
+concept covered is generic audio knowledge). Concise technical line
+followed by friendlier expansion, per the audience brief. ASCII frequency
+spectrum + band-purpose grid in the EQ section. Subtle horizontal
+dividers between sections for visual breath.
+
+**Polish on `AudiophileNotesScreen.kt`.** Same content; restructured
+visually to match the new sister page:
+
+  - New `CrossLink` helper renders a right-justified TextButton row, used
+    at the top AND bottom of the page to navigate to the lofi-notes
+    screen ("Non-audiophile Lofi notes"). Mirrored on the lofi-notes
+    side with the inverse label.
+  - Subtle `SectionDivider` (1 dp horizontal rule at 25% outline alpha)
+    inserted between every top-level section. Quieter than a hard
+    section break, gives the eye a place to land between dense
+    technical paragraphs.
+  - Tightened import list (no more wildcard imports for foundation.layout
+    + material3) so the dependencies are explicit.
+
+**Navigation wiring** in `MainActivity.kt`. New `lofiNotes` route plus an
+`onOpenLofiNotes` callback into the audiophile-notes composable; both
+routes use `launchSingleTop` so flipping back and forth between them
+doesn't accumulate stack entries. Plain `popBackStack` for back so the
+user returns to whichever screen sent them in (Settings, EqScreen, or
+the sister notes page).
+
+**Discoverability note for future work.** Both notes pages are reachable
+only via Settings -> "Notes for audiophiles" (the existing entry) and
+then the cross-link. A reader who self-identifies as a non-audiophile
+might skip the audiophile-flavored entry and never find the lofi-notes
+page. If usage data later suggests this is a real problem, the right
+fix is probably renaming the Settings entry to something more inviting
+("Notes about audio") with both pages exposed equally; left for a
+future pass.
+
+ai_contamination: true # claude opus 4.7
+
+## Performance Hint API + audio-thread priority diagnostics
+
+Two more upstream attacks on the same scheduling-jitter problem v0.7.0
+absorbed downstream. Both surface in Settings -> Audio diagnostics under a
+new "Scheduler" section so any future stutter report includes the OS-level
+facts (priority, hint session state) right next to the existing wallclock
+load factor.
+
+**1. Performance Hint API (Android 12+).** New
+`audio/PerformanceHintBridge.kt` wraps `android.os.PerformanceHintManager`.
+On API 31+ devices it creates a hint session keyed to the audio sink's TID
+with target = wall-clock budget per buffer (= frame_count / sample_rate),
+and reports actual elapsed wallclock after each DSP pass. The OS uses both
+to keep the CPU at the right frequency for the workload — eliminates the
+"governor downclocked, then had to spin back up under the FIR convolution"
+pattern that dominated the high-load tail at 2x speed.
+
+   - All API 31+ types stored as `Any?` so the class loader never has to
+     resolve `PerformanceHintManager` on lower-SDK devices. Methods gate on
+     `Build.VERSION.SDK_INT >= S` and cast at call sites.
+   - Defensive try/catch around every API call; some OEM builds ship broken
+     implementations. Failure drops the session silently and remembers the
+     last error for diagnostics — never disrupts audio.
+   - Wired through `AudioChainTelemetry.installPerformanceHintBridge` from
+     `LofiPodApp.onCreate` (new `perf_hint_install` startup phase). The
+     audio thread reaches it via the existing per-buffer
+     `recordBufferTiming` call — one TID compare + a JNI hop into the perf
+     hint service per buffer when supported.
+
+**2. Audio-thread identity + priority readout.** Same
+`recordBufferTiming` path now also captures `Process.myTid()` +
+`Thread.currentThread().name` on the first buffer (and on the rare event of
+the sink swapping threads), and re-reads `Process.getThreadPriority(tid)`
+every buffer. The diagnostic surfaces the priority with a label:
+  - **-19 URGENT_AUDIO** = best
+  - **-16 AUDIO** = expected (Media3's `AudioSink` callback thread)
+  - **0 DEFAULT** = WRONG; the chain would be competing with normal app
+    threads and underruns expected on any CPU contention
+  - **>0 BELOW normal** = WRONG; thermal demotion or aggressive power
+    saving has clobbered audio prioritization
+
+If the readout ever shows DEFAULT or positive, that's a real bug to chase.
+Re-reading every buffer (cheap — one syscall) catches OEM kernels that
+demote the audio thread under thermal pressure mid-session.
+
+   - **Auto-detect + log on demotion.** Every buffer compares the live
+     priority against `>= 0`. On the transition into a wrong state, logs
+     a `priority_demoted` breadcrumb (with TID + observed priority) and
+     bumps a `priorityDemotions` counter. On transition back to good,
+     logs `priority_recovered`. Logged on transitions only, not per
+     buffer — otherwise a sustained demotion would flood the 50-slot
+     event ring within a second. The Scheduler section surfaces the
+     cumulative `demotions` count; tap into Recent Events to see the
+     per-event timestamps.
+
+**Surface.** New "Scheduler" section in `AudioDiagnosticsScreen` between
+Performance and Counters: shows TID + name + priority label + perf-hint
+state (unsupported / active / target ms). Clipboard dump includes it so
+bug reports carry the full OS-level picture. HELP_TEXT updated.
+
+For the primary user (Android 14, recent Pixel-class device) this should
+read "perf_hint = active, target = ~23 ms / buffer" and "thread_priority
+= -16 AUDIO" once playback starts. Watching how often the load factor's
+max stays bounded vs. spikes will be the empirical test of whether the
+hint is actually moving the needle.
+
+ai_contamination: true # claude opus 4.7
+
+## Battery-optimization opt-out prompt in Settings
+
+Followup to v0.7.0's playback-hang fix. The buffer expansion + watchdog
+hardening absorbs scheduling jitter downstream; this attacks one of the
+upstream causes for users on devices with aggressive Doze / App Standby
+defaults (Xiaomi, OnePlus, Samsung's "deep sleep" lists, etc.).
+
+**Manifest:** added `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. Required for
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` to fire — without it the
+system rejects the intent with SecurityException. Declaring the permission
+only enables the *request*, not the exemption itself; the user still
+confirms the system dialog.
+
+**Settings:** new "System" section (between Audio and Data) with a
+`BatteryOptimizationRow`. Reads `PowerManager.isIgnoringBatteryOptimizations`
+on every recomposition triggered by a tick, and bumps the tick from a
+`rememberLauncherForActivityResult` callback so status auto-refreshes when
+the user returns from the system prompt. Two states:
+  - **Optimized** (default): "Allow unrestricted" button fires
+    `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+  - **Unrestricted**: "Open settings" button fires
+    `ACTION_APPLICATION_DETAILS_SETTINGS` so the user can revert.
+
+No first-launch nudge — surfaced as a discoverable Settings entry rather
+than a modal interrupt. Users who already manually disabled battery opt
+(e.g. the primary user) see the unrestricted-confirmation state and won't
+be re-prompted.
+
+For the primary user this is zero-impact (already unrestricted, manual fix
+didn't move the needle for the 2x hang — that was the buffer/watchdog
+issue, fixed in v0.7.0). The value is for sideload recipients on stock
+Android 12+ and especially on aggressive-Doze vendor skins.
+
+ai_contamination: true # claude opus 4.7
+
+## Playback hang at 2x: bigger AudioTrack buffer + harder watchdog flush
+
+User report (continued): "playback often hangs and needs to be flushed.
+episode is downloaded. playback speed is x2. after a minute or so
+playback is volatile and can stop." Watchdog landed in v0.6.16 + tuned
+in v0.6.18 wasn't fully solving it.
+
+Three compounding causes, all addressed:
+
+**1. AudioTrack output buffer too small at 2×.** Media3's default
+`DefaultAudioTrackBufferSizeProvider` gives a 250 ms minimum PCM
+buffer with a 4× multiplier of the OS minimum. Two ways the 2× speed
+case lands in trouble:
+  - When AudioTrack is doing the speed natively (modern phones,
+    `enableAudioTrackPlaybackParams=true`), the 250 ms buffer drains
+    in **125 ms wall-clock** at 2×. Any GC pause, thermal throttle,
+    or kernel scheduling jitter longer than 125 ms starves the
+    AudioTrack.
+  - When Sonic in the chain is doing the speed, our DSP chain has to
+    feed Sonic at 2× source rate, so per-buffer wallclock load is
+    doubled — small jitter that's a non-event at 1× becomes an
+    underrun at 2×.
+
+Fix in `EqRenderersFactory.buildAudioSink`: pass a
+`DefaultAudioTrackBufferSizeProvider` configured with 1.5 s
+minimum / 3.0 s max / 8× multiplier. ~576 KB of extra audio
+buffer at 48 kHz stereo int16 — negligible memory cost, ~6×
+larger headroom against jitter. Trade-off: EQ-tweak responsiveness
+drops from ~250 ms to ~1.5 s of "old EQ before new takes effect."
+Acceptable — the hang was a real bug, EQ-while-listening is a
+niche workflow.
+
+**2. Watchdog recovery seek-to-self can be deduped to a no-op.** The
+v0.6.16 / v0.6.18 watchdog called `seekTo(currentPosition)` to flush
+the audio sink. Media3 / DefaultAudioSink may dedup a same-position
+seek and skip the flush — which is why the user kept observing
+stalls even though the watchdog log said "force-flushed at Xs". A
+100 ms backward offset (`seekTo(currentPosition - 100)`) guarantees
+a real seek + flushes the renderer chain + replays the last 100 ms
+of audio the user likely missed during the stall. New
+`STALL_RECOVERY_REWIND_MS` constant = 100.
+
+**3. Watchdog stopped during BUFFERING.** The previous lifecycle was
+"start when isPlaying flips true, stop when it flips false." When
+the AudioTrack underruns badly enough, ExoPlayer transitions out of
+`STATE_READY` into `STATE_BUFFERING` with isPlaying=false — which
+killed the watchdog right when arm B should have been catching it.
+
+Lifecycle moved from `onIsPlayingChanged` to `onPlayWhenReadyChanged`
+so the watchdog tracks user intent, not moment-to-moment isPlaying.
+Cold-launch path (already-playing session) explicitly starts the
+watchdog after addListener since Media3 doesn't replay state-change
+callbacks for the listener's initial state. New arm B in the
+watchdog body: when `playbackState == STATE_BUFFERING && playWhenReady`,
+track a separate buffering-start timestamp. After
+`BUFFERING_STALL_THRESHOLD_MS = 8 s` of buffering, fire the same
+recovery as arm A. 8 s is longer than arm A's 6 s because legitimate
+buffering on a far scrub or first remote-stream play can take
+several seconds — but on a downloaded local file 8 s of buffering
+means the renderer chain is wedged.
+
+`triggerStallRecovery` extracted as a shared helper so both arms
+emit the same UI/diagnostics surface.
+
+ai_contamination: true # claude opus 4.7
+
+## Episode size readout: simpler format + bottom-right placement
+
+Two refinements on v0.6.23's `s=Nmb; d=Nmb` design:
+
+- **Drop the `s=`/`d=` prefixes.** Streaming and downloading both pull
+  the full enclosure, so the dual readout was redundant — just `Nmb`
+  reads cleanly and trusts the user to know what it means.
+- **Move it to the bottom-right corner.** On EpisodeRow it sits below
+  the action row (Play / Download / Queue / Heart) right-aligned; on
+  PlayerScreen it sits below the playback bar's position/duration
+  pair, right-aligned. Both screens treat it as a passive vital stat
+  rather than competing with primary controls.
+
+Plumbing on PlayerScreen: new `episodeSizeBytes` state loaded by a
+`LaunchedEffect(displayedGuid, isPreview, previewData)` that pulls
+from `previewData.episode` in preview mode and via
+`episode_state -> repo.cached(feedUrl) -> Episode` for live. Refreshes
+on track transitions + live ⇄ preview swap. Hidden when the feed
+didn't publish an enclosure length.
+
+ai_contamination: true # claude opus 4.7
+
+## Episode size readout + stale APK cache cleanup
+
+Two fixes prompted by user reports:
+
+**Per-episode size readout.** New `audioByteSize` field on `Episode`,
+parsed from RSS `<enclosure length="...">` and persisted through
+`FeedDiskCache`. Rendered on each episode row in the meta line as
+`s=Nmb; d=Nmb` so the user can see bandwidth + disk cost at a
+glance before tapping play or download. Both numbers are the same
+(streaming and downloading both pull the full enclosure file) — the
+dual readout matches the user's two distinct mental questions
+("how much data?" vs "how much disk?") legible at a glance.
+Sub-megabyte sizes show as `<1mb` rather than rounding to `0mb`.
+
+**Stale APK update cache cleanup.** User report: app data hit 214 MB
+despite having only a few episodes played. Root cause was
+`UpdateChecker` accumulating cached APKs at
+`cacheDir/updates/lofipod-<versionCode>.apk` — one ~57 MB file per
+shipped tag the user had downloaded, never cleaned up. After 4 tags
+shipped, that's ~228 MB of stale APKs alone.
+
+`LofiPodApp.onCreate` now runs a one-shot startup cleanup alongside
+the existing legacy-cache wipe: lists `cacheDir/updates/`, keeps the
+APK matching the currently-installed `versionCode` (in case the user
+is mid-install when this fires), deletes everything else. Idempotent.
+Combined with the v0.6.22 orphan sweep on `episode_audio/`, app data
+should now stay roughly proportional to actually-downloaded
+episodes + one current update APK at most.
+
+ai_contamination: true # claude opus 4.7
+
+## Mid-playback handoff to local file + orphan sweep + audiophile reflow
+
+Three improvements bundled:
+
+**Mid-playback handoff to local file.** When an episode is being
+streamed over HTTP and its auto-download completes mid-listen, the
+player now swaps the MediaItem to the local `file://` URI without
+making the user reset the episode. Mechanics:
+- New `observeDownloadCompletion` collector in `PlayerController` —
+  watches `downloadsApi.byId` for the currently-playing guid.
+- Trigger conditions: state flips to COMPLETED + current MediaItem
+  URI scheme is HTTP + we haven't already triggered for this guid.
+- Snapshot position + playWhenReady, build a new `file://` MediaItem
+  with the same metadata, fire a quick double-beep cue in parallel
+  via `BeepPlayer.playHandoffCue` (two 80 ms tones, 40 ms gap, no
+  player ducking — fills the brief silence from setMediaItem +
+  prepare so the swap reads as intentional rather than a glitch),
+  setMediaItem(item, savedPosMs), prepare(), play() if was playing.
+- Snackbar: "Playback branched to downloaded file."
+
+**Orphan-file sweep.** `LofiPodDownloader.cleanupOrphans()` runs once
+at startup after `hydrate()`. Lists files in `episode_audio/` and
+deletes any whose path doesn't appear in the `lofi_download` DAO.
+Safety net for the rare leak (delete failure during `remove()`, app
+crash mid-cleanup, etc.). The single-file-per-episode invariant is
+already enforced by the deterministic SHA256-derived filename + the
+delete-on-remove path; this is the catch-all.
+
+**Audiophile notes — natural-width prose reflow.** User report:
+"the text on this page is poorly formatted. lines are split to next
+lines in what appears to be arbitrary." Root cause: the `"""`-style
+raw-string constants are hard-wrapped at fixed column widths in the
+source, and Compose's `Text` honors those line breaks at render. New
+`reflowProse()` joins prose paragraph lines with single spaces (so
+they re-wrap to actual device width) while preserving indented
+blocks (the signal-chain ASCII art, latency math) by detecting
+leading-2-spaces lines and leaving those paragraphs verbatim.
+
+ai_contamination: true # claude opus 4.7
+
+## Fix: completedFile() saw stale empty StateFlow on cold start
+
+User report: 2x on a downloaded episode hit "waiting on network"
+within a minute, even though the file was on disk. Streaming over
+HTTP, not playing the local file.
+
+Root cause: `LofiPodDownloader.completedFile(guid)` only checked the
+in-memory `byId` StateFlow. That map is hydrated from Room
+asynchronously via `init { cleanupScope.launch { hydrate() } }`. If
+the user taps an episode early in the app lifecycle (before hydrate
+completes), the fast path returns null and `playEpisode` falls back
+to the HTTP URL. ExoPlayer locks onto that URI for the lifetime of
+the MediaItem — so even after hydrate finishes, the player keeps
+streaming the remote source. At 2x speed that races the buffer empty
+within a minute and surfaces the misleading "waiting on network"
+snackbar despite the file being right there on disk.
+
+Fix: `completedFile` is now suspend with a two-tier lookup:
+1. Fast path reads `byId.value` (steady-state hit).
+2. Cold-start fallback queries `downloadDao.get(guid)` directly. A
+   row with state=COMPLETED + file present on disk is safe to play
+   even before the StateFlow catches up.
+
+The PlayerController call site is already inside a `scope.launch`
+coroutine, so the suspend signature change just works at the call
+site — no plumbing changes elsewhere.
+
+(Open issue not addressed here: if a download FINISHES during
+playback of the same episode, the player keeps streaming HTTP
+because MediaItem URI is fixed at construction time. That's a
+separate "swap MediaItem mid-playback" feature; would cause a brief
+audible interruption when swapping. Hold off until we see if it
+matters in practice.)
+
+ai_contamination: true # claude opus 4.7
+
+## Stall watchdog: tighter, surfaced to the UI, snackbar feedback
+
+User report: at 2x on a downloaded episode the cycling-position
+freeze hit "almost immediately" with no UI signal — no buffering ring
+around the play button, no snackbar, just frozen audio for ~10 s
+until the v0.6.16 watchdog's silent recovery seek.
+
+Three fixes:
+
+1. **Surface the stall to UI.** New `PlayerState.isStalled` flag,
+   owned by the watchdog (Media3 keeps the player in STATE_READY
+   during DSP-side stalls so `isBuffering` stays false — the audio
+   data is loaded, the audio thread just can't keep up). When the
+   watchdog detects a stall, it sets `isStalled = true` and clears
+   it 2 s after the recovery seek. PlayerScreen + MiniPlayer treat
+   `isBuffering || isStalled` as the loading-ring trigger.
+
+2. **Snackbar feedback on stall.** Watchdog emits a one-shot via
+   `transientMessages` at first detection: "Audio chain stalled at
+   2.00× — recovering. Try a lower speed or disabling linear-phase
+   EQ if this keeps happening." Throttled to once per 30 s so a
+   chronic-stall cycle doesn't spam the user every recovery.
+
+3. **Tighter detection.** Stall threshold dropped from 10 s → 6 s
+   (the cycling-position bug exhibits ~5 s cycles, so 6 s catches
+   the first complete cycle without false-positive on legitimate
+   buffering). Poll period dropped from 2 s → 1 s so the indicator
+   + snackbar appear within a second of the watchdog's decision.
+
+`pushState()` updated to `_state.update { ... }` and to PRESERVE
+`isStalled` across calls — without that, a routine
+`onIsPlayingChanged` after a stall recovery would silently flip
+`isStalled` back to its default mid-recovery.
+
+ai_contamination: true # claude opus 4.7
+
+## Text settings + bundled Garamonds (EB + Cormorant)
+
+New Settings → Text & font screen. Substantive typography control:
+
+**Body-font choice.** Six options:
+- Theme default *(active theme's bodyFont — current behavior)*
+- System sans (`FontFamily.Default`)
+- System serif (`FontFamily.Serif`)
+- System monospace (`FontFamily.Monospace`)
+- **EB Garamond** *(bundled, OFL)*
+- **Cormorant Garamond** *(bundled, OFL)*
+
+Both Garamonds are variable TTFs from Google's `google/fonts` repo
+(EBGaramond[wght].ttf ~830 KB, CormorantGaramond[wght].ttf ~1.2 MB).
+Single file per family covers Regular through Bold via the `wght`
+axis — Compose handles the variable-axis selection automatically.
+
+When the user picks anything other than "Theme default," `Theme.kt`
+folds the choice into Material's typography body slots
+(titleSmall through bodyLarge + all labels). Display slots
+(displayMedium / displayLarge / headlines) stay on the active
+theme's `displayFont` so the visual character of each theme
+direction (Cassette serif, Reel/Ticker monospace) survives.
+
+**Notes-specific size sliders.**
+- `notesTextSizeSp` (default 14, range 10–28) — applied to the body
+  text on each `NoteCard` row.
+- `notesPopupTextSizeSp` (default 16, range 10–28) — applied to the
+  typing surface in `NoteEditorDialog`.
+
+Two sliders because typing benefits from a larger size than reading
+the resulting card. Both read in real time via `Settings`, so the
+slider drag updates the live preview AND any open notes UI.
+
+**Live preview.** Top of the screen renders a representative slice
+(title + body line + label + faux note card + faux editor row)
+in whatever's currently selected. No "apply" button — every change
+propagates Settings → Theme → recomposition immediately.
+
+**OFL compliance.** License files at `assets/EBGaramond-OFL.txt` +
+`assets/CormorantGaramond-OFL.txt`. Per SIL OFL 1.1, that's the full
+requirement — license must ship with the software, not be visible
+in the UI. No "Fonts" attribution panel reintroduced; the user
+removed that explicitly in v0.6.17 and the OFL doesn't need it.
+**Commercial use is fine** — OFL only prohibits selling the font
+as a font product, not bundling it in software.
+
+ai_contamination: true # claude opus 4.7
+
+## UI roundup: Tune icon, MyLists tab hearts, history filter, tab fullscreen
+
+Five small UX cleanups shipped together:
+
+**Audio Fine-tuning ↔ Now Playing icons split.** Both used `GraphicEq`,
+which made the Player top-bar's "Audio Fine-tuning" button visually
+collide with the "Now Playing" affordance in Catalog overflow + Player
+top-left. Fine-tuning now uses `Tune` (slider knobs); Now Playing keeps
+`GraphicEq` (pulsing-bar live-audio glyph) and stays consistent across
+Catalog overflow and Player top-bar. Catalog overflow row also relabeled
+"EQ & speed" → "Audio Fine-tuning" to match the page title.
+
+**MyLists tabs no longer cut off.** "Excellent" and "Most-excellent"
+text labels were long enough on phone widths that the strip needed to
+scroll. Replaced text with the established heart vocabulary:
+- Queue → "Queue (n)" *(unchanged)*
+- Excellent → ♥ + "(n)"
+- Most-excellent → ♥ + small pulsing-gold ♥ + "(n)" *(mirrors
+  PlayerHeartIcon's tier-2 visual elsewhere)*
+- Downloaded → "Downloaded" *(unchanged)*
+
+The whole strip now fits without horizontal scroll on standard phone
+widths.
+
+**Playback history "All" filter chip got a leading icon.** Was
+text-only while the per-reason chips had icon+text — broke the row's
+visual rhythm and made the wider-counted Sessions chip look oddly
+weighted. Added an `AutoMirrored.List` icon to All; uniform shape
+across the row regardless of count digits.
+
+**Player tabs: tap active tab → fullscreen.** Stylish move for
+focused reading. Tapping the currently-selected tab on the Player
+screen's bottom tabs (Notes / Details / Transcript) collapses the
+upper Player UI (artwork, title, scrubber, transport) entirely and
+gives the tab content the whole screen below the top bar. Tap the
+active tab again to collapse back. Tap a different tab to switch
+content (stays in fullscreen if currently fullscreen). Per-screen
+state — resets when navigating away.
+
+**Transcript tab hidden when no transcript.** Most podcasts don't
+ship a transcript URL in their kabod metadata. Surfacing an empty
+"Transcript" tab for the 90% case was clutter. The Transcript tab
+is now driven by `episode_kabod.transcriptUrl` non-blank, falling
+back to a 2-tab strip (Notes / Details) otherwise.
+
+ai_contamination: true # claude opus 4.7
+
+## EqScreen header links + watchdog visibility + drop the pixel font
+
+Three small UX cleanups bundled:
+
+**Audio Fine-tuning header.** Two right-justified text links at the
+very top of the screen, above the master "Audio enhancement" toggle:
+"Notes for audiophiles" first, "Audio diagnostics" below it. Reads as
+ancillary navigation rather than primary controls. Both targets were
+already reachable from Settings; this just adds a second on-ramp from
+the screen audiophiles actually live on.
+
+**Nested-parents map split.** `audioDiagnostics` and `audiophileNotes`
+used to be pinned to "settings" as their back parent in
+`NESTED_PARENTS`. With EqScreen now another entry point, that pin
+would teleport the user past EqScreen on back when they arrived from
+there. Both moved to plain `popBackStack()` so back returns to whoever
+actually navigated in. `appDiagnostics` and `notes/{guid}` stay pinned
+since they each still have one canonical parent.
+
+**Stall watchdog visibility on the diagnostics screen.** Renderer-
+stall events (the v0.6.16 watchdog firings) are now surfaced as their
+own section between "Recent events" and "Startup" on Audio
+diagnostics, with each entry showing time-ago + position + speed at
+recovery. They're also included in the "Copy to clipboard" dump so a
+bug report carries them inline. No more digging through Settings →
+App diagnostics → Other to see whether the chain is healthy.
+
+**Pixel font dropped.** The Press Start 2P bundle (TTF + OFL license
+text + `PixelFont.kt` Composable + Settings → Fonts attribution
+section) is gone. The user noted the attribution surface didn't
+earn its UI footprint; the underlying motivation ("give a nod to
+fonts we use") was the only reason it existed. Cassette theme's
+display font is now `FontFamily.Serif` — system serif renders as a
+clean Garamond-ish family on all Android versions, no binaries to
+ship, no attribution to maintain. (Adobe Garamond Pro proper is a
+paid Adobe typeface; bundling EB Garamond would have re-introduced
+the same OFL footprint we just removed, so not worth it.)
+
+**Phase mode latency / audiophile notes**: NOT affected by the recent
+playback robustness work (v0.6.15 buffer bumps, v0.6.16 stall
+watchdog). The ~6.4 ms minimum-phase / ~52 ms linear-phase chain
+latency numbers are unchanged — those are EQ-chain timings, not
+player buffer timings.
+
+ai_contamination: true # claude opus 4.7
+
+## Stall watchdog: auto-flush when the renderer cycles its last decoded buffer
+
+User correction on the v0.6.15 buffer-bump theory: the episodes
+exhibiting the 2x cycling-position bug were already downloaded —
+playback was reading from local files via FileDataSource, so source-
+side network buffer was never the constraint. The cycling 43:31..43:36
+loop was a **renderer underrun**: the DSP chain (probably linear-phase
+EQ + the rest of EqAudioProcessor) couldn't feed Sonic fast enough at
+2x source consumption rate, the audio sink emptied, and ExoPlayer
+recovered by replaying the last decoded ~5 s of buffer indefinitely
+until something forced a flush.
+
+The bigger source buffers from v0.6.15 don't fix this case (source is
+already fully available). The DSP path needs a watchdog.
+
+Add a stall watchdog to PlayerController:
+- Started by `Player.Listener.onIsPlayingChanged` when isPlaying flips
+  to true; stopped on the inverse.
+- Polls `Player.currentPosition` every 2 s.
+- Tracks the running max position. If max hasn't advanced in 10 s
+  while the player still claims to be playing, force a recovery via
+  `seekTo(currentPosition)` — that flushes the audio sink and re-syncs
+  the renderer chain (the same recovery the user observed naturally).
+- Logs each stall to `AppDiagnostics.recordOther("renderer_stall", ...)`
+  with the playback speed at the time, so we can see how often this
+  fires across builds. Frequent fires mean the DSP is the root issue
+  and the watchdog is a band-aid.
+
+10 s threshold chosen because the cycling cycles were ~5 s of decoded
+buffer; by 10 s of no-max-advance we're confidently in stall
+territory and not just buffering.
+
+ai_contamination: true # claude opus 4.7
+
+## Playback robustness: bigger buffers + snackbar feedback on stuck taps
+
+Three user reports, one root cause + one UX gap:
+
+1. **2x speed for ~7:30 → playback lost; position cycled 43:31→43:36
+   then repeated until a flush reset it.** Renderer underrun loop —
+   the source-side buffer drained, the audio sink kept playing the
+   last decoded ~5s of buffer over and over until the renderer
+   flushed and re-synced.
+
+2. **1.75x for ~10 min → severe stuttering.** Same fingerprint, less
+   severe — buffer drained more slowly so underruns were brief.
+
+3. **Scrubbing far from the play head took 1-2 min before playback
+   resumed; play button felt like a silent no-op.** Long HTTP
+   Range fetch to fill the buffer at the new position, with no
+   explicit user feedback that anything was happening.
+
+Root cause for (1) and (2): `DefaultLoadControl` buffer durations are
+in MEDIA TIME (the duration of audio held), not wall-clock. At 2x
+playback, source is consumed 2x faster wall-clock, so a 60s media-time
+buffer drains in 30s wall-clock. Any network slowdown longer than that
+starves the renderer.
+
+**Fix for (1) and (2)**: bump `DefaultLoadControl` buffer thresholds:
+- `minBufferMs`: 60s → 180s
+- `maxBufferMs`: 180s → 600s
+- `bufferForPlaybackMs`: 2s → 5s
+- `bufferForPlaybackAfterRebufferMs`: 4s → 8s
+
+10 min media-time max gives 5 min wall-clock headroom at 2x.
+Memory: ~19 MB at 256 kbps stereo — fine on any modern phone.
+
+**Fix for (3)**: new `transientMessages: SharedFlow<String>` on
+`PlayerController`. `togglePlay()` emits a one-shot string when the
+tap hits a no-op-feeling state:
+- Controller not yet bound → "Player isn't connected yet — try again."
+- IDLE with no MediaItem → "No episode loaded — pick one from the
+  catalog."
+- BUFFERING (already trying) → "Buffering — waiting on the network."
+
+`PlayerScreen` collects the SharedFlow in a `LaunchedEffect` and
+surfaces each message via the existing `snackbarHostState`. The
+buffering ring around the play button stays as the primary visual
+"I see your tap" signal; the snackbar is the second signal for cases
+where the ring isn't obviously connected to the user's action.
+
+Also: yes, all three were related — (1) and (2) are different
+intensities of the same underflow, and (3) is the same network-bound
+slowness expressed during a seek. Larger buffer reduces (1)/(2) and
+shortens (3) in cases where the seek target falls within an already-
+loaded range.
+
+ai_contamination: true # claude opus 4.7
+
+## EqScreen: thumb-only band sliders + "Audio Fine-tuning" title
+
+User report: scrolling up/down the EQ screen kept catching slider tracks
+and producing accidental band tweaks. Root cause: Material3's `Slider`
+listens for taps + drags across the entire track, so any vertical scroll
+that crossed a band slider got hijacked into a horizontal drag of that
+band.
+
+Fix: replace the band-row `Slider` with a custom `BandSlider` that only
+listens to drags starting on the thumb circle itself. The track is now
+purely decorative — touches on the bare track propagate to the parent
+verticalScroll Column, so the page scrolls cleanly even when the
+finger lands on a slider line. Drag mechanics on the thumb are
+preserved (cumulative-delta from drag start, snapped to the same 23
+discrete steps over the [-12 dB, +12 dB] range, accent color matches
+the override-state tint).
+
+Visuals: full-width inactive track + a center tick at the 0 dB home
+position (so the user can see how far each band is shaped relative to
+flat) + an active track segment from the center to the thumb in the
+accent color. Slightly more minimal than Material3's slider — no
+ripple, no thumb scale animation — which suits the dense 10-band
+graphic-EQ row better.
+
+Trade-offs: tap-to-jump on the track is gone (the very behavior we
+were fixing). Keyboard / accessibility nav is gone (we're touch-only).
+The volume-boost slider above still uses the standard Material3
+Slider since it's a single isolated control where tap-to-jump is
+useful and accidental drag isn't a problem.
+
+Bonus: TopBar title renamed from "Audio" to "Audio Fine-tuning" so
+the screen's purpose reads more clearly from the navigation bar.
+
+ai_contamination: true # claude opus 4.7
+
+## EqScreen: bottom Hold-to-A/B mirror under the band sliders
+
+The existing Hold-to-A/B button sits up top (under the master "Audio
+enhancement" toggle). Once the user scrolls down to the graphic EQ
+band sliders to dial them in, the A/B button is two screens of scroll
+away — wrong tool placement for the natural "tweak band, A/B, tweak
+again" workflow.
+
+Add a second `HoldToBypassButton` instance directly below the band
+sliders, identical semantics: hold bypasses the entire `EqAudioProcessor`
+chain (DC blocker → biquad/FIR EQ → master gain → 2x oversample →
+look-ahead limiter → dither → int16 truncation), release restores.
+Same disabled state when the master toggle is off, same haptic + the
+same telemetry events.
+
+ai_contamination: true # claude opus 4.7
+
+## EQ reshape: podcast owns the EQ; episode override is the one branch point
+
+Course-correction on v0.6.11. The right model:
+
+- **No global EQ.** Each podcast owns its own tuning, full stop.
+- **Episode inherits from its podcast** by default.
+- **One-off episode override** is the only per-episode knob — branches
+  off the podcast's tuning for that single episode.
+- **No "disable EQ" toggles.** Disabling = setting bands to flat. The
+  master "Audio enhancement" toggle still gates the whole DSP chain
+  globally; per-podcast or per-episode disable was redundant noise.
+
+Resolution chain in `PlayerController.applyEqOverrideFor`:
+`episode_state.eqBandsCsvOverride` → `podcast_state.eqBandsCsvOverride`
+→ `EqPresets.FLAT`. The first non-null wins. Enabled state is purely
+the master toggle.
+
+EqScreen reshape:
+- "For this podcast" section + its disable + its override toggle: **gone**.
+- "Disable EQ for this episode" toggle: **gone**.
+- One toggle remains: "Use a one-off EQ for this episode" (new copy
+  reflects inheritance: "Branches off this podcast's EQ for this
+  episode only. Toggle off to re-inherit the podcast's tuning.").
+- Slider routing: when the override toggle is on, edits write to
+  `episode_state.eqBandsCsvOverride` for the current guid. When off,
+  edits write to `podcast_state.eqBandsCsvOverride` for the current
+  feedUrl — i.e. the slider IS the podcast's tuning interface. With
+  no episode loaded, edits are transient (live processor only, no
+  persistence).
+
+Schema: no migration. The existing `podcast_state.eqBandsCsvOverride`
+column is repurposed as the podcast's primary EQ store; the
+`eqDisabled` columns on both `episode_state` and `podcast_state` are
+marked deprecated and unread (kept on the schema for backup
+round-trip compat). The `episode_state.eqBandsCsvOverride` column,
+briefly deprecated in v0.6.11, is now back as the override layer.
+
+ai_contamination: true # claude opus 4.7
+
+## EQ override moves from per-episode to per-podcast
+
+User feedback: "EQ for an episode is supposed to be applied to all
+episodes WITHIN that same podcast." The implementation was per-episode
+(`episode_state.eqDisabled`, `episode_state.eqBandsCsvOverride`), so a
+tweak made on one episode never propagated to the rest of that
+podcast's catalog. Fixed by lifting the override up to the podcast
+level.
+
+Schema:
+- New columns on `podcast_state`: `eqDisabled` (default 0),
+  `eqBandsCsvOverride` (nullable TEXT).
+- Migration v16 → v17: ADD COLUMN both, then backfill from
+  `episode_state` — for each feedUrl whose episodes had any non-default
+  EQ override, ensure a `podcast_state` row exists and copy the
+  most-recently-played episode's override values onto it. The
+  `episode_state` columns stay (SQLite ALTER doesn't drop columns
+  cleanly without table recreation) but are now marked deprecated and
+  unread.
+
+Plumbing:
+- `PlayerController.applyEqOverrideFor(guid)` looks up the episode's
+  feedUrl, then reads `podcast_state` for the effective enable/bands.
+  Same single-source-of-truth invariant as before.
+- `PodcastStateDao` gains `ensureRow`, `setEqDisabled`, and
+  `setEqBandsCsvOverride` helpers. UI calls `ensureRow` before
+  setters so the row exists for podcasts the user hasn't otherwise
+  customized.
+- `EqScreen`: section relabeled "For this podcast." Toggles read
+  `currentFeedUrl` (derived from the playing episode's row) and write
+  to `podcast_state`. Sliders persist to `podcast_state.eqBandsCsvOverride`
+  when the override toggle is on. Override-color tint logic unchanged
+  — visual reminder still shows when shaping a non-global preset.
+- `Backup.kt`: `podcastState` JSON entries now carry `eqDisabled` and
+  `eqBandsCsvOverride` so per-podcast EQ round-trips through backup +
+  restore. The legacy per-episode fields are still serialized for
+  archival but unused on restore.
+
+Behavior change: the user's existing per-episode override gets promoted
+to the podcast level on first launch of v0.6.11. From then on every
+episode of that podcast plays through the override.
+
+ai_contamination: true # claude opus 4.7
+
+## Nav cleanup: back from miniplayer-launched player goes to natural parent
+
+User report: navigating catalog -> episodes -> player -> settings ->
+[miniplayer launches player] -> settings -> [miniplayer launches player]
+left a literal-history back stack — each system-back walked back through
+every visited screen. Expected: back from a player launched via the
+miniplayer should go to episodes (the screen the user originally
+navigated into player from), not retrace the whole spiral.
+
+Fix: new `navigateToPlayerCleanly(nav)` helper in `MainActivity`. Before
+pushing player, walks the back stack to find the most recent
+"player flavor" entry (`player`, `player/preview/*`, `player/transcript/*`)
+and pops up to (and excluding) the route immediately below it. End
+state is `[..., naturalParent, player]` regardless of how many
+player <-> settings cycles preceded the click.
+
+Wired into the three "shortcut to player" entry points:
+- Miniplayer tap
+- Catalog's "Now Playing" link
+- System media notification's `ACTION_OPEN_PLAYER` intent
+
+NOT wired into the "explicit play" paths (tap an episode in
+EpisodesScreen / MyListsScreen / SearchScreen) — those plays establish
+a new natural parent and should push fresh.
+
+Edge: no player has ever been in the stack this session (cold-start
+with audio resumed but player never opened). Helper falls through to
+a plain `navigate("player")`, accepting that back goes to whatever
+the user was on. Reasonable since there's no "natural parent" to
+infer.
+
+ai_contamination: true # claude opus 4.7
+
+## v0.6.9 — Ditch Media3's offline framework; OkHttp downloader from scratch
+
+After v0.6.5–v0.6.8 each fixed a different Media3 download-stack quirk
+(paused-by-default DownloadManager, deferred-fire missing the play-and-
+listen-straight-through case, listener that doesn't fire on byte
+progress) and downloads were *still* hit/miss, the user called it: ditch
+Media3's offline framework entirely. v0.6.9 does that.
+
+**What's gone:**
+- `Downloads.kt` (Media3 DownloadManager wrapper) — deleted.
+- `LofiPodDownloadService` (.kt + manifest entry + dataSync FGS comment) —
+  deleted.
+- `SimpleCache` + `StandaloneDatabaseProvider` + `CacheDataSource` from
+  `DownloadHolder` — gone. The streaming-cache that used to wrap HTTP
+  requests is gone too; re-streaming on a back-scrub during streaming
+  is acceptable (rare for podcasts).
+- Cache contention between the player and downloader — gone (only one
+  thing reads/writes audio bytes now).
+
+**What's new:**
+- `LofiDownload` (data class) — app's own state model: `{ guid, state,
+  bytesDownloaded, contentLength, filePath, errorMessage }` with a
+  4-state enum `{ QUEUED, DOWNLOADING, COMPLETED, FAILED }`.
+- `LofiPodDownloader` — pure OkHttp + coroutines. Per-GUID file at
+  `filesDir/episode_audio/<sha256(guid)>.bin`. Concurrency capped at 2
+  via Semaphore. HTTP Range resume. `ensureActive()` cancellation
+  contract so a cancelled download never gets marked completed on
+  partial bytes. Direct `MutableStateFlow<Map<String, LofiDownload>>`
+  emissions on every progress tick (500 ms) — no listener whose
+  fan-out we have to second-guess.
+- `LofiDownloadEntity` + `LofiDownloadDao` — Room v15 → v16 migration
+  adds `lofi_download` table for persistence.
+- `DownloadHolder` — drastically simplified. Holds the shared OkHttp
+  client + a `DefaultDataSource.Factory` that auto-routes `file://`
+  → FileDataSource and `http(s)://` → OkHttpDataSource. That's it.
+- `PlayerController.playEpisode` — when constructing the MediaItem,
+  prefers `app.downloadsApi.completedFile(guid)` (file URI) over the
+  remote audioUrl when a local copy exists. Offline playback now
+  literally reads from disk.
+
+**Migration path:**
+- One-shot legacy cleanup in `LofiPodApp.onCreate` deletes the old
+  `filesDir/downloads/` SimpleCache directory + Media3's
+  `exoplayer_internal.db`. Reclaims disk that was holding broken cache
+  chunks.
+- The `auto_download` table stays (its schema is downloader-agnostic).
+  The new downloader's `LofiDownloadEntity` is fresh — no rows from the
+  old Media3 db carry over.
+
+**Hydrate behavior:**
+- On app start, any `lofi_download` row left in DOWNLOADING / QUEUED
+  state from a prior session (process killed mid-download) gets
+  presented as FAILED with an "Interrupted on app exit — tap to resume."
+  message. The user retries from the row UI; that calls `start(ep)`
+  which seeks the partial file with a Range header and resumes from
+  the saved byte offset.
+
+ai_contamination: true # claude opus 4.7
+
+## Fix: download progress poll — UI sees real-time bytes, not frozen 0%
+
+User on v0.6.7: "downloads still do not work. Manual download appears
+downloaded only after backing out and back in. Auto-download — can't
+see the state change. All downloads appear to be infinitely in progress."
+
+Root cause: Media3's `DownloadManager.Listener.onDownloadChanged` fires
+only on STATE transitions (QUEUED → DOWNLOADING → COMPLETED / FAILED).
+It does NOT fire during DOWNLOADING for byte/percentage progress
+updates — Media3 documents this as "clients must poll for granular
+progress." Our `Downloads.kt` was wired purely off the listener, so
+the StateFlow emitted once at QUEUED→DOWNLOADING (typically with 0%
+bytes downloaded) and then went silent until COMPLETED. The progress
+arc on the DownloadButton therefore looked frozen at 0% for the whole
+download. The "have to back out and come back" symptom was the user
+forcing a fresh composition that re-read the now-COMPLETED state.
+
+Fix: a 500 ms self-pacing poll loop in `Downloads.ensureProgressPolling()`
+that re-emits `byId` from `manager.currentDownloads` while any
+download is in DOWNLOADING / QUEUED / RESTARTING, and stops when
+none are. Self-starts on `start()`, on `refreshAll()`, and on any
+listener callback (defensive). The same poll cadence picks up state
+transitions within 500 ms regardless of whether the listener's
+fan-out is delayed by Compose snapshot scheduling or Media3 handler
+throttling — so it's both a progress source and a redundancy net.
+
+Cost: ~2 reads/sec of the in-memory `currentDownloads` list while
+active, fully idle otherwise. Map equality uses reference equality
+on Download values (Media3 has no equals override), so any
+progress-field difference yields a structurally-different map and
+triggers Compose recomposition end-to-end.
+
+ai_contamination: true # claude opus 4.7
+
+## Fix: APK update integrity — temp-file + atomic rename + ZIP magic check
+
+User reported "app will not download. 'there's a problem with the app
+file'" when installing v0.6.6 via the in-app updater. The release
+artifact on GitHub was verified well-formed: 57.4 MB, valid ZIP magic
+(`PK\x03\x04`), APK Signing Block v2/v3 present. So the upstream APK
+was fine.
+
+Root cause: `UpdateChecker.downloadApk` wrote the response body
+directly to `cacheDir/updates/lofipod-<code>.apk` and on retry reused
+any cached file with `length() > 0L`. A network drop mid-stream left
+a partial APK in cache; subsequent retries reused the partial file
+without revalidating, and the system installer surfaced "There's a
+problem with the app file" indefinitely. Cache hit-the-wrong-thing.
+
+Fix:
+- Download to `<file>.tmp`, atomic-rename to final on success.
+- Validate downloaded length against `Content-Length` header; short
+  read → delete + retry on next call.
+- Validate ZIP magic (`PK\x03\x04`) on both the freshly-written tmp
+  and any reused cached file. Catches HTML-error-page-saved-as-APK.
+- Wipe leftover `.tmp` at function entry so an interrupted prior run
+  can't leak across sessions.
+- Cross-filesystem rename failure falls back to copy+delete, preserving
+  the all-or-nothing consumer contract.
+
+The user's stuck v0.6.6 cache is at `lofipod-40.apk`; v0.6.7 uses
+cache key `lofipod-41.apk`, so it's a clean download path. From v0.6.7
+forward, every update is integrity-checked end-to-end.
+
+ai_contamination: true # claude opus 4.7
+
+## Fix: auto-download fires immediately at play time, not deferred
+
+User report: manual downloads work after the v0.6.5 `resumeDownloads()`
+fix, but auto-download for the currently-playing episode never fires
+and "some downloads are hit/miss." Root cause was the v0.5.9 deferred-
+fire design: `playEpisode` would write an `auto_download` row but NOT
+call `addDownload` until the user transitioned away (track switch or
+`STATE_ENDED`). The original justification was "avoid simultaneous HTTP
+fetches that cause spinner-forever-no-progress" — but that symptom was
+actually `downloadsPaused = true` (the v0.6.5 fix). The deferred design
+was a workaround for the wrong diagnosis, and it broke the most common
+listening pattern: play one episode and listen straight through.
+
+That's also the "hit/miss" pattern: episodes the user happened to skip
+or transition off of got auto-downloaded; episodes they listened all
+the way through (or paused on indefinitely) did not.
+
+`DownloadManager` and `CacheDataSource` already share the same
+`SimpleCache`, so firing `addDownload` immediately doesn't double-fetch
+overlapping byte ranges — they coordinate through cache spans.
+
+Fix: in `PlayerController.playEpisode`, when the episode has no current
+Download (or the prior one is STATE_FAILED), insert the auto_download
+row AND call `app.downloadsApi.start(ep)` inline. The existing
+`fireDeferredAutoDownload` calls on STATE_ENDED + track-out remain as
+no-op safety nets (addDownload is idempotent against existing requests),
+and the orphan-sweep on connect handles legacy rows from before this
+fix. STATE_FAILED treatment is new: a previously-failed auto-download
+gets a fresh attempt on replay rather than silently staying broken.
+
+ai_contamination: true # claude opus 4.7
+
+## Fix: downloads stuck in STATE_QUEUED — call `resumeDownloads()` at startup
+
+Root cause of the long-standing "downloads don't actually download" bug
+that survived v0.5.6 (bypass DownloadService.sendAddDownload), v0.5.x
+(deferred auto-download), and v0.6.4 (remove the `<service>` declaration
+entirely). Per Media3 1.4.1's `DownloadManager.java` javadoc: "Normally
+a download manager should be accessed via a `DownloadService`. When a
+download manager is used directly instead, **downloads will be initially
+paused and so must be resumed by calling `resumeDownloads()`**." The
+field `downloadsPaused = true` by default in the constructor; we never
+flipped it. Every `addDownload()` we issued landed in STATE_QUEUED and
+stayed there because `canStartDownloads()` gates on `!downloadsPaused`.
+
+Fix: one-line `resumeDownloads()` call right after the DownloadManager
+is constructed in `DownloadHolder`. The flip persists across the
+manager's lifetime — subsequent `addDownload()` calls auto-start once
+`Requirements.NETWORK` is satisfied (which the manager's internal
+`RequirementsWatcher` tracks regardless of whether a `DownloadService`
+is alive). No service re-introduction needed, so the
+`ForegroundServiceStartNotAllowedException` crash that drove the v0.6.4
+manifest change stays gone.
+
+ai_contamination: true # claude opus 4.7
+
+## DSP polish: 128-tap oversampler FIR + Kaiser-windowed linear-phase kernel
+
+Two pure-quality bumps to the audiophile chain. No behavior change beyond
+cleaner magnitude response — pre-existing toggles, presets, latency budget,
+diagnostics screen all still apply.
+
+**Oversampler FIR 64 -> 128 taps.** Tightens the anti-imaging /
+anti-aliasing transition band from ~18-26 kHz to ~20-24 kHz at 44.1k. The
+old design started rolling off at ~18 kHz, intruding into the audible band
+for the most sensitive listeners; the new one keeps the response flat to
+~0.001 dB ripple all the way to 20 kHz. Stopband attenuation stays at
+~90 dB (Kaiser β=9). Total chain latency ticks up from ~5.7 ms to ~6.4 ms;
+still inaudible. CPU cost is ~11 M extra MACs/sec at 44.1k stereo —
+negligible on any modern phone, especially after the v0.5.1 limiter
+deque optimization that took ~50% off chain CPU.
+
+**Linear-phase kernel: Kaiser window the truncation.** The biquad-cascade
+magnitude response is sampled at 8192 frequency points, IFFT'd, and
+truncated to 4096 taps. Without windowing, that's a rectangular truncation
+= sinc convolution in frequency = small ripple in the magnitude response.
+Now multiplied by a Kaiser window (β=6) on the truncated taps, which gives
+~60 dB of ripple suppression in exchange for mild softening of high-Q peak
+edges. The window is precomputed once at class load (4096 doubles cached on
+the companion) and applied per band-change, so the cost is one
+KERNEL_LENGTH-sized multiply.
+
+Latency / spec text propagated everywhere the old numbers appeared:
+`AudiophileNotesScreen`, `EqScreen`, `EqAudioProcessor`, `LinearPhaseEq`,
+`Settings`, `PlaybackService`. The audio diagnostics screen reads
+`firTaps` from telemetry so it picks up the new value automatically.
+
+ai_contamination: true # claude opus 4.7
+
+## v0.6.4 — XML rescue + chapter-level Bible index + AppDiagnostics screen
+
+Five fixes addressing user-reported issues from the v0.6.3 logs.
+
+**Tolerant XML retry on bare ampersands.** CCM's two Sunday-service
+feeds emit `<title>Q&A on Romans</title>`-style content without
+`&amp;` escaping; strict XmlPullParser dies with "unterminated entity
+ref." `RssParser` now reads the whole stream up front, parses
+strictly, and on failure retries with a sanitized copy where bare
+`&` are replaced with `&amp;`. Negative-lookahead in the regex skips
+already-escaped entities (`&amp;`, `&#39;`, `&#x27;`) so we don't
+double-encode. Doesn't fix unclosed tags / mismatched quotes — those
+re-throw and surface as feed failures. Rescue events get a row in
+`AppDiagnostics` so it's visible the feed needed help.
+
+**Chapter-level Bible index.** Per user feedback that verse-level
+was too sparse to navigate (most RSS auto-tagging only nails
+chapter precision), the verse-grid step was dropped. Flow is now
+Book grid -> Chapter grid -> Sermons-for-chapter. Chapter-level
+matches what the tagger can reliably extract and what users want
+to scrub through.
+
+**Coverage-bug fix.** Books were rendering highlighted in the grid
+even when no underlying row had a chapter — tapping the book
+showed an empty chapter grid. Root cause: `loadCoverage` was
+incrementing `bookCounts` for every row in `episode_scripture`,
+including rows where `startCh` was null (e.g., a Kabod entry with
+`scriptureBook` set but no chapter, or a degenerate regex hit).
+Fixed: a row only counts toward the book if it has a non-null
+`startCh`. No more "highlighted but empty" books.
+
+**First-50-words description scan.** ScriptureTagger.detect now
+slices the description to its first 50 whitespace-separated tokens
+(after stripping HTML-ish `<...>` runs) before regex scanning. A
+sermon's description usually opens with a single explicit citation
+("In this sermon, Pastor expounds Romans 8:28-30...") and then
+drifts into broader themes that incidentally mention many verses.
+Scanning the whole description was picking up incidental mentions
+and yielding wrong primary tags.
+
+**LofiPodDownloadService removed from manifest.** v0.5.6 stopped
+routing through the service (DownloadManager.addDownload directly).
+But Media3's internals can still bind a registered service from
+cached download intents on app start, which on Android 12+/14+/15
+crashes with ForegroundServiceStartNotAllowedException — visible in
+recent Pixel logs even though our code doesn't invoke the service.
+Solution: comment out the `<service>` declaration + the
+`FOREGROUND_SERVICE_DATA_SYNC` permission. With no manifest entry,
+the OS can't bind. The .kt file stays per EFFICIENCY_REVIEW notes
+as a hatch for future reactivation with a proper Scheduler + UIDT.
+
+**New AppDiagnostics infrastructure + screen.** Sister to
+StartupTimings (which tracks timing); this one captures errors and
+notable events across subsystems. Categories: feed failures, feed
+rescues (tolerant XML pass needed), download failures (both
+synchronous throws from `addDownload`/`removeDownload` and the
+async STATE_FAILED listener path), scripture-tag skips, generic
+"other." Bounded ring buffer per category (50 entries) so a noisy
+subsystem can't push out signal from quiet ones. New
+`AppDiagnosticsScreen` lists entries by category newest-first,
+copy-to-clipboard per category. Settings -> "App diagnostics
+(bugs)" entry routes here. Lets a user with a misbehaving build
+capture concrete data rather than "it didn't work."
+
+ai_contamination: true # claude opus 4.7
+
+## v0.6.0 — Canonical Bible index + scripture-aware smart-queue
+
+The categorical level-up: the app is no longer just "podcasts organized
+by feed" — it's a personal sermon archive navigable by Scripture. The
+podcast feeds become source material; the Bible canon is the navigation
+primitive.
+
+**Bible canon data.** New `com.lofipod.app.bible.BibleCanon` — 66-book
+Protestant canon, KJV versification, Logos-style 10-group canonical
+categorization (Pentateuch / Historical / Wisdom / Major Prophets /
+Minor Prophets / Gospels / Acts / Pauline / General Epistles /
+Revelation), each book with chapter and per-chapter verse counts plus
+common abbreviation aliases. Drives the verse grid's gray-out behaviour
+and the ScriptureTagger's detection regex.
+
+**Auto-detection from RSS title + description.** New
+`com.lofipod.app.bible.ScriptureTagger` builds a precompiled regex from
+all canonical names + aliases. Anchored: book name MUST be followed by
+a chapter digit, so "John Piper" doesn't match the gospel-John
+("John 3:16" or "(2 John 1:5)" do). Confidence scoring (0..100) ranks
+title-vs-description hits and chapter-only-vs-chapter+verse precision.
+BBC's pattern of putting the passage in `<description>` rather than
+`<title>` is handled — title is preferred, description is a fallback.
+
+**Storage (v14 → v15 migration).** New `episode_scripture` table
+mirrors the Kabod schema's `scriptureRef` shape: `(guid, book, startCh,
+startV, endCh, endV, source, confidence)`. Single uniform query path
+across Kabod-imported and RSS-tagged refs. New `EpisodeScriptureDao`
+exposes `coveringVerse`, `nextInCanon`, `coveredChaptersIn`,
+`coveredVersesIn`, `forBook`, etc.
+
+**ScriptureIndexer + warm-tag pass.** `ScriptureIndexer` owns
+population: `backfillFromKabod` copies authoritative Kabod-pack refs
+on every app start (idempotent); `tagPodcast` runs the RSS tagger
+after each successful fetch via the new `PodcastRepository.afterFetchHook`.
+A startup warm-tag sweep walks the disk-hydrated cache so users with
+existing data get a populated Bible index without needing to refresh.
+Kabod-sourced rows are never overwritten by regex guesses.
+
+**Logos-style canon-browse UI.** New `CanonBrowseScreen` —
+hierarchical: book grid (4-col, color-coded by group, gray when no
+sermons) → chapter grid (6-col, gray when no sermons) → verse grid
+(8-col, gray when no sermons) → sermons-for-verse list with
+"Play through from here" + "Just this" affordances. Reachable from
+the Catalog overflow menu ("Bible index").
+
+**Smart canon-order autoplay.** New `Settings.canonAutoplayEnabled`
+flag. When set, end-of-stream advances to the *next sermon in canon
+order* across all feeds (resolver: `EpisodeScriptureDao.nextInCanon`)
+instead of the queue/feed-next chain. End-of-book auto-clears the flag.
+"Play through from here" sets the flag; "Just this" clears it. Falls
+through to standard advance for episodes without a scripture ref.
+
+**Source filter for the Bible index.** New
+`Settings.canonBrowseExcludedFeeds` (CSV-stored Set<String>). Tune-icon
+button on the canon-browse top bar opens a dialog of all canon sources;
+unchecking hides a feed from the grids without removing it from the
+catalog. Excluded feeds DO NOT apply to canon-order autoplay (the user
+explicitly opted into a series; respecting browse-time exclusions
+mid-series would silently skip sermons).
+
+**pubDate parser fix.** `RssParser.parsePubDate` now handles ISO 8601
+with `Z` UTC suffix (Megaphone, Castos) and millisecond-precision
+variants. The `Z` is normalized to `+00:00` before the format pass.
+Also added bare `yyyy-MM-dd` for kabod-pack-style sources. Episodes
+with previously-unparseable dates now sort correctly in the canon view.
+
+Color tokens for the canonical groups are inspired by traditional
+Christian publishing — earth/sand for the Pentateuch, royal blue for
+the Major Prophets, scarlet for the Gospels, Pentecost yellow for
+Acts, violet for the Pauline epistles, deep purple for Revelation —
+without cloning Logos directly.
+
+ai_contamination: true # claude opus 4.7
+
+## Feed loading: disk cache + per-feed timing + concurrency cap
+
+User report: "loading feeds is impossibly slow on Pixel 7. Pixel 8
+does not seem to have the same issue." 16 sources × parallel HTTP
+fetches + RSS parsing = a multi-second blank-Catalog stall on every
+cold start, exacerbated on hardware/network configurations weaker
+than the dev's. Three changes here.
+
+**Disk cache for parsed feeds.** New `FeedDiskCache` writes each
+successfully-fetched `Podcast` as JSON under `<filesDir>/feeds/`
+(filename = SHA-256 of feedUrl). On cold start, `PodcastRepository`
+hydrates the in-memory cache from these files in milliseconds —
+the Catalog renders immediately with stale-but-valid data while
+the network refresh runs in the background. JSON encoding is hand-
+rolled with `org.json` (already used by Backup.kt; no new deps).
+Schema-versioned so a future model change can ignore old files
+without crashing.
+
+**Stale-while-revalidate in CatalogViewModel.** `loadCanon` now
+ALWAYS shows whatever the cache has (in-memory + disk-hydrated)
+immediately, then triggers a network refresh. Even partial cache
+coverage shows what we have with `loading=true` for the missing
+sources, instead of a blank screen. On network failure, the cached
+content stays visible with the error surfaced inline.
+
+**Concurrency cap on parallel fetches.** `MAX_CONCURRENT_FETCHES = 8`
+via `Semaphore.withPermit` around each `fetchOne`. 16+ simultaneous
+TLS handshakes + RSS parses were starving slower devices; 8 keeps
+most of the parallelism while reducing contention.
+
+**Per-feed timing diagnostics.** Each `fetchOne` records to
+`StartupTimings` as `feed_<host>` (e.g., `feed_feeds_megaphone_fm`,
+`feed_ccmodesto_com`). Plus `feed_disk_cache_init` and
+`feed_disk_cache_hydrate` for the cache-side timing. Surfaced in
+the existing Startup section of the diagnostics screen so the user
+can capture which specific feed dominates on Pixel 7 vs Pixel 8.
+
+ai_contamination: true # claude opus 4.7
+
+## Startup diagnostics + beep ducking redesign + defer auto-download until track-out
+
+Three related fixes shipped together.
+
+**Startup-phase diagnostics.** New `StartupTimings` (in
+`com.lofipod.app.diagnostics`) records `(name, startNs, endNs)` tuples
+for key initialization steps: `repo_init`, `db_get`, the per-version
+Room migrations (`migration_1_to_2` … `migration_13_to_14`),
+`download_db_provider`, `simple_cache_init`, `download_manager_init`,
+`downloads_warmup`, `playback_service_oncreate`,
+`media_controller_connect`, `kabod_install_bundled`,
+`kabod_loader_init`, `transcripts_init`, `application_oncreate`. Each
+phase shows duration in ms and offset-from-process-start. Surfaced as
+a "Startup" section in the Audio diagnostics screen, also included
+in the Copy-to-clipboard dump. The slow-cold-start report flow is now:
+user opens diagnostics → screenshots the Startup section → dev sees
+which phase ate the time. Room migrations are individually wrapped
+via a `timed(Migration)` helper so any future hop's cost shows up
+without per-migration plumbing.
+
+**BeepPlayer ducking redesign.** Old: `player.volume = 0f` before the
+beep, restore after. The MediaController → session → ExoPlayer.volume
+path is supposed to be synchronous but was leaving the podcast
+audible during the beep on device — so the beep was effectively
+mixed with the podcast at full volume, which the user perceived as
+"too loud." New: `player.pause()` before the beep, `player.play()`
+after if the user was playing. Pause is bulletproof (stops feeding
+the audio sink within one buffer; no rebuffer on resume since the
+sink picks up where it left off). Bookkeeping uses `wasPlaying` to
+avoid auto-resuming if the user had already paused. New
+`BEEP_TRACK_VOLUME = 0.5f` constant via `AudioTrack.setVolume` adds
+an additional runtime tuning knob independent of the pre-rendered
+`sustainPeak`. Effective beep level = `sustainPeak * BEEP_TRACK_VOLUME`
+at full system volume. With the ducking now actually working, the
+calibration baseline changes — set `sustainPeak` to 0.3 (× 0.5
+volume = 0.15 effective), can tune either constant later.
+
+**Defer auto-download until the user moves on.** Old: `playEpisode`
+fired `DownloadManager.addDownload(request)` immediately for the
+now-playing episode. The DownloadManager opened a second HTTP
+connection to the same audio URL while ExoPlayer was streaming via
+its own connection — many podcast hosts rate-limit or stall the
+second connection, producing the user-reported "spinner spins
+forever, no progress" symptom. New: `playEpisode` only INSERTS the
+`auto_download` row; the actual `addDownload` is deferred until the
+user transitions away (track change in `playEpisode`'s outgoing
+block, or `STATE_ENDED` in the player listener). By then ExoPlayer's
+CacheDataSource has filled the SimpleCache as part of streaming, so
+DownloadManager's worker sees the cached spans and completes
+near-instantly without re-fetching. New helper
+`fireDeferredAutoDownload(guid)` does the work; new orphan sweep
+`fireDeferredAutoDownloadOrphans()` runs on `connect()` to pick up
+deferred rows from prior sessions where the app was closed before
+the transition fired. Manual download trigger paths
+(EpisodesScreen / PlayerScreen buttons,
+`startDownloadForCurrent`) are unchanged — user explicitly asking
+for a download still fires `addDownload` immediately.
+
+UX side effect: during playback, the now-playing episode's download
+button shows the "Download" icon (no Download object yet). The
+"downloaded" checkmark appears shortly after the user transitions
+away — typically within seconds since the cache is mostly full
+already. Easier to live with than the broken "spinner forever"
+behaviour and avoids double-fetch.
+
+ai_contamination: true # claude opus 4.7
+
+## Cold-start: defer download infra to first access; add 32h unfinished-auto sweep
+
+User report: "the app loads very slow on some devices to the point that
+playback is not able to start" — reproducible on two users' devices,
+but not on the dev's. The dev's storage is faster + has less
+downloaded data, so the cold-start cost on slower eMMC was hidden.
+
+Root cause: `LofiPodApp.onCreate` was constructing `DownloadHolder`
+synchronously, and `SimpleCache`'s constructor synchronously scans
+the entire download directory (Media3 documents this as slow). For
+users with many downloaded episodes, this scan + the synchronous
+`Downloads.refreshAll` cursor walk over the download index can cost
+seconds — and it blocked Application.onCreate, which delays MainActivity's
+first-frame render.
+
+**Fix**:
+- `LofiPodApp.downloads` and `downloadsApi` are now `by lazy {}`
+  properties. `onCreate` launches a background coroutine that touches
+  `downloadsApi.byId.value` to warm them up off-thread, in parallel
+  with MainActivity init. UI shell renders immediately; the slow disk
+  I/O runs alongside without blocking.
+- `Downloads.init.refreshAll()` now runs on `cleanupScope` instead
+  of inline, so even if construction does happen on the main thread
+  for some reason, the cursor walk doesn't block it.
+
+Worst-case behaviour (slow user, immediate playback request): if a
+UI thread / PlaybackService accesses `downloads` before the warmup
+finishes, that access blocks on the lazy. Same total wait as before,
+but the UI is already visible so the user perceives "starting
+playback..." rather than "app frozen at launch."
+
+## Auto-downloads also expire after 32 h if unfinished
+
+Per user follow-up: extend the auto-expiration rule to catch
+auto-downloads the user lost interest in. New
+`AutoDownloadDao.expiringUnfinishedGuids(cutoffMs)` query — selects
+auto_download rows where the episode was NOT played to completion
+AND `max(auto_download.createdAt, episode_state.lastPlayedMillis)`
+is older than `cutoffMs`. The `max()` clock catches both
+"never started" (lastPlayedMillis = 0, clock = createdAt) and
+"started but abandoned" (clock = last play tick).
+
+`PlayerController.sweepExpiredAutoDownloads` now runs both queries
+and de-dupes the results before iterating. New constant
+`AUTO_DOWNLOAD_UNFINISHED_TTL_MS = 32 h`. Rename of the existing
+`AUTO_DOWNLOAD_TTL_MS` to `AUTO_DOWNLOAD_FINISHED_TTL_MS` for clarity.
+
+ai_contamination: true # claude opus 4.7
+
+## Auto-downloads expire 1h after the episode finishes playing
+
+User-triggered downloads should stick around forever; auto-downloads
+fired by `playEpisode` should free up disk shortly after the user is
+done with them. New `auto_download` table tracks which downloads
+were auto-fired vs user-triggered.
+
+**Schema.** New `auto_download` Room entity (guid PK, createdAt). v13
+→ v14 migration adds the table. Empty on first migration — every
+existing download is treated as manual (kept until the user removes
+it explicitly).
+
+**Auto path.** `playEpisode` upserts into `auto_download` when it
+fires a download. Re-listening to a finished episode that's still
+auto-flagged renews the timestamp so the 1-hour clock resets.
+Re-listening to a manually-downloaded episode does NOT silently
+convert it to auto.
+
+**Manual paths.** Every UI download trigger (EpisodesScreen + PlayerScreen
+buttons, PlayerController.startDownloadForCurrent) deletes the
+`auto_download` row alongside calling `Downloads.start`, so a user
+pressing the download button converts an auto download to manual.
+`Downloads.remove` clears the row internally so removal callers don't
+have to remember the cleanup.
+
+**Sweep.** New `PlayerController.sweepExpiredAutoDownloads` runs:
+- on `connect()` (catches stragglers from prior sessions)
+- at the start of every `playEpisode` (housekeeping on each track switch)
+
+The query inner-joins `auto_download` against `episode_state`,
+returning guids where `durationMs > 0 AND positionMs >= durationMs - 5000
+AND lastPlayedMillis < (now - 1h)`. For each match, the manager's
+download is removed and the auto_download row is cleared. Episodes
+that were started but never finished stay (the rule is
+"finished + idle 1h," not "started + idle 1h"). Manual downloads
+(no auto_download row) are never eligible.
+
+**Constant.** `PlayerController.AUTO_DOWNLOAD_TTL_MS = 60 * 60 * 1000`.
+One knob to retune the expiration window.
+
+## Efficiency Review file (gitignored)
+
+New `EFFICIENCY_REVIEW.md` at repo root. Personal scratch tracking
+dormant / partially-wired / abandoned pieces of the build. Gitignored
+alongside `SCREEN_MAP.md` and `KABOD_SCHEMA.md`. First entry
+documents `LofiPodDownloadService` as dormant since v0.5.6 — kept on
+disk + in the manifest as a hatch in case we want a separate download
+foreground notification later, but no code path invokes it.
+
+## Fix auto-download hangs by bypassing DownloadService.sendAddDownload
+
+User-reported: auto-download for the now-playing episode hangs and
+generally doesn't work. Root cause: `DownloadService.sendAddDownload`
+triggers a foreground service start. On Android 12+ this can throw
+`ForegroundServiceStartNotAllowedException` from background-restricted
+states; on Android 15+ the `dataSync` foreground-service-type has a
+hard daily timeout (~6 h cumulative) that kills the service
+mid-download, leaving downloads silently stuck. Even though
+`playEpisode` runs while the PlaybackService (mediaPlayback type)
+keeps the app process in the foreground, starting a SECOND foreground
+service (the dataSync one) is what runs into the restriction.
+
+References: androidx/media#2614 (Android 15 dataSync timeout),
+#1239 (background sendAddDownload throws), #831 (downloads stuck on
+force-close).
+
+Fix: `Downloads.start()` and `Downloads.remove()` now call
+`DownloadManager.addDownload(request)` and `removeDownload(guid)`
+directly, bypassing `DownloadService.sendAddDownload` /
+`sendRemoveDownload`. The DownloadManager's executor pool (configured
+in DownloadHolder with 2 worker threads) runs downloads in-process;
+the existing PlaybackService keeps the process alive during active
+playback, which is when auto-download is most likely to fire.
+
+Trade-off: no dedicated foreground notification for downloads — the
+PlaybackService's media notification covers the visible artifact when
+audio is playing, and download progress is already shown inline in
+the EQ/episodes screens. If the user backgrounds the app and stops
+playback, the process eventually dies and downloads pause; they
+auto-resume when the user reopens the app (DownloadManager re-reads
+the index and continues).
+
+`LofiPodDownloadService` is now dormant (still registered in the
+manifest as a hatch for re-introducing foreground download
+notifications later if needed) but no code path invokes it.
+
+ai_contamination: true # claude opus 4.7
+
+## Quality-of-life: cold-start episode restore + scroll-to-now-playing + quieter beeps
+
+Three small but high-value UX improvements.
+
+**Beep volume — drop to 0.2 amplitude.** v0.5.3 dropped from 0.85 to
+0.5; user reported still too hot. Cut further to 0.2 (~-14 dB from
+original, ~-8 dB from previous). Should now sit ~10 dB below the
+limited podcast peak — a notification chime rather than an alarm.
+
+**Cold-start episode restore.** New `EpisodeStateDao.mostRecentlyPlayed()`
+query + new `PlayerController.restoreLastEpisodeIfNeeded()` helper.
+Called from the post-connect block in `connect()` after a 900 ms
+settle (past the existing 100/300/800 ms pushState window). Loads the
+last-played episode at its saved position WITHOUT auto-playing — so
+reopening the app shows the mini-player + Player screen with "where I
+left off" ready to resume on tap. No-op if the session already has an
+item (warm reconnect) or if no episode has ever been played. Skips
+the side effects of a real `playEpisode` (no autoplay timer, no
+auto-download, no feed-visit upsert) since this is a passive restore.
+
+**Scroll-to-now-playing on the episodes screen.** Added a
+`rememberLazyListState` + one-shot `LaunchedEffect` that animates the
+list to the current episode's position when both the list and the
+current-guid are settled. One-shot per screen instance (subsequent
+manual scrolls own the viewport). No-op if the current episode isn't
+in this feed's visible list (different feed, or archived and the
+filter excludes it).
+
+ai_contamination: true # claude opus 4.7
+
+## DSP Phase C: linear-phase EQ via FFT overlap-add convolution
+
+Optional linear-phase EQ mode that preserves transient waveform shape
+exactly, at the cost of ~46 ms additional latency. Default stays
+minimum-phase (the existing biquad cascade); users opt in via the new
+chip row on the Audio screen.
+
+**JTransforms dependency.** BSD-2-Clause, pure JVM, no JNI. Pulls
+JLargeArrays as a transitive (also BSD-2). Added under a new "DSP"
+section in `app/build.gradle.kts`.
+
+**Kernel synthesis (`LinearPhaseEq.synthesizeKernelSync`).** Sample the
+biquad cascade's magnitude response at 8192 frequency points, set
+phase to zero, IFFT to get an acausal symmetric impulse response,
+circular-shift by FFT_SIZE/2 to make it causal, truncate to 4096 taps
+centered on the peak, FFT to get the convolution-time spectrum.
+Synthesis runs on `Dispatchers.Default` via a per-instance
+`workerScope`; rapid slider drags cancel any in-flight synth so only
+the latest band set actually computes. The audio thread sees a single
+`@Volatile` reference swap when a new kernel is ready — no locks, no
+torn reads.
+
+**Overlap-add convolution (`LinearPhaseEq.processChunk`).** 1024-sample
+input chunks zero-padded to FFT_SIZE=8192, FFT'd, complex-multiplied
+against the kernel spectrum (full 4-multiply per bin to handle the
+linear-phase imaginary parts), IFFT'd. First 1024 samples of the
+result mix with the saved overlap-tail; the next 4095 samples become
+the new tail. Per-channel `DoubleFFT_1D` instances + workspaces; no
+allocation in the hot loop.
+
+**Integration with `EqAudioProcessor`.** New `phaseModeLinear`
+@Volatile flag + `setPhaseModeLinear(on)` setter. New
+`queueInputLinearPhase(...)` helper called from `queueInput` when the
+flag is set; the post-gain chain (oversampler ↔ limiter ↔
+downsampler ↔ dither ↔ truncate) is shared between modes. EOS drain
+extended with a linear-phase pre-stage that pushes 3 chunks of zeros
+into `linearPhaseEq` to flush the accumulator + group delay before
+running the standard post-gain drain. `onFlush` resets the
+linearPhaseEq state; `onReset` releases its worker scope. Exiting
+passthrough in linear mode resets the linearPhaseEq output queue too,
+so the Hold-to-A/B button doesn't emit ~50 ms of stale pre-bypass
+audio on release.
+
+**UI.** New chip row on the Audio screen between the DC blocker
+toggle and the Hold-to-A/B button: `[Minimum] [Linear]`.
+Material3 `FilterChip` with selected-state coloring. Toggling writes
+to both `Settings.setPhaseModeLinear` and `eq.setPhaseModeLinear`,
+so the change is both persisted and live without a track transition.
+
+**Settings rehydration.** `PlaybackService.onCreate` now reads
+`settings.phaseModeLinear.first()` and applies it to `sharedEq` so
+the user's mode preference survives a process restart.
+
+**Audiophile notes screen.** New "Phase modes (Minimum / Linear)"
+section between "Parametric EQ" and "Cross-fade on band changes".
+Updated the LICENSES section: linear-phase EQ + JTransforms is no
+longer "planned," it's shipping.
+
+Known limitations:
+- No cross-fade between modes — switching mid-playback has a brief
+  (< 50 ms) audible artifact at the transition. Acceptable for
+  manual mode switches; could be smoothed with a parallel-output
+  cross-fade later.
+- Linear-phase truncation uses a rectangular window. High-Q bands
+  could in principle show audible ripple from the truncation; should
+  be inaudible at the default Q (~1.41) but worth verifying. Adding
+  a Kaiser window is a one-line change if it's a problem.
+
+ai_contamination: true # claude opus 4.7
+
+## Autoplay beep: drop volume from 0.85 -> 0.5 amplitude
+
+User feedback: confirmation beeps read too hot vs. typical podcast
+loudness. Cut the synthesized-tone amplitude from 0.85 to 0.5 in
+`BeepPlayer.synthesizePiezoTone` — about a 41% reduction in linear
+peak, ~-4.6 dB. The square-wave character + 2.7 kHz fundamental are
+unchanged, so the piezo "alarm clock" timbre still cuts through
+speech; it just doesn't startle.
+
+ai_contamination: true # claude opus 4.7
+
+## DSP Phase B2: Press-and-hold A/B bypass button on the EQ screen
+
+Reframed B2 from "another bit-perfect bypass toggle" (which would have
+been a pure rename of the existing Audio enhancement toggle) into a
+genuine new affordance: a press-and-hold button that instantly
+bypasses the entire DSP chain while held, then restores it on release.
+The audiophile A/B workflow ("hold, listen, release, listen") maps
+directly to a momentary button — toggles persist across releases and
+the user can lose track of which way is which after a few flips.
+
+**Behaviour.** `pointerInput` + `detectTapGestures.onPress { ... }`. On
+press: `eq.setEnabled(false)` + haptic feedback + telemetry event. The
+suspending `onPress` lambda calls `awaitRelease()` inside try/finally,
+so the restore (`eq.setEnabled(true)`) runs on both clean release AND
+gesture cancel (drag-off, parent recompose). No DataStore writes — pure
+transient state, so a forgotten release can't strand the chain in
+bypass.
+
+**Why not Modifier.combinedClickable.onLongClick.** That requires
+holding for ~500 ms before firing — wrong for our use case, where we
+want INSTANT bypass on press-down. detectTapGestures is the correct
+primitive for momentary "while held" affordances.
+
+**Disabled state.** When the chain is already off (master toggle off,
+or per-episode "Disable EQ" override on), pressing the button would be
+a no-op (passthrough → passthrough). Grayed out with explanatory label
+"Hold to A/B (chain already off)" so the affordance stays visible on
+revisit.
+
+Also documented in `AudiophileNotesScreen` under "Verifying the chain
+is live" — the by-ear method now sits alongside the by-telemetry
+method.
+
+ai_contamination: true # claude opus 4.7
+
+## DSP Phase B4: Notes for audiophiles screen
+
+New static reference screen at route `audiophileNotes` (sibling to
+`audioDiagnostics` under Settings). Documents the chain design: signal
+flow, Float64 rationale, DC blocker, biquad EQ + cross-fade, master
+gain, 2x oversampling, look-ahead limiter (LA window, soft knee,
+linked stereo, monotonic-deque peak detector), TPDF dither + truncation,
+total latency math (~5.7 ms), CPU footprint, an explicit "what this
+chain does NOT do" list (no exciter, no widening, no spatializer), and
+license attribution (all original code; algorithmic credits only —
+RBJ cookbook, Lipshitz/Wannamaker/Vanderkooy 1992, Vaidyanathan,
+Kaiser+Schafer 1980; planned JTransforms is BSD-2; no GPL).
+
+Sister page to the Audio diagnostics screen — diagnostics shows the
+LIVE state, this page documents the DESIGN. Body wrapped in
+`SelectionContainer` so spec values are copy-paste-able. Chain spec
+strings live as file-level `private const val`s grouped at the bottom
+of the file so the wording can be edited without touching the layout.
+
+Wired up the navigation: new `NESTED_PARENTS` entry mapping the route
+back to `settings`, new `composable("audiophileNotes")` block in
+`AppNav`, new `onOpenAudiophileNotes` param on `SettingsScreen`, new
+`TextButton` link below the audio-diagnostics link in the Settings
+"Audio diagnostics" section.
+
+ai_contamination: true # claude opus 4.7
+
+## DSP Phase B: DC blocker UI toggle + live level meters in Audio screen
+
+First slice of Phase B work surfacing the audiophile chain in the EQ
+screen. Two tightly-scoped additions, both in `EqScreen.kt`.
+
+**B1 — DC blocker toggle.** New `Switch` row directly under the master
+"Audio enhancement" toggle, mirroring its visual pattern. Wired to
+`Settings.setDcBlockerEnabled` (persists across restart) AND
+`PlaybackService.sharedEq.setDcBlockerEnabled` (takes effect immediately
+without waiting for a track transition). Subtitle wording: "Removes DC
+offset from poorly-encoded sources before the EQ amplifies it. Default
+off." The processor's `isPassthroughEffective()` already returns false
+when DC blocker is on, so the toggle isn't a no-op for FLAT users — it
+forces the DSP path so the blocker actually runs.
+
+**B3 — Level meters.** New "Levels" section below the master gain slider:
+three small horizontal bar meters (IN / OUT / GR) reading the
+existing `@Volatile` telemetry fields (`inputPeak`, `outputPeak`,
+`reductionDb`). 250 ms `LaunchedEffect` polling tick, same pattern as
+the Audio diagnostics screen. Per-meter mapping: PEAK uses the primary
+accent and maps [-60, 0] dBFS → [0, 1] fill; GR uses the error color
+and maps [0, -20] dB → [0, 1] fill so active limiting reads as a
+visible alarm. Floor at -60 dBFS via a 1e-6 amplitude threshold so the
+"-inf" case stays readable. Decay is already half-life'd at 500 ms in
+the audio thread, so 250 ms sampling integrates cleanly. When the chain
+is in passthrough (master off, or FLAT + 0 dB + DC blocker off), the
+audio thread doesn't update these fields — bars freeze at zero post-
+decay, which is the right "no signal" UX.
+
+Phase B2 (bit-perfect bypass) and B4 (audiophile-notes page) still
+pending; Phase C unchanged.
+
+ai_contamination: true # claude opus 4.7
+
+## Limiter window-max via monotonic deque + per-buffer processing-time telemetry
+
+Symptom that triggered this: with audio enhancement on and the phone in
+a pocket, BT-headphone playback developed intermittent artifacts that
+disappeared the moment the phone came out of the pocket — and that the
+audio enhancement off case never reproduced. Strong fingerprint of
+thermal / power-saver CPU throttling pushing the audio thread past its
+buffer deadline.
+
+**Limiter peak detector: brute-force scan -> monotonic deque.** The
+sliding-window max in `Limiter.processFrame` was scanning the whole
+[lookAheadSamples]-long peak window every frame (~440 compares per
+frame at LA=5ms × 88.2k oversampled rate, ~39M ops/sec). Replaced with
+a monotonic deque (head -> tail non-increasing), so peak retrieval is
+O(1) amortized. Bit-exact same windowed max as the prior version — no
+audible change to the signal — but ~8× cheaper for the limiter alone
+and ~50% off the total chain CPU at 44.1k stereo. This is the headroom
+that lets us survive a throttled core.
+
+**Per-buffer timing telemetry.** New `recordBufferTiming(processingNs,
+audioNs)` on `AudioChainTelemetry`, called once per DSP buffer from
+`EqAudioProcessor.queueInput`. Tracks last/avg/p95/max processing time
+plus avg/max load factor (= processing/audio-time) over a rolling
+ring of the last 64 buffers. Surfaced on the Audio diagnostics screen
+under a new "Performance" section. Load factor near 0% = healthy
+headroom; approaching 100% = audio thread is saturated and underruns
+are imminent. The Performance section is the diagnostic surface for
+"is the chain still keeping up while the phone is in my pocket?"
+
+ai_contamination: true # claude opus 4.7
+
 ## Topical back-stack + autoplay direction + per-episode EQ override + piezo beeps + audio-diagnostics help
 
 Bundle of UX work that touches navigation, the EQ surfacing of per-episode

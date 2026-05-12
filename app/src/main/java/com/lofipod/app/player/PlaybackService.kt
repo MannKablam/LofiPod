@@ -1,7 +1,10 @@
 package com.lofipod.app.player
 
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -40,6 +43,23 @@ class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var saveTickerJob: Job? = null
 
+    /**
+     * Held while the player is actively playing. Acquiring a PARTIAL_WAKE_LOCK
+     * here is belt-and-braces alongside the mediaPlayback foreground-service
+     * type: the foreground service keeps the process alive across Doze, but
+     * the kernel can still downclock CPU aggressively when the screen is off,
+     * which starves the DSP path on a 2× playback budget. The wake lock asks
+     * the kernel to keep the CPU clocked enough to make scheduling deadlines.
+     *
+     * Released as soon as playback pauses so we don't keep the CPU hot
+     * during idle-pause-mid-listen windows. Released again in onDestroy as a
+     * safety net.
+     *
+     * Permission `android.permission.WAKE_LOCK` is already declared in the
+     * manifest (was unused prior to this change — see BUILD_LOG audit notes).
+     */
+    private var playbackWakeLock: PowerManager.WakeLock? = null
+
     companion object {
         // Shared EQ instance — UI can grab it via app-level holder
         val sharedEq = EqAudioProcessor()
@@ -49,29 +69,70 @@ class PlaybackService : MediaSessionService() {
         val sharedSkipSilence = SilenceSkippingProcessor()
         private const val SAVE_INTERVAL_MS = 10_000L
 
+        /**
+         * Volatile snapshot of whether the playback wake lock is currently
+         * held. Read by the in-Player diagnostics tab so the user can see at
+         * a glance "yes, the kernel is being asked to stay clocked." Set by
+         * acquirePlaybackWakeLock / releasePlaybackWakeLock right after the
+         * actual acquire/release; read-only from outside.
+         *
+         * Lives on the companion (not the instance) because diagnostics
+         * code reads it without needing a service reference — the audio
+         * thread + UI consumers can hit this directly the same way they
+         * hit [sharedEq].
+         */
+        @Volatile var wakeLockHeld: Boolean = false
+            internal set
+
         /** Intent action used by the media-session tap target to ask MainActivity
          *  to navigate straight to the Player screen instead of resuming on Catalog. */
         const val ACTION_OPEN_PLAYER = "com.lofipod.app.OPEN_PLAYER"
     }
 
     override fun onCreate() {
+        val tOnCreate = System.nanoTime()
         super.onCreate()
-        // Cache-aware media source factory: downloaded episodes play locally,
-        // streamed episodes still hit HTTP (with opportunistic range caching).
-        val cacheFactory = (application as LofiPodApp).downloads.cacheDataSourceFactory
-        val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(cacheFactory)
+        // Prepare the playback wake lock once at service creation. Tag uses
+        // the documented "app:purpose" convention so it shows up identifiably
+        // in `adb shell dumpsys power`. Reference-counted=false because we
+        // only acquire/release at the isPlaying-true/false transitions —
+        // there's no nested-acquire pattern that would need ref counting.
+        playbackWakeLock = (getSystemService(Context.POWER_SERVICE) as? PowerManager)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LofiPod:playback")
+            ?.apply { setReferenceCounted(false) }
+        // Scheme-aware DataSource factory: file:// URIs (downloaded episodes)
+        // route through Media3's FileDataSource, http(s):// URIs go to
+        // OkHttpDataSource. v0.6.9 reset dropped the streaming-cache
+        // (SimpleCache + CacheDataSource) along with the rest of Media3's
+        // offline framework — re-streaming on scrub is a tolerable trade
+        // for a downloader we can actually trust.
+        val dataSourceFactory = (application as LofiPodApp).downloads.dataSourceFactory
+        val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory)
 
-        // Audio-friendly buffer sizes. Defaults are tuned for video; podcasts can
-        // afford larger buffers (one episode is ~50–200 MB at 128 kbps for 1 hour
-        // of audio), and a longer max buffer means fewer rebuffers on flaky
-        // connections. setPrioritizeTimeOverSizeWhileLoading favors buffering more
-        // duration over hitting a byte cap, which is what we want for audio.
+        // Audio buffer sizes — significantly larger than Media3 defaults
+        // because we play at variable speed. The buffer durations here are
+        // in MEDIA TIME (the duration of audio held), not wall-clock; at 2x
+        // playback, source material is consumed at 2x wall-clock rate. So
+        // a 60s media-time buffer drains in 30s wall-clock at 2x, and any
+        // network slowdown longer than that starves the renderer.
+        //
+        // Symptom (v0.6.x reports): at 2x for ~7 min the playback would
+        // stall with the position cycling through the last ~5s of decoded
+        // audio (renderer underrun loop), then resume after a flush. At
+        // 1.75x, the same effect appeared as severe stuttering. Both were
+        // network slowdowns landing while the buffer was already small.
+        //
+        // New thresholds give 5 min wall-clock headroom at 2x (10 min
+        // media-time max), and require 8s of buffer after a rebuffer
+        // before resuming so the audio doesn't immediately re-stall.
+        // Memory cost: ~10 min of audio at 256 kbps stereo is ~19 MB.
+        // Acceptable on any modern phone.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 60_000,
-                /* maxBufferMs = */ 180_000,
-                /* bufferForPlaybackMs = */ 2_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 4_000
+                /* minBufferMs = */ 180_000,
+                /* maxBufferMs = */ 600_000,
+                /* bufferForPlaybackMs = */ 5_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 8_000
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -98,10 +159,12 @@ class PlaybackService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying) {
+                    acquirePlaybackWakeLock()
                     startSaveTicker(player)
                 } else {
                     stopSaveTicker()
                     saveCurrent(player, listenDelta = 0L)
+                    releasePlaybackWakeLock()
                 }
             }
         })
@@ -131,7 +194,7 @@ class PlaybackService : MediaSessionService() {
 
             // Master "Audio enhancement" enable. PlayerController.applyEqOverrideFor
             // re-evaluates this on every track transition and ANDs it with the
-            // per-episode eqDisabled flag, so this initial value matters only
+            // per-podcast eqDisabled flag, so this initial value matters only
             // for the (rare) window before the first item transition fires.
             sharedEq.setEnabled(settings.audioEnhancementEnabled.first())
 
@@ -140,6 +203,13 @@ class PlaybackService : MediaSessionService() {
             // chain is otherwise passthrough. Off by default; users with
             // DC-offset-y feeds can flip it on.
             sharedEq.setDcBlockerEnabled(settings.dcBlockerEnabled.first())
+
+            // EQ phase mode (Phase C). False = minimum-phase biquad (default,
+            // ~6.4 ms latency); true = linear-phase FIR convolution (~52 ms).
+            // Rehydrated here so the user's preference survives a process
+            // restart — without this, the chain would always start in
+            // minimum-phase regardless of the saved setting.
+            sharedEq.setPhaseModeLinear(settings.phaseModeLinear.first())
         }
 
         // Notification tap target: route through MainActivity with a custom
@@ -161,6 +231,11 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(sessionActivity)
             .setCallback(AutoplayConfirmCallback)
             .build()
+
+        com.lofipod.app.diagnostics.StartupTimings.record(
+            "playback_service_oncreate",
+            tOnCreate,
+        )
     }
 
     /**
@@ -248,6 +323,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         mediaSession?.player?.let { saveCurrent(it, listenDelta = 0L) }
         stopSaveTicker()
+        releasePlaybackWakeLock()
         mediaSession?.run {
             player.release()
             release()
@@ -255,5 +331,35 @@ class PlaybackService : MediaSessionService() {
         }
         scope.cancel()
         super.onDestroy()
+    }
+
+    /**
+     * Acquire the playback wake lock. Idempotent — already-held is a no-op
+     * (the `isHeld` guard avoids the `WakeLock under-locked` warning we'd
+     * otherwise see on a stray double-acquire). Wrapped in try/catch because
+     * a hostile SELinux denial on some OEM builds can throw at acquire time;
+     * a wake-lock failure must never crash playback.
+     */
+    private fun acquirePlaybackWakeLock() {
+        val wl = playbackWakeLock ?: return
+        try {
+            if (!wl.isHeld) wl.acquire()
+            wakeLockHeld = wl.isHeld
+        } catch (t: Throwable) {
+            Log.w("LofiPodPlayback", "WakeLock acquire failed: ${t.message}")
+            wakeLockHeld = false
+        }
+    }
+
+    /** Symmetric release; tolerant of unheld-state via the [isHeld] guard. */
+    private fun releasePlaybackWakeLock() {
+        val wl = playbackWakeLock ?: return
+        try {
+            if (wl.isHeld) wl.release()
+        } catch (t: Throwable) {
+            Log.w("LofiPodPlayback", "WakeLock release failed: ${t.message}")
+        } finally {
+            wakeLockHeld = wl.isHeld
+        }
     }
 }

@@ -24,7 +24,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -44,6 +50,8 @@ class PlayerController(private val context: Context) {
         get() = (context.applicationContext as LofiPodApp).db.episodeStateDao()
     private val checkpointDao: PlaybackCheckpointDao
         get() = (context.applicationContext as LofiPodApp).db.playbackCheckpointDao()
+    private val autoDownloadDao: com.lofipod.app.data.db.AutoDownloadDao
+        get() = (context.applicationContext as LofiPodApp).db.autoDownloadDao()
     private val queueDao: QueueEntryDao
         get() = (context.applicationContext as LofiPodApp).db.queueEntryDao()
     private val podcastStateDao: com.lofipod.app.data.db.PodcastStateDao
@@ -96,17 +104,91 @@ class PlayerController(private val context: Context) {
     val autoplayTimer: StateFlow<AutoplayTimerState?> = _autoplayTimer.asStateFlow()
     private var autoplayTimerJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * One-shot transient messages from the player layer that the UI
+     * surfaces as snackbars. Used so the play button never feels like a
+     * silent no-op: when the user taps play and the player is
+     * mid-buffering / not yet bound / has no media item, we emit a short
+     * message so they get explicit confirmation that their tap registered.
+     *
+     * Buffer capacity 4 so a quick burst of taps doesn't drop messages,
+     * but we don't replay old messages to fresh subscribers.
+     */
+    private val _transientMessages = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 4)
+    val transientMessages: SharedFlow<String> = _transientMessages.asSharedFlow()
+
+    /**
+     * Stall watchdog. While the player wants to play
+     * (`playWhenReady`), poll [Player.currentPosition] every
+     * [STALL_POLL_INTERVAL_MS] and flag a stall under either condition:
+     *   1. The player reports `isPlaying=true` (state=READY) but the
+     *      running max position hasn't advanced for [STALL_THRESHOLD_MS]
+     *      — the cycling-position underrun loop where the renderer
+     *      replays its last decoded ~5 s of buffer indefinitely.
+     *   2. The player has been stuck in `STATE_BUFFERING` (isPlaying=false
+     *      but playWhenReady=true) for [BUFFERING_STALL_THRESHOLD_MS] —
+     *      "trying to play but the source/decoder/renderer can't deliver".
+     *      For local files this should be near-instant; multi-second
+     *      buffering on disk content means the chain is wedged.
+     *
+     * On stall, force a recovery via `seekTo(currentPosition - 100 ms)`.
+     * The negative offset is deliberate: a same-position seek can be
+     * deduplicated by Media3 / the audio sink and produce no flush, while
+     * a 100 ms backward seek always triggers a full audio-sink + decoder
+     * flush AND gives the user a brief replay of the audio they likely
+     * missed during the stall.
+     *
+     * The cycling-position bug at high playback speeds (user-reported in
+     * v0.6.x: 2x → position cycled `43:31..43:36` for ~7 min until a
+     * manual flush) is the renderer underrunning. The DSP chain (linear-
+     * phase EQ in particular) can't feed Sonic fast enough at 2x source
+     * consumption rate, the audio sink underruns, and ExoPlayer recovers
+     * by replaying the last decoded ~5s of buffer indefinitely. The
+     * user's natural recovery — wait for a manual flush — sometimes
+     * never came. This watchdog forces it.
+     *
+     * Also logs each stall to [AppDiagnostics] so we can see how often
+     * this fires across builds. If it fires regularly, the underlying
+     * DSP perf is the real issue and the watchdog is a band-aid.
+     */
+    private var stallWatchdogJob: kotlinx.coroutines.Job? = null
+    private var lastForwardProgressPosMs: Long = 0L
+    private var lastForwardProgressAtMs: Long = 0L
+    /** Wall-clock when the player most recently entered STATE_BUFFERING with
+     *  playWhenReady=true. Used by the watchdog to detect chronic buffering
+     *  stalls (the renderer is wedged trying to deliver audio). 0 when not
+     *  currently in a buffering window. */
+    private var bufferingStartedAtMs: Long = 0L
+    /** Wall-clock of the most recent stall snackbar. Used to throttle so a
+     *  cycling-stall doesn't spam the user with a snackbar every recovery. */
+    private var lastStallMessageAtMs: Long = 0L
+
+    /** Guard against re-triggering the same handoff if the user transitions
+     *  through the swap state (e.g., a brief race between byId emission and
+     *  the new MediaItem propagating). Cleared when the current episode
+     *  changes. */
+    private var handoffTriggeredForGuid: String? = null
+
     fun connect(onReady: () -> Unit) {
         // Pin this controller as the autoplay-confirm target for any
         // service-side media-button intercept (BT, vehicle, system-
         // notification play/pause). Unpinned in [release].
         AutoplayConfirmBridge.bind(this)
+        val tBuildController = System.nanoTime()
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         future.addListener({
+            com.lofipod.app.diagnostics.StartupTimings.record(
+                "media_controller_connect", tBuildController,
+            )
             controller = future.get().also { c ->
                 c.addListener(listener)
                 pushState()
+                // Cold launch with audio already playing: addListener doesn't
+                // replay state-change callbacks, so onPlayWhenReadyChanged
+                // won't fire for the existing playWhenReady=true. Start the
+                // watchdog manually if the session is already in play state.
+                if (c.playWhenReady) startStallWatchdog()
             }
             onReady()
             // Drain any play attempt the user fired while we were still
@@ -123,6 +205,11 @@ class PlayerController(private val context: Context) {
                 kotlinx.coroutines.delay(150)
                 if (controller == null) return@launch
                 pendingPlay = null
+                // Re-assert the captured autoplay status BEFORE the replay so
+                // an autoplay-induced bail still re-arms the confirmation
+                // timer on the replayed play. The replayed playEpisode will
+                // consume the flag again at its entry.
+                if (p.wasAutoplay) lastPlayWasAutoplay = true
                 playEpisode(p.ep, p.podcastTitle, p.podcastArt, p.forcedStartMs)
             }
             // Belt-and-suspenders: when the activity is recreated against a
@@ -141,7 +228,107 @@ class PlayerController(private val context: Context) {
                     pushState()
                 }
             }
+            // Mid-playback download-handoff observer. If the currently-
+            // playing episode is being streamed over HTTP and its
+            // download completes, swap the MediaItem to the local file
+            // so the rest of playback runs from disk. See
+            // [observeDownloadCompletion] for the swap mechanics + the
+            // audible cue + the snackbar.
+            scope.launch { observeDownloadCompletion() }
+            // Cold-start restore: if the session has nothing loaded after the
+            // sync settles, surface the last-played episode (paused) so the
+            // mini-player + Player screen show "where I left off" without
+            // making the user re-navigate from the catalog. Delay slightly
+            // past the sync window above so we don't fire when the service
+            // is still hydrating its own state.
+            scope.launch {
+                kotlinx.coroutines.delay(900)
+                if (controller == null) return@launch
+                if (pendingPlay != null) return@launch  // user already wants something specific
+                restoreLastEpisodeIfNeeded()
+            }
+            // Reap auto-downloads whose owning episode finished playing
+            // more than the TTL ago. Cheap (one indexed query + at most a
+            // handful of deletes) and runs in the background of the
+            // connect cycle.
+            sweepExpiredAutoDownloads()
+            // Pick up any deferred auto-downloads from a prior session
+            // where the app was closed before the user transitioned away.
+            // Fires the manager add for each so the offline copy gets
+            // created in the background while the user uses the app.
+            fireDeferredAutoDownloadOrphans()
         }, MoreExecutors.directExecutor())
+    }
+
+    /**
+     * Cold-start restore. If the MediaController has no current item AND
+     * episode_state has a most-recently-played row, load that episode at
+     * its saved position WITHOUT auto-playing. Result: the mini-player and
+     * Player screen both show the last episode in paused state, ready to
+     * resume on tap. No-op if the session already has an item (warm
+     * reconnect after activity recreate) or if no episode has ever been
+     * played on this install.
+     *
+     * Side-effect-light vs [playEpisode]: skips the autoplay timer, the
+     * auto-download trigger, and the feed-visit upsert — those are signals
+     * of an active "user started playing this" event, not a passive
+     * restore.
+     */
+    private fun restoreLastEpisodeIfNeeded() {
+        val c = controller ?: return
+        if (c.currentMediaItem != null) return
+        scope.launch {
+            val state = withContext(Dispatchers.IO) { dao.mostRecentlyPlayed() }
+                ?: return@launch
+            if (controller == null) return@launch
+            // Reuse the episode_state row to reconstruct the Episode (same
+            // pattern as [episodeFromState]). Description / pubDate / mime
+            // / duration aren't persisted there but Player only needs the
+            // identity + uri + display metadata to render correctly.
+            val ep = Episode(
+                guid = state.guid,
+                feedUrl = state.feedUrl,
+                title = state.title,
+                description = null,
+                pubDateMillis = null,
+                audioUrl = state.audioUrl,
+                audioMimeType = null,
+                durationSeconds = null,
+                episodeArtworkUrl = state.artworkUrl,
+            )
+            // Treat positions within the last 5s of duration as "played" —
+            // start from 0 if the user finished it, otherwise resume at
+            // saved position. Mirrors the same logic in [playEpisode].
+            val startPos = if (state.durationMs > 0 && state.positionMs >= state.durationMs - 5_000) {
+                0L
+            } else {
+                state.positionMs
+            }
+            val art = ep.episodeArtworkUrl
+            val item = MediaItem.Builder()
+                .setMediaId(ep.guid)
+                .setUri(ep.audioUrl)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(ep.title)
+                        .setArtist("")
+                        .setArtworkUri(art?.let { android.net.Uri.parse(it) })
+                        .build()
+                )
+                .build()
+            // Same dual-form setMediaItem pattern as [playEpisode] —
+            // bundling a non-zero seek into setMediaItem races against
+            // prepare on a fresh service start. With startPos 0 we use the
+            // single-arg form.
+            if (startPos > 0L) {
+                c.setMediaItem(item, startPos)
+            } else {
+                c.setMediaItem(item)
+            }
+            c.prepare()
+            // Explicit: do NOT call play(). The user wants the episode
+            // surfaced, not auto-resumed.
+        }
     }
 
     fun release() {
@@ -176,7 +363,29 @@ class PlayerController(private val context: Context) {
     val lastErrorDetails: String? get() = lastErrorVerbose
 
     private val listener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) = pushState()
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            pushState()
+            // Refresh the forward-progress baseline whenever audio actually
+            // resumes — a buffering window before this transition wouldn't
+            // have advanced position, so without this refresh the stall
+            // detector would see "no forward progress for N seconds" the
+            // moment playback resumes and could false-positive. The
+            // watchdog's lifecycle is owned by [onPlayWhenReadyChanged] so
+            // it can keep running ACROSS buffering windows (arm B
+            // explicitly handles "playWhenReady=true but state=BUFFERING").
+            if (isPlaying) {
+                lastForwardProgressPosMs = controller?.currentPosition ?: 0L
+                lastForwardProgressAtMs = System.currentTimeMillis()
+            }
+        }
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            pushState()
+            // Watchdog lifecycle tracks user intent (= playWhenReady), not
+            // moment-to-moment isPlaying. Otherwise a transient
+            // BUFFERING-during-play (which flips isPlaying to false) would
+            // kill the watchdog right as arm B should be running.
+            if (playWhenReady) startStallWatchdog() else stopStallWatchdog()
+        }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             pushState()
             // Apply per-episode EQ override on transitions. Looked up from the
@@ -195,8 +404,24 @@ class PlayerController(private val context: Context) {
             pushState()
             if (playbackState == Player.STATE_ENDED) {
                 // Remove the just-finished episode from the queue and auto-advance.
+                // If canon-order autoplay is enabled and this episode has a
+                // detected scripture ref, prefer the next sermon in canon
+                // order over the standard queue/feed-next chain.
                 val finishedGuid = controller?.currentMediaItem?.mediaId
-                scope.launch { advanceToNextInQueue(finishedGuid) }
+                scope.launch {
+                    if (finishedGuid != null && tryAdvanceToNextInCanon(finishedGuid)) {
+                        // Canon mode handled it; skip the standard advance.
+                        return@launch
+                    }
+                    advanceToNextInQueue(finishedGuid)
+                }
+                // Fire any deferred auto-download for the just-ended
+                // episode. The cache has been populated by streaming;
+                // DownloadManager will see the cached spans and complete
+                // near-instantly without re-fetching.
+                if (finishedGuid != null) {
+                    scope.launch { fireDeferredAutoDownload(finishedGuid) }
+                }
             }
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -244,7 +469,16 @@ class PlayerController(private val context: Context) {
             lastErrorVerbose = "${error.errorCodeName}: $codeName$verboseTail"
             pushState()
         }
-        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
+        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+            // Mirror the live speed into AudioChainTelemetry so the PerfHint
+            // bridge gets a speed-adjusted wall-clock target (audioNs / speed).
+            // Without this, at 2× the OS gets a deadline twice as generous
+            // as reality and downclocks the CPU. Volatile write; audio thread
+            // sees it within one buffer.
+            com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed =
+                playbackParameters.speed
+            pushState()
+        }
         // The next two fire as the MediaController syncs its state from a
         // running session — without them, reconnecting to a session that's
         // already mid-playback (cold launch case) leaves PlayerState empty
@@ -254,43 +488,51 @@ class PlayerController(private val context: Context) {
     }
 
     /**
-     * Re-evaluate the EQ enabled flag for [guid]. Effective state is the AND of
-     * the master "Audio enhancement" toggle (Settings.audioEnhancementEnabled)
-     * and the inverse of the per-episode override (episode_state.eqDisabled).
+     * Re-evaluate the live EQ for the episode at [guid]. There's no global
+     * EQ — each podcast owns its own tuning. An episode normally inherits
+     * its podcast's EQ; the per-episode "use a one-off EQ" toggle lets a
+     * single episode branch off (e.g. a guest-heavy episode where the
+     * usual host tuning doesn't fit).
+     *
+     * Resolution order: `episode_state.eqBandsCsvOverride` →
+     * `podcast_state.eqBandsCsvOverride` → FLAT. The first non-null wins.
+     *
+     * Enable state is purely the master "Audio enhancement" switch — there
+     * are no separate disable flags. "Disabling EQ" is just the override
+     * toggle on with all bands at 0 dB. Keeping disable as a separate
+     * concept was redundant and confused two layers of "off."
      *
      * Called on item transitions, after the user toggles the per-episode
-     * override on PlayerScreen, and after the user flips the master toggle on
-     * the EQ screen — three writers, one source of truth (this method) so the
-     * processor's enabled flag doesn't get clobbered by whichever path ran
-     * last. Earlier bug: master toggle and per-episode override both wrote
-     * directly to `sharedEq.enabled`, so a track transition would silently
-     * undo a user's master-off toggle.
+     * override on the EQ screen, and after the user flips the master
+     * toggle — three writer sites, single source of truth here so the
+     * processor's enabled flag and band state don't get clobbered by the
+     * last-wins of competing writers.
      */
     fun applyEqOverrideFor(guid: String) {
         scope.launch {
             val state = withContext(Dispatchers.IO) { dao.get(guid) }
-            val episodeDisabled = state?.eqDisabled ?: false
+            val feedUrl = state?.feedUrl
             val episodeOverrideCsv = state?.eqBandsCsvOverride
-            val settings = com.lofipod.app.data.Settings(context)
-            val globalEnabled = settings.audioEnhancementEnabled.first()
-            // setEnabled is volatile-safe; no need to bounce back to main.
-            PlaybackService.sharedEq.setEnabled(globalEnabled && !episodeDisabled)
+            val podcastState = if (feedUrl != null) {
+                withContext(Dispatchers.IO) { podcastStateDao.get(feedUrl) }
+            } else null
+            val podcastEqCsv = podcastState?.eqBandsCsvOverride
 
-            // Per-episode EQ override: when the user has dialed in custom band
-            // gains for this episode, apply them in place of the global preset.
-            // When no override exists (CSV is null), reapply the global bands
-            // — this matters on track transitions where the previous episode
-            // had an override and we need to swap back to the global tuning.
-            // settings.eqBandsCsv.first() can be null (Settings stores it as
-            // a nullable String) which is fine — we just skip applying bands
-            // and leave the processor on whatever it had configured.
-            val targetCsv: String? = episodeOverrideCsv ?: settings.eqBandsCsv.first()
-            if (targetCsv != null) {
-                val parsed = parseEqBandsCsv(targetCsv)
-                if (parsed != null) {
-                    PlaybackService.sharedEq.setBands(parsed)
-                }
+            val settings = com.lofipod.app.data.Settings(context)
+            val masterEnabled = settings.audioEnhancementEnabled.first()
+            // setEnabled is volatile-safe; no need to bounce back to main.
+            PlaybackService.sharedEq.setEnabled(masterEnabled)
+
+            // Episode override branches off the podcast's EQ. Without an
+            // override, the podcast's EQ applies. Without a podcast EQ,
+            // the chain runs flat — there's no global EQ to fall back on.
+            val targetCsv: String? = episodeOverrideCsv ?: podcastEqCsv
+            val targetBands = if (targetCsv != null) {
+                parseEqBandsCsv(targetCsv) ?: com.lofipod.app.audio.EqPresets.FLAT
+            } else {
+                com.lofipod.app.audio.EqPresets.FLAT
             }
+            PlaybackService.sharedEq.setBands(targetBands)
         }
     }
 
@@ -307,20 +549,27 @@ class PlayerController(private val context: Context) {
 
     private fun pushState() {
         val c = controller ?: return
-        _state.value = PlayerState(
-            isPlaying = c.isPlaying,
-            isReady = c.playbackState == Player.STATE_READY,
-            // Buffering counts only when we WANT to play (playWhenReady). A
-            // paused player may also pass through BUFFERING but we shouldn't
-            // surface a "Buffering…" indicator to the user in that case.
-            isBuffering = c.playbackState == Player.STATE_BUFFERING && c.playWhenReady,
-            errorMessage = lastError,
-            currentTitle = c.mediaMetadata.title?.toString(),
-            currentArtist = c.mediaMetadata.artist?.toString(),
-            currentArtworkUri = c.mediaMetadata.artworkUri?.toString(),
-            currentEpisodeGuid = c.currentMediaItem?.mediaId,
-            speed = c.playbackParameters.speed
-        )
+        // Preserve isStalled across pushState — it's owned by the watchdog
+        // (set/cleared on its own timer), not by Media3's player state.
+        // Without preservation a routine onIsPlayingChanged after a stall
+        // recovery would silently flip isStalled back to its default.
+        _state.update { prev ->
+            PlayerState(
+                isPlaying = c.isPlaying,
+                isReady = c.playbackState == Player.STATE_READY,
+                // Buffering counts only when we WANT to play (playWhenReady). A
+                // paused player may also pass through BUFFERING but we shouldn't
+                // surface a "Buffering…" indicator to the user in that case.
+                isBuffering = c.playbackState == Player.STATE_BUFFERING && c.playWhenReady,
+                isStalled = prev.isStalled,
+                errorMessage = lastError,
+                currentTitle = c.mediaMetadata.title?.toString(),
+                currentArtist = c.mediaMetadata.artist?.toString(),
+                currentArtworkUri = c.mediaMetadata.artworkUri?.toString(),
+                currentEpisodeGuid = c.currentMediaItem?.mediaId,
+                speed = c.playbackParameters.speed
+            )
+        }
     }
 
     /**
@@ -340,23 +589,36 @@ class PlayerController(private val context: Context) {
         podcastArt: String?,
         forcedStartMs: Long? = null
     ) {
+        // Consume the autoplay-detection flag UNCONDITIONALLY at entry,
+        // before the controller-null check. Otherwise a bailed-to-pendingPlay
+        // call would leave the flag set for the next playEpisode invocation,
+        // which would then arm the autoplay-confirmation timer for a play the
+        // user perceives as manual (the "spurious autoplay-style beep on cold
+        // playback start" symptom). The flag travels into PendingPlay so the
+        // drain in connect() can restore it for the replayed call.
+        val wasAutoplay = lastPlayWasAutoplay
+        lastPlayWasAutoplay = false
+
         val c = controller
         if (c == null) {
             // Controller still building — queue and bail. The drain in
-            // [connect]'s listener replays this call once we're live.
-            pendingPlay = PendingPlay(ep, podcastTitle, podcastArt, forcedStartMs)
+            // [connect]'s listener replays this call once we're live, with
+            // the autoplay flag re-asserted from the captured snapshot.
+            pendingPlay = PendingPlay(ep, podcastTitle, podcastArt, forcedStartMs, wasAutoplay)
             return
         }
-        // Consume the autoplay-detection flag at entry. Whether or not we
-        // re-arm the timer below, any previous timer is for a different
-        // episode and must be torn down: the body uses guid identity to
-        // decide whether to pause, but the StateFlow still drives a stale
-        // countdown UI until cleared explicitly.
-        val wasAutoplay = lastPlayWasAutoplay
-        lastPlayWasAutoplay = false
+        // Any previous timer is for a different episode and must be torn down:
+        // the body uses guid identity to decide whether to pause, but the
+        // StateFlow still drives a stale countdown UI until cleared explicitly.
         autoplayTimerJob?.cancel()
         autoplayTimerJob = null
         _autoplayTimer.value = null
+
+        // Housekeeping: prune any auto-downloads from PRIOR episodes whose
+        // playback finished and whose 1-hour TTL has elapsed. Runs on every
+        // track change so old auto-downloads don't accumulate even in long
+        // sessions where connect() doesn't re-fire.
+        sweepExpiredAutoDownloads()
 
         scope.launch {
             // 1. Outgoing item: persist position + (optionally) record session_end checkpoint.
@@ -380,6 +642,13 @@ class PlayerController(private val context: Context) {
                         checkpointDao.pruneToCount(CHECKPOINT_CAP)
                     }
                 }
+                // The user has moved on from `outgoingId`. If it was
+                // scheduled for auto-download, fire the actual addDownload
+                // now — by this point the SimpleCache has been filling
+                // from the streaming session, so DownloadManager's worker
+                // sees the cached spans and completes near-instantly
+                // without re-fetching from HTTP.
+                fireDeferredAutoDownload(outgoingId)
             }
 
             // 2. New item: ensure row exists, possibly snapshot a stale session, return start pos.
@@ -417,9 +686,21 @@ class PlayerController(private val context: Context) {
             val startPos = forcedStartMs ?: savedPos
 
             val art = ep.episodeArtworkUrl ?: podcastArt
+            // Prefer a downloaded local file when one exists. The new
+            // OkHttp-based downloader (v0.6.9) writes completed episodes
+            // to filesDir/episode_audio/<sha256(guid)>.bin; pointing the
+            // MediaItem at file://that path makes ExoPlayer use a
+            // FileDataSource, skipping HTTP entirely for offline playback.
+            val app = context.applicationContext as LofiPodApp
+            val localFile = app.downloadsApi.completedFile(ep.guid)
+            val playUri = if (localFile != null) {
+                android.net.Uri.fromFile(localFile)
+            } else {
+                android.net.Uri.parse(ep.audioUrl)
+            }
             val item = MediaItem.Builder()
                 .setMediaId(ep.guid)
-                .setUri(ep.audioUrl)
+                .setUri(playUri)
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(ep.title)
@@ -456,7 +737,15 @@ class PlayerController(private val context: Context) {
                 podcastStateDao.get(ep.feedUrl)?.defaultSpeed
             }
             if (speedOverride != null && kotlin.math.abs(speedOverride - 1.0f) > 0.001f) {
+                // Mirror speed into AudioChainTelemetry too — see setSpeed
+                // for rationale (PerfHint target wall-clock budget scaling).
+                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = speedOverride
                 c.setPlaybackSpeed(speedOverride)
+            } else {
+                // No override (or 1.0×): reset the mirror so a previous
+                // episode's per-podcast speed doesn't leak into PerfHint
+                // math for this one.
+                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = 1.0f
             }
 
             // Mark this feed as "seen" — kills the new-episodes badge in Catalog
@@ -469,18 +758,57 @@ class PlayerController(private val context: Context) {
                 )
             }
 
-            // Auto-download episodes the user starts playing. Reasoning: by
-            // the time playback is rolling, the user is committed enough that
-            // having an offline copy for the next session is the better
-            // default. Idempotent — DownloadManager skips if the guid is
-            // already queued/downloading/completed; this check is just a
-            // cheap precheck against the in-memory snapshot to avoid the
-            // service-call round trip. Skips guids already in downloads
-            // including FAILED, so a previously-failed download isn't auto-
-            // retried on every play (the user can retry from the chip).
-            val app = context.applicationContext as LofiPodApp
-            if (!app.downloadsApi.byId.value.containsKey(ep.guid)) {
+            // Auto-download. Fires immediately so the currently-playing
+            // episode lands offline regardless of whether the user ever
+            // transitions to another track. Backed by the new OkHttp
+            // downloader (v0.6.9 rewrite) — no Media3 download manager,
+            // no shared SimpleCache, no listener that doesn't fire on
+            // progress. Just a plain HTTP fetch into filesDir/episode_audio/.
+            // A prior FAILED state is treated as "needs start" so a replay
+            // naturally retries the offline copy.
+            //
+            // Race: the in-memory `byId` map is hydrated asynchronously at
+            // app launch (LofiPodDownloader.init { cleanupScope.launch {
+            // hydrate() } }). A fast-play on cold start can see
+            // `byId.value[guid] == null` even though the DAO row exists and
+            // the file is fully downloaded. Re-firing start() in that window
+            // wastes work AND emits a COMPLETED transition on byId, which
+            // [observeDownloadCompletion] interprets as "download just
+            // finished, mid-playback handoff!" — firing the handoff cue
+            // beeps and a setMediaItem swap right at the moment audio
+            // finally starts. Use completedFile() (DAO-fallback aware) as
+            // the authoritative check.
+            val existingFile = app.downloadsApi.completedFile(ep.guid)
+            val existingDl = app.downloadsApi.byId.value[ep.guid]
+            val needsStart = existingFile == null && (
+                existingDl == null ||
+                    existingDl.state == com.lofipod.app.data.LofiDownload.State.FAILED
+                )
+            if (needsStart) {
+                withContext(Dispatchers.IO) {
+                    autoDownloadDao.upsert(
+                        com.lofipod.app.data.db.AutoDownloadEntity(
+                            guid = ep.guid,
+                            createdAt = System.currentTimeMillis(),
+                        )
+                    )
+                }
                 app.downloadsApi.start(ep)
+            } else {
+                // Existing download: only renew the auto clock if it WAS
+                // already auto. A manually-downloaded episode (no
+                // auto_download row) stays manual; we don't silently
+                // convert it to auto-with-expiry on replay.
+                withContext(Dispatchers.IO) {
+                    if (autoDownloadDao.get(ep.guid) != null) {
+                        autoDownloadDao.upsert(
+                            com.lofipod.app.data.db.AutoDownloadEntity(
+                                guid = ep.guid,
+                                createdAt = System.currentTimeMillis(),
+                            )
+                        )
+                    }
+                }
             }
 
             // Autoplay confirmation window: if this play was triggered by
@@ -508,6 +836,137 @@ class PlayerController(private val context: Context) {
         scope.launch {
             val ep = episodeFromState(guid) ?: return@launch
             app.downloadsApi.start(ep)
+            // Manual trigger — clear any prior auto-download flag so the
+            // 1-hour-after-finished sweep won't expire this download.
+            withContext(Dispatchers.IO) {
+                autoDownloadDao.delete(guid)
+            }
+        }
+    }
+
+    /**
+     * Fire the deferred DownloadManager add for [guid] if and only if:
+     *   - The episode has an `auto_download` row (= it was scheduled by
+     *     a prior playEpisode call but the manager add was deferred).
+     *   - There's no existing Download for the episode yet (= we
+     *     haven't already promoted it).
+     *
+     * Called from playEpisode's outgoing-item block (track change) and
+     * from the player listener's STATE_ENDED branch (natural end). By
+     * then the SimpleCache has been populated by ExoPlayer's
+     * CacheDataSource as it streamed, so DownloadManager's worker sees
+     * the cached spans and completes near-instantly — no second HTTP
+     * fetch competing with the stream.
+     *
+     * Suspending so it can be called from a coroutine; safe to invoke
+     * even when the inputs are stale (no-ops gracefully).
+     */
+    private suspend fun fireDeferredAutoDownload(guid: String) {
+        val auto = withContext(Dispatchers.IO) { autoDownloadDao.get(guid) } ?: return
+        val app = context.applicationContext as LofiPodApp
+        // With the v0.6.9 OkHttp downloader, every play fires start() inline.
+        // The deferred helpers only fire if no acceptable state already
+        // exists — i.e. the row is FAILED or absent. Don't re-trigger a
+        // currently-running or completed download.
+        val existing = app.downloadsApi.byId.value[guid]
+        if (existing != null) {
+            val s = existing.state
+            if (s == com.lofipod.app.data.LofiDownload.State.QUEUED ||
+                s == com.lofipod.app.data.LofiDownload.State.DOWNLOADING ||
+                s == com.lofipod.app.data.LofiDownload.State.COMPLETED
+            ) return
+        }
+        val ep = withContext(Dispatchers.IO) { episodeFromState(guid) } ?: return
+        app.downloadsApi.start(ep)
+        // Touch the auto_download row to keep the expiration clock fresh.
+        withContext(Dispatchers.IO) {
+            autoDownloadDao.upsert(
+                com.lofipod.app.data.db.AutoDownloadEntity(
+                    guid = guid,
+                    createdAt = System.currentTimeMillis(),
+                )
+            )
+        }
+    }
+
+    /**
+     * Sweep `auto_download` rows that don't yet have a corresponding
+     * Download object — these are deferred auto-downloads from prior
+     * sessions where the user closed the app before transitioning
+     * away from the episode. Fires the manager add for each so the
+     * user's offline copy gets created in the background.
+     *
+     * Cheap: a single DAO query + a few `app.downloadsApi.byId.value`
+     * lookups. Runs on connect() after the warmup completes.
+     */
+    private fun fireDeferredAutoDownloadOrphans() {
+        scope.launch {
+            val app = context.applicationContext as LofiPodApp
+            val rows = withContext(Dispatchers.IO) {
+                // Walk all auto_download rows. "Orphan" = no LofiDownload
+                // entry, OR the entry is in FAILED state (e.g. revived
+                // from a prior interrupted session — see hydrate()). The
+                // finished + unfinished sweeps together cover every row
+                // at MAX_VALUE cutoff (mutually exclusive predicates).
+                val all = (
+                    autoDownloadDao.expiringFinishedGuids(Long.MAX_VALUE) +
+                        autoDownloadDao.expiringUnfinishedGuids(Long.MAX_VALUE)
+                    ).distinct()
+                all.filter { guid ->
+                    val existing = app.downloadsApi.byId.value[guid]
+                    existing == null ||
+                        existing.state == com.lofipod.app.data.LofiDownload.State.FAILED
+                }
+            }
+            for (guid in rows) {
+                fireDeferredAutoDownload(guid)
+            }
+        }
+    }
+
+    /**
+     * Sweep auto-downloaded episodes that should expire. Two rules:
+     *
+     *   1. **Finished + idle 1 h**: episode played to completion AND
+     *      `lastPlayedMillis` older than 1 hour. The user is done with
+     *      it; reclaim the disk.
+     *   2. **Unfinished + idle 32 h**: episode wasn't played to
+     *      completion AND `max(autoDownloadCreatedAt, lastPlayedMillis)`
+     *      older than 32 hours. The user lost interest; reclaim the
+     *      disk. Catches both never-started and started-but-abandoned
+     *      cases via the max() clock.
+     *
+     * Called from [connect] (catches stragglers from prior sessions)
+     * and from [playEpisode] (housekeeping on every track switch).
+     *
+     * Intentionally narrow: only auto-downloads (= rows in `auto_download`)
+     * are eligible. User-triggered downloads (no row) are kept until the
+     * user manually removes them.
+     */
+    private fun sweepExpiredAutoDownloads() {
+        scope.launch {
+            val now = System.currentTimeMillis()
+            val finishedCutoff = now - AUTO_DOWNLOAD_FINISHED_TTL_MS
+            val unfinishedCutoff = now - AUTO_DOWNLOAD_UNFINISHED_TTL_MS
+            val guids = withContext(Dispatchers.IO) {
+                val finished = autoDownloadDao.expiringFinishedGuids(finishedCutoff)
+                val unfinished = autoDownloadDao.expiringUnfinishedGuids(unfinishedCutoff)
+                // De-dupe in case both queries somehow returned the same
+                // guid (shouldn't — finished vs not-finished are mutually
+                // exclusive — but cheap insurance).
+                (finished + unfinished).distinct()
+            }
+            if (guids.isEmpty()) return@launch
+            val app = context.applicationContext as LofiPodApp
+            val have = app.downloadsApi.byId.value.keys
+            for (g in guids) {
+                if (g in have) {
+                    app.downloadsApi.remove(g)
+                }
+                withContext(Dispatchers.IO) {
+                    autoDownloadDao.delete(g)
+                }
+            }
         }
     }
 
@@ -565,9 +1024,21 @@ class PlayerController(private val context: Context) {
      *              the start; matches what every other media player does
      *              when you tap Play on a finished item).
      *   - else   → standard pause/play toggle.
+     *
+     * **Snackbar feedback contract**: any path that doesn't actually
+     * advance the player's visible state (controller not bound yet, no
+     * MediaItem loaded, already buffering) emits a one-shot message via
+     * [transientMessages]. The UI surfaces those as snackbars so the play
+     * button never feels like a silent no-op. The buffering ring around
+     * the play button is the primary "I see your tap" signal; the
+     * snackbar is the second signal for cases where the ring isn't
+     * obviously connected to the user's action.
      */
     fun togglePlay() {
-        val c = controller ?: return
+        val c = controller ?: run {
+            _transientMessages.tryEmit("Player isn't connected yet — try again in a moment.")
+            return
+        }
         // Autoplay-confirmation window: a tap while the timer is counting
         // and the player is playing means "confirm continuation" — cancel
         // the timer, do NOT toggle to pause. The play button is morphed
@@ -581,12 +1052,25 @@ class PlayerController(private val context: Context) {
         when {
             c.isPlaying -> c.pause()
             c.playbackState == Player.STATE_IDLE -> {
+                if (c.currentMediaItem == null) {
+                    _transientMessages.tryEmit("No episode loaded — pick one from the catalog.")
+                    return
+                }
                 c.prepare()
                 c.play()
             }
             c.playbackState == Player.STATE_ENDED -> {
                 c.seekTo(0)
                 c.play()
+            }
+            c.playbackState == Player.STATE_BUFFERING -> {
+                // Player is already trying. Tapping play again won't
+                // accelerate buffering; surface a message so the user
+                // knows we heard them and what's happening.
+                _transientMessages.tryEmit(
+                    "Buffering — waiting on the network. Far seek + slow connection takes a bit."
+                )
+                c.play()  // keeps playWhenReady=true; harmless in BUFFERING.
             }
             else -> c.play()
         }
@@ -610,6 +1094,215 @@ class PlayerController(private val context: Context) {
         autoplayTimerJob = null
         _autoplayTimer.value = null
         controller?.pause()
+    }
+
+    /**
+     * Begin polling [Player.currentPosition] to detect renderer stalls.
+     * Started by [Player.Listener.onIsPlayingChanged] when isPlaying flips
+     * to true; stopped on the inverse. See the field-level docstring on
+     * [stallWatchdogJob] for the why.
+     */
+    private fun startStallWatchdog() {
+        stallWatchdogJob?.cancel()
+        // Reset baselines so a freshly-started playback isn't considered
+        // stalled if the previous run left timestamps stale.
+        lastForwardProgressPosMs = controller?.currentPosition ?: 0L
+        lastForwardProgressAtMs = System.currentTimeMillis()
+        bufferingStartedAtMs = 0L
+        stallWatchdogJob = scope.launch {
+            while (isActive) {
+                delay(STALL_POLL_INTERVAL_MS)
+                val c = controller ?: continue
+                if (!c.playWhenReady) {
+                    // User paused. Reset both timers so a long pause doesn't
+                    // pre-trip either watchdog arm on resume.
+                    bufferingStartedAtMs = 0L
+                    lastForwardProgressAtMs = System.currentTimeMillis()
+                    continue
+                }
+                val now = System.currentTimeMillis()
+
+                // Arm B — chronic STATE_BUFFERING with playWhenReady=true.
+                // Distinct from arm A: when the AudioTrack underruns badly
+                // enough, ExoPlayer transitions out of STATE_READY into
+                // STATE_BUFFERING with isPlaying=false, so arm A's
+                // forward-progress check stops running. Arm B picks up that
+                // slack — multi-second buffering on a local file means the
+                // renderer chain is wedged, not "waiting for network."
+                if (c.playbackState == Player.STATE_BUFFERING) {
+                    if (bufferingStartedAtMs == 0L) {
+                        bufferingStartedAtMs = now
+                    } else if (now - bufferingStartedAtMs >= BUFFERING_STALL_THRESHOLD_MS) {
+                        triggerStallRecovery(c, now, "buffering_${(now - bufferingStartedAtMs) / 1000}s")
+                        bufferingStartedAtMs = now
+                        lastForwardProgressPosMs = c.currentPosition
+                        lastForwardProgressAtMs = now
+                    }
+                    continue
+                } else {
+                    bufferingStartedAtMs = 0L
+                }
+
+                // Arm A — cycling-position underrun. State is READY/PLAYING
+                // but currentPosition isn't advancing. Track a running max so
+                // a position-cycle (43:31→43:36→43:31→...) trips this even
+                // though the position is "moving" within a cycle.
+                if (!c.isPlaying) continue
+                val pos = c.currentPosition
+                if (pos > lastForwardProgressPosMs) {
+                    lastForwardProgressPosMs = pos
+                    lastForwardProgressAtMs = now
+                    continue
+                }
+                if (now - lastForwardProgressAtMs >= STALL_THRESHOLD_MS) {
+                    val stalledForMs = now - lastForwardProgressAtMs
+                    triggerStallRecovery(c, now, "no_progress_${stalledForMs / 1000}s")
+                    // Reset baseline so we don't re-trigger immediately if
+                    // the seek itself takes a moment to register a new
+                    // currentPosition reading.
+                    lastForwardProgressPosMs = c.currentPosition
+                    lastForwardProgressAtMs = now
+                }
+            }
+        }
+    }
+
+    /**
+     * Force-flush the renderer chain after the watchdog detects either a
+     * cycling-position stall (arm A) or chronic buffering (arm B). Steps:
+     *   1. Mark [PlayerState.isStalled] so the UI shows the buffering ring
+     *      around the play button. Auto-cleared after a short linger.
+     *   2. Emit a throttled snackbar nudging the user toward a lower speed
+     *      or disabling linear-phase EQ — the most common DSP-can't-keep-up
+     *      causes for the underrun.
+     *   3. Seek to currentPosition − 100 ms. The negative offset is the
+     *      important part: a same-position seek can be deduped by Media3 /
+     *      the audio sink and produce no flush at all (which is what made
+     *      the previous `seekTo(currentPosition)` recovery sometimes silently
+     *      fail). 100 ms back guarantees a real flush + a brief replay of
+     *      the audio that was likely lost during the stall.
+     *   4. Append a breadcrumb to AppDiagnostics so the diagnostics screen
+     *      can show how often this fires across builds.
+     */
+    private fun triggerStallRecovery(c: MediaController, nowMs: Long, kind: String) {
+        val recoveryPosMs = c.currentPosition
+        val speed = c.playbackParameters.speed
+
+        _state.update { it.copy(isStalled = true) }
+        scope.launch {
+            delay(STALL_INDICATOR_LINGER_MS)
+            _state.update { it.copy(isStalled = false) }
+        }
+
+        if (nowMs - lastStallMessageAtMs >= STALL_MESSAGE_THROTTLE_MS) {
+            _transientMessages.tryEmit(
+                "Audio chain stalled at ${"%.2fx".format(speed)} — recovering. " +
+                    "Try a lower speed or disabling linear-phase EQ if this keeps happening."
+            )
+            lastStallMessageAtMs = nowMs
+        }
+
+        // Seek-back-100ms forces a real flush. Same-position seek can be
+        // deduped; this can't.
+        val flushTarget = (recoveryPosMs - STALL_RECOVERY_REWIND_MS).coerceAtLeast(0L)
+        c.seekTo(flushTarget)
+        com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
+            identifier = "renderer_stall",
+            detail = "Force-flushed at ${recoveryPosMs / 1000}s ($kind, speed=${"%.2fx".format(speed)}).",
+        )
+    }
+
+    private fun stopStallWatchdog() {
+        stallWatchdogJob?.cancel()
+        stallWatchdogJob = null
+    }
+
+    /**
+     * Observe [LofiPodDownloader.byId] for the currently-playing episode.
+     * When a download completes for the same guid the player is currently
+     * streaming over HTTP, swap the MediaItem to the local `file://` URI
+     * so the remainder of playback reads from disk — saves bandwidth +
+     * eliminates the buffer-runs-empty-at-2x failure mode.
+     *
+     * Mechanics:
+     *   1. Snapshot current position + playWhenReady.
+     *   2. Build a new MediaItem with the file:// URI (same metadata).
+     *   3. Fire a quick double-beep cue in parallel via [BeepPlayer.playHandoffCue]
+     *      — the cue fills the brief silence from setMediaItem + prepare,
+     *      partially disguising the swap so the user reads it as
+     *      intentional rather than a glitch.
+     *   4. setMediaItem(newItem, savedPos); prepare(); play() if was playing.
+     *   5. Emit a snackbar via [transientMessages]: "Playback branched to
+     *      downloaded file."
+     *
+     * Skipped when:
+     *   - No episode currently playing
+     *   - The current MediaItem is already a `file://` URI (already on disk)
+     *   - We've already triggered handoff for this guid (race guard)
+     */
+    private suspend fun observeDownloadCompletion() {
+        val app = context.applicationContext as LofiPodApp
+        app.downloadsApi.byId.collect { map ->
+            val c = controller ?: return@collect
+            val currentGuid = c.currentMediaItem?.mediaId ?: return@collect
+            // Reset the per-guid handoff guard if the episode changed —
+            // a new episode might also need a handoff later.
+            if (handoffTriggeredForGuid != null && handoffTriggeredForGuid != currentGuid) {
+                handoffTriggeredForGuid = null
+            }
+            if (handoffTriggeredForGuid == currentGuid) return@collect
+            val download = map[currentGuid] ?: return@collect
+            if (download.state != com.lofipod.app.data.LofiDownload.State.COMPLETED) return@collect
+            // Already playing from disk?
+            val currentUri = c.currentMediaItem?.localConfiguration?.uri ?: return@collect
+            val scheme = currentUri.scheme?.lowercase()
+            if (scheme == "file") return@collect
+            // Get the local file (race-safe via the suspend completedFile).
+            val localFile = app.downloadsApi.completedFile(currentGuid) ?: return@collect
+
+            handoffTriggeredForGuid = currentGuid
+            triggerDownloadHandoff(c, currentGuid, localFile)
+        }
+    }
+
+    private suspend fun triggerDownloadHandoff(
+        c: MediaController,
+        guid: String,
+        localFile: java.io.File,
+    ) {
+        val savedPosMs = c.currentPosition
+        val wasPlaying = c.playWhenReady
+        // Reuse the existing MediaMetadata so the title / artist / artwork
+        // don't blink during the swap.
+        val metadata = c.mediaMetadata
+        val newItem = MediaItem.Builder()
+            .setMediaId(guid)
+            .setUri(android.net.Uri.fromFile(localFile))
+            .setMediaMetadata(metadata)
+            .build()
+
+        // Fire the audible cue + snackbar in parallel with the swap. The
+        // cue uses a fresh BeepPlayer (light — buffers + a transient
+        // AudioTrack per beep) and is released in finally.
+        val cuePlayer = com.lofipod.app.audio.BeepPlayer(c)
+        scope.launch {
+            try {
+                cuePlayer.playHandoffCue()
+            } finally {
+                cuePlayer.release()
+            }
+        }
+        _transientMessages.tryEmit("Playback branched to downloaded file.")
+
+        // Swap. setMediaItem(item, position) bundles a seek so the player
+        // prepares the new source AT savedPosMs rather than 0; saves a
+        // separate seekTo call and the latency that comes with it.
+        c.setMediaItem(newItem, savedPosMs)
+        c.prepare()
+        // Restore play state. ExoPlayer respects playWhenReady across a
+        // setMediaItem; explicit play() is belt-and-braces in case the
+        // controller's flag was reset by the swap.
+        if (wasPlaying) c.play()
     }
 
     /**
@@ -818,7 +1511,14 @@ class PlayerController(private val context: Context) {
     }
 
     fun setSpeed(speed: Float) {
-        controller?.setPlaybackSpeed(speed.coerceIn(0.5f, 3.0f))
+        val clamped = speed.coerceIn(0.5f, 3.0f)
+        // Mirror speed into AudioChainTelemetry immediately so the PerfHint
+        // bridge sees the new wall-clock budget on the very next buffer. The
+        // onPlaybackParametersChanged listener also writes it (covers session-
+        // side originators), but writing here too closes the window between
+        // setPlaybackSpeed and the listener fire.
+        com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = clamped
+        controller?.setPlaybackSpeed(clamped)
     }
 
     fun currentPositionMs(): Long = controller?.currentPosition ?: 0L
@@ -907,6 +1607,55 @@ class PlayerController(private val context: Context) {
      *
      * Falls through silently when neither lookup yields anything.
      */
+    /**
+     * If the user has canon-order autoplay enabled AND [finishedGuid]
+     * has a detected scripture ref, find the next sermon in canon order
+     * and play it. Returns true if a play was issued (caller skips the
+     * normal queue advance), false otherwise.
+     *
+     * "Next in canon" = strictly after the finished episode's start
+     * passage, regardless of feed or pubDate. Driven by
+     * [com.lofipod.app.data.db.EpisodeScriptureDao.nextInCanon].
+     *
+     * Excluded feeds (per `Settings.canonBrowseExcludedFeeds`) are NOT
+     * applied here — the user explicitly opted into canon-order play
+     * for the current episode's book; respecting browse-time exclusions
+     * here would silently skip sermons mid-series.
+     */
+    private suspend fun tryAdvanceToNextInCanon(finishedGuid: String): Boolean {
+        val app = context.applicationContext as LofiPodApp
+        val settings = com.lofipod.app.data.Settings(app)
+        val enabled = withContext(Dispatchers.IO) {
+            settings.canonAutoplayEnabled.first()
+        }
+        if (!enabled) return false
+        val current = withContext(Dispatchers.IO) {
+            app.db.episodeScriptureDao().get(finishedGuid)
+        } ?: return false
+        // Use the END passage as the "current position" so the next sermon
+        // genuinely starts after this one. Fall back to start if endCh is
+        // missing.
+        val ch = current.endCh ?: current.startCh ?: return false
+        val v = current.endV ?: current.startV ?: 0
+        val next = withContext(Dispatchers.IO) {
+            app.db.episodeScriptureDao().nextInCanon(
+                book = current.book,
+                ch = ch,
+                v = v,
+                excludeGuid = finishedGuid,
+            )
+        } ?: run {
+            // End of book reached. Clear the flag so the user isn't
+            // stuck in canon mode for the next session and surprised
+            // by it on a different episode.
+            withContext(Dispatchers.IO) { settings.setCanonAutoplayEnabled(false) }
+            return false
+        }
+        val ep = episodeFromState(next.guid) ?: return false
+        playEpisode(ep = ep, podcastTitle = "", podcastArt = ep.episodeArtworkUrl)
+        return true
+    }
+
     private suspend fun advanceToNextInQueue(excluding: String?) {
         val app = context.applicationContext as LofiPodApp
 
@@ -1019,9 +1768,70 @@ class PlayerController(private val context: Context) {
     companion object {
         const val SESSION_GAP_MS = 30L * 60 * 1000        // 30 min
         const val CHECKPOINT_CAP = 200
+        /**
+         * Time after an auto-downloaded episode finishes playing before
+         * its download is eligible for removal. User spec — episodes the
+         * user didn't manually download should free up disk shortly after
+         * they're done with them, but not immediately (so a quick
+         * re-listen doesn't have to re-fetch the file).
+         */
+        const val AUTO_DOWNLOAD_FINISHED_TTL_MS = 60L * 60 * 1000   // 1 hour
+
+        /**
+         * Time after an auto-downloaded episode was last touched (whichever
+         * is later: the auto-download fire, or the most recent playback
+         * tick) before an UNFINISHED episode's auto-download is eligible
+         * for removal. Longer than the finished TTL because not finishing
+         * is ambiguous — user might come back to it — but bounded so
+         * orphaned auto-downloads don't accumulate forever on disk for
+         * episodes the user lost interest in.
+         */
+        const val AUTO_DOWNLOAD_UNFINISHED_TTL_MS = 32L * 60 * 60 * 1000   // 32 hours
         const val REASON_JUMP_FROM = "jump_from"
         const val REASON_SESSION_END = "session_end"
         const val REASON_PROMOTED_TO_MOST_EXCELLENT = "promoted_to_most_excellent"
+
+        /** Stall watchdog poll period. 1 s — twice as frequent as v0.6.16
+         *  so the user sees the indicator + snackbar within a second of
+         *  the watchdog deciding to act. CPU cost is negligible (one
+         *  position read + a few comparisons per second). */
+        private const val STALL_POLL_INTERVAL_MS = 1_000L
+
+        /** No-forward-progress duration that counts as a stall. Tightened
+         *  from 10 s (v0.6.16) → 6 s after a user report of "almost
+         *  immediate" cycling on a downloaded episode at 2x. The cycling
+         *  has a ~5 s period; 6 s catches the first complete cycle
+         *  without false-positive on legitimate buffering. */
+        private const val STALL_THRESHOLD_MS = 6_000L
+
+        /** How long [PlayerState.isStalled] stays true after a recovery
+         *  seek before it's auto-cleared. Long enough for the user to see
+         *  the indicator + read the snackbar; short enough that the ring
+         *  doesn't linger past the recovery itself if it succeeded. */
+        private const val STALL_INDICATOR_LINGER_MS = 2_000L
+
+        /** Minimum gap between stall snackbars. Stops a chronic-stall
+         *  cycle from spamming the user every recovery — first occurrence
+         *  fires the message, the next ~30 s of stalls just get the
+         *  indicator + diagnostics log. */
+        private const val STALL_MESSAGE_THROTTLE_MS = 30_000L
+
+        /** How long the player can sit in `STATE_BUFFERING` with
+         *  `playWhenReady=true` before arm B of the watchdog flags it as a
+         *  stall. Longer than [STALL_THRESHOLD_MS] because legitimate
+         *  buffering on a far scrub or first play of a remote stream can
+         *  legitimately take several seconds — but on a downloaded local
+         *  file 8 s of buffering means the renderer chain is wedged. */
+        private const val BUFFERING_STALL_THRESHOLD_MS = 8_000L
+
+        /** How far back to seek when force-flushing on a stall. A
+         *  same-position seek can be deduped by Media3 / the audio sink
+         *  and produce no flush at all (which is exactly what made the
+         *  previous `seekTo(currentPosition)` recovery silently fail in
+         *  some cases). 100 ms guarantees a real flush + a brief replay
+         *  of the audio likely missed during the stall. */
+        private const val STALL_RECOVERY_REWIND_MS = 100L
+
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
         private const val STEP = 1024L
@@ -1062,6 +1872,17 @@ data class PlayerState(
      */
     val isBuffering: Boolean = false,
     /**
+     * True when the stall watchdog has detected the renderer is stuck
+     * (cycling-position underrun). Distinct from [isBuffering] because
+     * Media3 keeps the player in STATE_READY during DSP-side stalls — the
+     * audio data is loaded, the audio thread just can't keep up. Without
+     * this flag the UI would show "playing" while nothing is audible.
+     * Cleared automatically a couple of seconds after the watchdog's
+     * recovery seek so the indicator doesn't linger longer than the
+     * recovery itself takes.
+     */
+    val isStalled: Boolean = false,
+    /**
      * Most recent ExoPlayer error message, if any. Cleared on the next
      * successful state transition (BUFFERING / READY) so a transient failure
      * doesn't stick around forever. Surfaced in the player UI as a chip
@@ -1086,4 +1907,14 @@ private data class PendingPlay(
     val podcastTitle: String,
     val podcastArt: String?,
     val forcedStartMs: Long?,
+    /**
+     * Snapshot of [PlayerController.lastPlayWasAutoplay] at the moment this
+     * play attempt was queued. Without this field, the autoplay flag would
+     * leak across a controller-null bail: advanceToNextInQueue sets the flag
+     * true and calls playEpisode, the null-controller branch stores the play
+     * in pendingPlay and returns BEFORE consuming the flag, and a subsequent
+     * manual playEpisode tap arrives, consumes the stale flag, and arms the
+     * autoplay-confirmation timer for a play the user perceives as manual.
+     */
+    val wasAutoplay: Boolean,
 )

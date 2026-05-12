@@ -48,6 +48,10 @@ fun SettingsScreen(
     controller: PlayerController,
     onBack: () -> Unit,
     onOpenAudioDiagnostics: () -> Unit = {},
+    onOpenAudiophileNotes: () -> Unit = {},
+    onOpenLofiNotes: () -> Unit = {},
+    onOpenAppDiagnostics: () -> Unit = {},
+    onOpenTextSettings: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -159,12 +163,8 @@ fun SettingsScreen(
             )
 
             Spacer(Modifier.height(20.dp))
-            SectionHeader("Fonts")
-            Text(
-                "Press Start 2P by Cody \"CodeMan38\" Boisclair, used under the SIL Open Font License 1.1. Full license text bundled at assets/PressStart2P-OFL.txt.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            SectionHeader("System")
+            BatteryOptimizationRow()
 
             Spacer(Modifier.height(20.dp))
             SectionHeader("Data")
@@ -198,6 +198,55 @@ fun SettingsScreen(
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = onOpenAudioDiagnostics) {
                 Text("Open full audio diagnostics")
+            }
+            // In-Player diagnostics tab. When on, PlayerScreen's bottom tab
+            // strip grows a 4th "Diagnostics" tab next to Notes / Details /
+            // Transcript. Useful when something sounds wrong while you're
+            // actively listening — fastest path from "wait, that's not
+            // right" to live readouts is one tap on the tab strip, no nav
+            // hop required. Includes its own full-screen mode that keeps
+            // the mini-player visible at the bottom for transport while
+            // you read.
+            DiagnosticsTabToggleRow()
+            // App-wide bug telemetry — feed failures, download failures,
+            // scripture-tag skips, etc. Distinct from Audio diagnostics
+            // (chain-specific). Lands here so a user can capture concrete
+            // data when something breaks instead of "it didn't work."
+            TextButton(onClick = onOpenAppDiagnostics) {
+                Text("App diagnostics (bugs)")
+            }
+
+            // Notes about audio — both pages exposed equally so a reader
+            // who self-identifies as a non-audiophile can find the
+            // plain-language guide without having to tap an
+            // audiophile-flavored entry first. Both pages cross-link to
+            // each other; this section is the canonical entry to either.
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Notes about audio")
+            Text(
+                "Two takes on the same audio chain. Pick the one that " +
+                    "matches how you want to think about it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onOpenLofiNotes) {
+                Text("Audio guide (plain language)")
+            }
+            TextButton(onClick = onOpenAudiophileNotes) {
+                Text("Notes for audiophiles")
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionHeader("Text")
+            Text(
+                "Pick a body font (system or bundled Garamond) and dial in the " +
+                    "size of the notes text + the note editor pop-up. Live preview " +
+                    "shows the result before you commit.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onOpenTextSettings) {
+                Text("Text & font")
             }
 
             Spacer(Modifier.height(20.dp))
@@ -251,6 +300,42 @@ private fun SwitchRow(
  * skip-silence level) so a user can sanity-check that what the EQ screen
  * shows matches what the running [PlaybackService.sharedEq] actually has.
  */
+/**
+ * "Show Diagnostics tab on Player" row. A simple [SwitchRow] would work, but
+ * doing it inline lets the subtitle copy explain the in-player full-screen
+ * mode + mini-player anchor — a behavior subtle enough to warrant a couple of
+ * extra words rather than burying it in About / Help.
+ */
+@Composable
+private fun DiagnosticsTabToggleRow() {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
+    val settings = remember { Settings(app) }
+    val scope = rememberCoroutineScope()
+    val enabled by settings.showDiagnosticsTabInPlayer.collectAsState(initial = false)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Switch(
+            checked = enabled,
+            onCheckedChange = { v -> scope.launch { settings.setShowDiagnosticsTabInPlayer(v) } },
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Show Diagnostics tab on Player",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                "Adds a 4th tab next to Notes / Details / Transcript with live audio-chain health, watchpoints, and a one-tap snapshot-to-note. Includes a full-screen mode that keeps the mini-player visible for transport.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 @Composable
 private fun AudioDiagnosticsRow(controller: PlayerController) {
     val ctx = LocalContext.current
@@ -622,6 +707,92 @@ private fun ShareApkRow() {
             Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Share link")
+        }
+    }
+}
+
+/**
+ * Battery-optimization request row. Reads `PowerManager.isIgnoringBatteryOptimizations`
+ * for the live status and offers a button that fires the system prompt to
+ * mark LofiPod as "Unrestricted."
+ *
+ * Why this exists: even with a `mediaPlayback` foreground service, Doze + App
+ * Standby Buckets can throttle background CPU scheduling, network sockets,
+ * and timer fidelity in ways that surface as playback jitter — particularly
+ * during long sessions, with the screen off, or at >1x speed where each
+ * scheduling hiccup eats more wall-clock budget. Granting unrestricted
+ * status removes that throttling. Vendor skins (Xiaomi, OnePlus, Samsung's
+ * "deep sleep" lists, etc.) ship even more aggressive defaults than stock
+ * AOSP, so this can be a real fix for users on those devices.
+ *
+ * Status auto-refreshes when the user returns from the system Settings page
+ * via the [rememberLauncherForActivityResult] callback — no lifecycle
+ * observer needed, and matches the existing pattern used by
+ * [AutoBackupRow]'s folder picker.
+ */
+@Composable
+private fun BatteryOptimizationRow() {
+    val ctx = LocalContext.current
+    val pm = remember { ctx.getSystemService(android.os.PowerManager::class.java) }
+
+    // Recompose-tracked tick so the launcher callback can force a re-read
+    // of isIgnoringBatteryOptimizations after the user returns from the
+    // system prompt. The PowerManager API has no broadcast for this.
+    var refreshTick by remember { mutableStateOf(0) }
+    val isUnrestricted = remember(refreshTick) {
+        pm?.isIgnoringBatteryOptimizations(ctx.packageName) ?: false
+    }
+
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // User returned from either the request prompt or the per-app
+        // battery details page. Bump the tick so we re-read the live state.
+        refreshTick++
+    }
+
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text("Battery optimization", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "Android can throttle background CPU and wake-up scheduling to " +
+                "save battery. That throttling can cause occasional playback " +
+                "stutters or hangs, especially during long sessions with the " +
+                "screen off or at >1x speed. Marking LofiPod as " +
+                "\"Unrestricted\" lets the audio thread run smoothly. " +
+                "Vendor skins (Xiaomi, OnePlus, Samsung) are stricter than " +
+                "stock Android — recommended on those devices.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (isUnrestricted) "Status: unrestricted"
+                else "Status: optimized (may throttle background playback)",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (isUnrestricted) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (isUnrestricted) {
+                // Already unrestricted — give the user a way back into the
+                // per-app system page in case they want to revert or verify.
+                TextButton(onClick = {
+                    val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(android.net.Uri.parse("package:${ctx.packageName}"))
+                    runCatching { launcher.launch(intent) }
+                }) { Text("Open settings") }
+            } else {
+                FilledTonalButton(onClick = {
+                    // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS pops the
+                    // system "Allow [app] to use battery without restrictions?"
+                    // dialog. Requires REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                    // declared in the manifest, otherwise SecurityException.
+                    val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                        .setData(android.net.Uri.parse("package:${ctx.packageName}"))
+                    runCatching { launcher.launch(intent) }
+                }) { Text("Allow unrestricted") }
+            }
         }
     }
 }

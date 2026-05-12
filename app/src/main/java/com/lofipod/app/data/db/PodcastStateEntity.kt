@@ -7,16 +7,27 @@ import androidx.room.PrimaryKey
  * Per-podcast user state. Keyed by feedUrl (treated as stable, the same way
  * episode_state treats episode GUIDs as stable).
  *
- * Currently only carries the per-podcast default playback speed. The pattern
- * is intentionally generic — anything that's "show-level, persists across
- * episodes" lands here (e.g. a future per-podcast EQ override).
+ * Carries:
+ *   - [defaultSpeed]: per-podcast playback speed override (null = no override).
+ *   - [eqDisabled]: **deprecated as of v0.6.12.** No code reads this. The
+ *     "disable EQ" concept was redundant with "set bands to flat"; the
+ *     master "Audio enhancement" toggle in Settings still gates the whole
+ *     DSP chain globally. Column kept on schema only so v0.6.11 → v0.6.12
+ *     doesn't need a migration to drop it.
+ *   - [eqBandsCsvOverride]: per-podcast EQ tuning (CSV of dB floats in
+ *     band order). Null = the podcast hasn't been tuned yet → chain runs
+ *     flat for its episodes. Non-null = these gains apply to every episode
+ *     of this podcast unless that specific episode has a one-off override
+ *     of its own (`episode_state.eqBandsCsvOverride`).
  *
- * `defaultSpeed = null` means "no override — use the player default 1.0x."
- * That's distinct from `defaultSpeed = 1.0f`, which the user explicitly chose
- * (and stays as their choice if they later change the global default).
+ * Inheritance model (v0.6.12): each podcast owns its own EQ — there is NO
+ * global EQ. An episode normally inherits its podcast's tuning. The
+ * per-episode override is the one branch point, scoped to a single episode.
  */
 @Entity(tableName = "podcast_state")
 data class PodcastStateEntity(
     @PrimaryKey val feedUrl: String,
     val defaultSpeed: Float? = null,
+    val eqDisabled: Boolean = false,
+    val eqBandsCsvOverride: String? = null,
 )

@@ -21,10 +21,10 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -65,7 +65,8 @@ fun CatalogScreen(
     onOpenSettings: () -> Unit,
     onOpenNowPlaying: () -> Unit,
     onOpenHistory: () -> Unit,
-    onOpenSearch: () -> Unit
+    onOpenSearch: () -> Unit,
+    onOpenCanonBrowse: () -> Unit,
 ) {
     val vm: CatalogViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -142,8 +143,14 @@ fun CatalogScreen(
                 actions = {
                     if (playerState.currentEpisodeGuid != null) {
                         IconButton(onClick = onOpenNowPlaying) {
+                            // GraphicEq (pulsing-bar live-audio glyph) for the
+                            // Now Playing top-bar action — matches the same
+                            // glyph used on PlayerScreen's top-bar title and
+                            // EpisodesScreen's per-row "currently playing"
+                            // marker. Replaced MusicNote here as part of the
+                            // Audio Fine-tuning ↔ Now Playing icon split.
                             Icon(
-                                Icons.Filled.MusicNote,
+                                Icons.Filled.GraphicEq,
                                 contentDescription = "Now playing",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(28.dp)
@@ -198,6 +205,11 @@ fun CatalogScreen(
                                 leadingIcon = { Icon(Icons.Filled.Search, null) }
                             )
                             DropdownMenuItem(
+                                text = { Text("Bible index") },
+                                onClick = { menuExpanded = false; onOpenCanonBrowse() },
+                                leadingIcon = { Icon(Icons.Filled.MenuBook, null) }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Playback history") },
                                 onClick = { menuExpanded = false; onOpenHistory() },
                                 leadingIcon = { Icon(Icons.Filled.History, null) }
@@ -208,9 +220,9 @@ fun CatalogScreen(
                                 leadingIcon = { Icon(Icons.Filled.BarChart, null) }
                             )
                             DropdownMenuItem(
-                                text = { Text("EQ & speed") },
+                                text = { Text("Audio Fine-tuning") },
                                 onClick = { menuExpanded = false; onOpenEq() },
-                                leadingIcon = { Icon(Icons.Filled.GraphicEq, null) }
+                                leadingIcon = { Icon(Icons.Filled.Tune, null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Refresh feeds") },

@@ -18,20 +18,25 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 
 /**
@@ -50,6 +55,14 @@ fun NoteCard(
     modifier: Modifier = Modifier,
     episodeTitle: String? = null,
 ) {
+    // Notes-text size from Settings — applied to the note body only, not
+    // the citation row, so the citation stays compact regardless of how
+    // large the user wants their note text. Theme typography still drives
+    // the rest of the card; this just nudges the size of the user's prose.
+    val ctx = LocalContext.current
+    val settings = remember { Settings(ctx) }
+    val noteSizeSp by settings.notesTextSizeSp.collectAsState(initial = 14f)
+
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -94,7 +107,10 @@ fun NoteCard(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            Text(entry.text, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                entry.text,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = noteSizeSp.sp),
+            )
         }
     }
 }
@@ -112,6 +128,13 @@ fun NoteEditorDialog(
     onConfirm: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf(initialText) }
+    // Independent text size for the editor surface — typing benefits from
+    // a slightly larger size than reading the resulting card. Read live
+    // from Settings so the user's adjustment on the Text settings screen
+    // takes effect immediately on the next dialog open.
+    val ctx = LocalContext.current
+    val settings = remember { Settings(ctx) }
+    val popupSizeSp by settings.notesPopupTextSizeSp.collectAsState(initial = 16f)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(citation, style = MaterialTheme.typography.bodyMedium) },
@@ -122,6 +145,7 @@ fun NoteEditorDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 120.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = popupSizeSp.sp),
                 placeholder = { Text("Your thoughts on this moment…") },
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Sentences,

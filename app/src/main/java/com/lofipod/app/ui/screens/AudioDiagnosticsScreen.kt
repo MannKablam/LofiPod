@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.AudioChainTelemetry
 import com.lofipod.app.audio.EqPresets
+import com.lofipod.app.diagnostics.AppDiagnostics
+import com.lofipod.app.diagnostics.StartupTimings
 import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
@@ -88,7 +90,19 @@ fun AudioDiagnosticsScreen(
     // Snapshot the volatile fields once per tick so the rendering below sees
     // a consistent set of values within a single recomposition.
     val snap = remember(tick) { TelemetrySnapshot.capture() }
+    val timing = remember(tick) { AudioChainTelemetry.computeBufferTimingStats() }
     val events = remember(tick) { AudioChainTelemetry.snapshotEvents() }
+    val startupPhases = remember(tick) { StartupTimings.snapshot() }
+    // Stall-watchdog firings: filtered AppDiagnostics entries. Surfaced
+    // here (not just buried in Settings → App diagnostics → Other) so the
+    // user can see at a glance whether the renderer is repeatedly
+    // recovering from underruns at high playback speeds.
+    val appEvents by AppDiagnostics.entries.collectAsState()
+    val stallEvents = remember(appEvents) {
+        appEvents.filter {
+            it.category == AppDiagnostics.Category.OTHER && it.identifier == "renderer_stall"
+        }
+    }
     val eq = PlaybackService.sharedEq
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     val gainDb = remember(playerState, tick) { eq.currentGainDb() }
@@ -135,6 +149,14 @@ fun AudioDiagnosticsScreen(
                     Spacer(Modifier.height(12.dp))
                     SectionLabel("Live")
                     Text(formatLive(snap), style = MaterialTheme.typography.bodySmall)
+
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("Performance")
+                    Text(formatPerformance(snap, timing), style = MaterialTheme.typography.bodySmall)
+
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("Scheduler")
+                    Text(formatScheduler(snap), style = MaterialTheme.typography.bodySmall)
 
                     Spacer(Modifier.height(12.dp))
                     SectionLabel("Counters")
@@ -187,6 +209,30 @@ fun AudioDiagnosticsScreen(
                     } else {
                         Text(formatEvents(events), style = MaterialTheme.typography.bodySmall)
                     }
+
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("Stall watchdog (newest first)")
+                    if (stallEvents.isEmpty()) {
+                        Text(
+                            "  (no renderer stalls recorded — chain is keeping up)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(formatStallEvents(stallEvents), style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("Startup")
+                    if (startupPhases.isEmpty()) {
+                        Text(
+                            "  (no phases recorded yet)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(formatStartup(startupPhases), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
 
@@ -195,6 +241,7 @@ fun AudioDiagnosticsScreen(
                 TextButton(onClick = {
                     val text = buildClipboardDump(
                         snap = snap,
+                        timing = timing,
                         bands = bandsLabel,
                         gainDb = gainDb,
                         audioEnhancement = audioEnhancement,
@@ -202,6 +249,8 @@ fun AudioDiagnosticsScreen(
                         playerLine = formatPlayerLine(playerState),
                         errorVerbose = errorVerbose,
                         events = events,
+                        stallEvents = stallEvents,
+                        startupPhases = startupPhases,
                     )
                     copyToClipboard(ctx, text)
                 }) { Text("Copy to clipboard") }
@@ -318,6 +367,18 @@ private val HELP_TEXT: String = """
       passthrough_bufs vs dsp_bufs: how many input buffers went through the fast passthrough vs the full DSP path.
       frames_processed total 1x-rate frames that have moved through queueInput.
 
+    Performance — wallclock measurements around the DSP path's queueInput. Read these to see if the audio thread is keeping up with real time, especially in pocket / screen-off / thermal-throttled conditions.
+      last_proc       processing time of the most recent buffer.
+      avg_proc / p95  rolling stats over the last ~64 buffers.
+      max_proc        peak observed since last counters reset.
+      load_factor     processing / audio-time, as a percentage. 5% means the chain finished in 5% of the audio's duration (95% headroom). Values approaching 100% mean the audio thread is saturated and underruns are imminent.
+
+    Scheduler — OS-level facts about the thread running the DSP chain.
+      audio_thread     Linux TID + Java thread name of the audio sink thread. Captured on the first buffer; bumps if the sink is rebuilt mid-session.
+      thread_priority  Process.getThreadPriority for that TID. Should be -16 (AUDIO) or -19 (URGENT_AUDIO). 0 (DEFAULT) means the chain is competing with normal app threads for CPU and underruns are expected on any contention — that's a bug.
+      demotions        How many times the priority has been observed >= 0 (i.e. demoted out of audio priority) since process start. Each transition logs a 'priority_demoted' (and matching 'priority_recovered') event in Recent events with a timestamp — so if this number is non-zero, scroll down to the event log to see when each demotion happened.
+      perf_hint        State of the Android 12+ PerformanceHintManager wiring. When "active", the OS scheduler keeps the CPU at the right frequency for the audio chain's measured workload — fewer downclock-then-spinup events and fewer max-load spikes during sustained playback. "unsupported" on API <31 or OEMs without the service.
+
     EQ / Player / Last error — same data the inline panel in Settings shows, kept here so a screenshot of this screen captures the full picture.
 
     Recent events — circular log of the last ~50 chain transitions. Read newest first; "ago" is wall-clock time since the event.
@@ -366,6 +427,17 @@ private data class TelemetrySnapshot(
     val passthroughBuffers: Long,
     val dspBuffers: Long,
     val framesProcessed: Long,
+    val lastBufferProcessingNs: Long,
+    val lastBufferAudioNs: Long,
+    val maxBufferProcessingNs: Long,
+    val audioThreadId: Int,
+    val audioThreadName: String,
+    val audioThreadPriority: Int,
+    val perfHintApiSupported: Boolean,
+    val perfHintSessionActive: Boolean,
+    val perfHintTargetNs: Long,
+    val perfHintLastError: String?,
+    val priorityDemotions: Int,
 ) {
     companion object {
         fun capture(): TelemetrySnapshot = with(AudioChainTelemetry) {
@@ -394,6 +466,17 @@ private data class TelemetrySnapshot(
                 passthroughBuffers = passthroughBufferCount(),
                 dspBuffers = dspBufferCount(),
                 framesProcessed = framesProcessedCount(),
+                lastBufferProcessingNs = lastBufferProcessingNs,
+                lastBufferAudioNs = lastBufferAudioNs,
+                maxBufferProcessingNs = maxBufferProcessingNs,
+                audioThreadId = audioThreadId,
+                audioThreadName = audioThreadName,
+                audioThreadPriority = audioThreadPriority,
+                perfHintApiSupported = perfHintApiSupported,
+                perfHintSessionActive = perfHintSessionActive,
+                perfHintTargetNs = perfHintTargetNs,
+                perfHintLastError = perfHintLastError,
+                priorityDemotions = priorityDemotionCount(),
             )
         }
     }
@@ -449,6 +532,108 @@ private fun formatCounters(s: TelemetrySnapshot): String {
     }
 }
 
+/**
+ * Format the Scheduler section: audio thread identity + priority + the
+ * Performance Hint API status. Surfaces two distinct things the user (or
+ * a bug-report reader) needs to triage stutters:
+ *   1. Is the DSP actually running at THREAD_PRIORITY_AUDIO (= -16)? If
+ *      not, it's competing with normal app threads and underruns are
+ *      expected on any CPU contention.
+ *   2. Did we successfully wire up PerformanceHintManager? On a supported
+ *      device with an active session, the OS scheduler keeps the CPU at
+ *      the right frequency for the workload — visible as fewer max-load
+ *      spikes after sustained playback.
+ */
+private fun formatScheduler(s: TelemetrySnapshot): String {
+    if (s.audioThreadId <= 0) {
+        return "  (no audio buffers processed yet — thread info captured on first buffer)"
+    }
+    val priorityLabel = when (s.audioThreadPriority) {
+        Int.MIN_VALUE -> "?"
+        // Process.THREAD_PRIORITY_* constants; the audio sink's BG callback
+        // thread should land on AUDIO (-16) or URGENT_AUDIO (-19).
+        -19 -> "${s.audioThreadPriority} (URGENT_AUDIO — best)"
+        -16 -> "${s.audioThreadPriority} (AUDIO — expected)"
+        in -15..-1 -> "${s.audioThreadPriority} (above normal)"
+        0 -> "${s.audioThreadPriority} (DEFAULT — WRONG, thread should be AUDIO)"
+        in 1..19 -> "${s.audioThreadPriority} (BELOW normal — WRONG)"
+        else -> s.audioThreadPriority.toString()
+    }
+    val hintLine = if (!s.perfHintApiSupported) {
+        "unsupported (Android 12+ required — running on older / OEM without service)"
+    } else if (!s.perfHintSessionActive) {
+        val err = s.perfHintLastError
+        if (err != null) "supported but no active session ($err)"
+        else "supported, no session yet (will create on first buffer)"
+    } else {
+        val targetMs = s.perfHintTargetNs / 1_000_000.0
+        "active, target = ${"%.2f".format(targetMs)} ms / buffer"
+    }
+    return buildString {
+        append("  audio_thread     = tid=${s.audioThreadId} name='${s.audioThreadName}'\n")
+        append("  thread_priority  = $priorityLabel\n")
+        append("  demotions        = ${s.priorityDemotions}")
+        if (s.priorityDemotions > 0) {
+            append("  (see 'priority_demoted' in Recent events for timestamps)")
+        }
+        append("\n  perf_hint        = $hintLine")
+        s.perfHintLastError?.let { append("\n  perf_hint_error  = $it") }
+    }
+}
+
+private fun formatPerformance(
+    s: TelemetrySnapshot,
+    timing: AudioChainTelemetry.BufferTimingStats,
+): String {
+    if (timing.sampleCount == 0 || s.lastBufferAudioNs == 0L) {
+        return "  (no DSP buffers processed yet)"
+    }
+    fun nsToMs(ns: Long): String = "%.2f ms".format(ns / 1_000_000.0)
+    fun pct(d: Double): String = "%.1f%%".format(d * 100.0)
+    val lastLoad = if (s.lastBufferAudioNs > 0) {
+        s.lastBufferProcessingNs.toDouble() / s.lastBufferAudioNs
+    } else 0.0
+    return buildString {
+        append("  last_proc       = ${nsToMs(s.lastBufferProcessingNs)} for ${nsToMs(s.lastBufferAudioNs)} of audio\n")
+        append("  avg_proc        = ${nsToMs(timing.avgProcessingNs)}\n")
+        append("  p95_proc        = ${nsToMs(timing.p95ProcessingNs)}\n")
+        append("  max_proc        = ${nsToMs(s.maxBufferProcessingNs)}  (since last reset)\n")
+        append("  last_load       = ${pct(lastLoad)}  (processing / audio-time)\n")
+        append("  avg_load        = ${pct(timing.avgLoadFactor)}\n")
+        append("  max_load        = ${pct(timing.maxLoadFactor)}\n")
+        append("  samples         = ${timing.sampleCount} buffers in window")
+    }
+}
+
+/**
+ * Format the startup-phase list as a small fixed-width table. Each row
+ * shows the phase name padded to a fixed width, followed by its duration
+ * in ms. The list is already sorted by start time so the order shows the
+ * sequence of operations during boot. A summary row at the bottom shows
+ * the total wallclock since [StartupTimings.processStartNs].
+ */
+private fun formatStartup(phases: List<StartupTimings.Phase>): String {
+    val nameWidth = phases.maxOf { it.name.length }.coerceAtLeast(20)
+    val totalMs = (System.nanoTime() - StartupTimings.processStartNs) / 1_000_000.0
+    return buildString {
+        for (p in phases) {
+            append("  ")
+            append(p.name.padEnd(nameWidth))
+            append("  ")
+            append("%6.1f ms".format(p.durationMs))
+            append("  @")
+            val offsetMs = (p.startNs - StartupTimings.processStartNs) / 1_000_000.0
+            append("%6.0f".format(offsetMs))
+            append(" ms")
+            append('\n')
+        }
+        append("  ")
+        append("(elapsed since process start)".padEnd(nameWidth))
+        append("  ")
+        append("%6.1f ms".format(totalMs))
+    }
+}
+
 private fun formatEvents(events: List<AudioChainTelemetry.Event>): String {
     val now = System.currentTimeMillis()
     return events.joinToString("\n") { e ->
@@ -462,6 +647,26 @@ private fun formatEvents(events: List<AudioChainTelemetry.Event>): String {
         val padded = ago.padStart(5)
         if (e.detail.isEmpty()) "  $padded ago  ${e.kind}"
         else "  $padded ago  ${e.kind}: ${e.detail}"
+    }
+}
+
+/**
+ * Same shape as [formatEvents] but for [AppDiagnostics.Entry] rows — used
+ * to render the stall-watchdog firings. Detail is the explanation already
+ * built by the watchdog (position + speed at recovery time).
+ */
+private fun formatStallEvents(events: List<AppDiagnostics.Entry>): String {
+    val now = System.currentTimeMillis()
+    return events.joinToString("\n") { e ->
+        val agoSec = (now - e.timestampMs) / 1000.0
+        val ago = when {
+            agoSec < 1.0 -> "<1s"
+            agoSec < 60.0 -> "${"%.0f".format(agoSec)}s"
+            agoSec < 3600.0 -> "${"%.0f".format(agoSec / 60.0)}m"
+            else -> "${"%.0f".format(agoSec / 3600.0)}h"
+        }
+        val padded = ago.padStart(5)
+        "  $padded ago  ${e.detail}"
     }
 }
 
@@ -480,6 +685,7 @@ private fun formatPlayerLine(p: com.lofipod.app.player.PlayerState): String {
  *  lines so paste targets (issue trackers, chat) render readably. */
 private fun buildClipboardDump(
     snap: TelemetrySnapshot,
+    timing: AudioChainTelemetry.BufferTimingStats,
     bands: String,
     gainDb: Float,
     audioEnhancement: Boolean,
@@ -487,6 +693,8 @@ private fun buildClipboardDump(
     playerLine: String,
     errorVerbose: String?,
     events: List<AudioChainTelemetry.Event>,
+    stallEvents: List<AppDiagnostics.Entry>,
+    startupPhases: List<StartupTimings.Phase>,
 ): String = buildString {
     appendLine("LofiPod audio diagnostics")
     appendLine("=========================")
@@ -496,6 +704,12 @@ private fun buildClipboardDump(
     appendLine()
     appendLine("[Live]")
     appendLine(formatLive(snap))
+    appendLine()
+    appendLine("[Performance]")
+    appendLine(formatPerformance(snap, timing))
+    appendLine()
+    appendLine("[Scheduler]")
+    appendLine(formatScheduler(snap))
     appendLine()
     appendLine("[Counters]")
     appendLine(formatCounters(snap))
@@ -515,6 +729,14 @@ private fun buildClipboardDump(
     appendLine("[Recent events]")
     if (events.isEmpty()) appendLine("  (no events)")
     else appendLine(formatEvents(events))
+    appendLine()
+    appendLine("[Stall watchdog]")
+    if (stallEvents.isEmpty()) appendLine("  (no stalls)")
+    else appendLine(formatStallEvents(stallEvents))
+    appendLine()
+    appendLine("[Startup]")
+    if (startupPhases.isEmpty()) appendLine("  (no phases recorded)")
+    else appendLine(formatStartup(startupPhases))
 }
 
 private fun copyToClipboard(ctx: Context, text: String) {

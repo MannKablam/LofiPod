@@ -26,8 +26,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.media3.exoplayer.offline.Download
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.data.LofiDownload
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.db.QueueEntryEntity
 import com.lofipod.app.data.model.Episode
@@ -69,7 +69,7 @@ fun MyListsScreen(
     var tab by remember { mutableStateOf(0) }
 
     val completed = remember(downloads) {
-        downloads.values.filter { it.state == Download.STATE_COMPLETED }.map { it.request.id }
+        downloads.values.filter { it.state == LofiDownload.State.COMPLETED }.map { it.guid }
     }
     var downloadedRows by remember { mutableStateOf<List<EpisodeStateEntity>>(emptyList()) }
     LaunchedEffect(completed) {
@@ -99,15 +99,40 @@ fun MyListsScreen(
             ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                 Tab(selected = tab == 0, onClick = { tab = 0 },
                     text = { Text("Queue (${queue.size})") })
-                Tab(selected = tab == 1, onClick = { tab = 1 },
-                    text = { Text("Excellent (${excellent.size})") })
-                Tab(selected = tab == 2, onClick = { tab = 2 }, text = {
-                    // Pulsing gold heart leads the tab label so the highest
-                    // tier is visually distinct from plain "Excellent".
+                // Excellent uses a single filled heart in place of text — the
+                // heart vocabulary is established elsewhere (PlayerHeartIcon
+                // in PlayerScreen, the cycle-favorite-tier control on
+                // EpisodeRow). Saves a lot of horizontal real estate so the
+                // tab strip fits on phone widths without ScrollableTabRow
+                // having to scroll.
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        PulsingGoldHeart(size = 14.dp)
+                        Icon(
+                            Icons.Filled.Favorite,
+                            contentDescription = "Excellent",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
+                        )
                         Spacer(Modifier.width(4.dp))
-                        Text("Most-excellent (${mostExcellent.size})")
+                        Text("(${excellent.size})")
+                    }
+                })
+                // Most-excellent: same single-heart Excellent + an adjacent
+                // small pulsing gold heart, mirroring PlayerHeartIcon's tier
+                // 2 visual. The double-heart pattern is the established
+                // shorthand for "top tier" across the app.
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.Favorite,
+                            contentDescription = "Most-excellent",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(2.dp))
+                        PulsingGoldHeart(size = 12.dp)
+                        Spacer(Modifier.width(4.dp))
+                        Text("(${mostExcellent.size})")
                     }
                 })
                 Tab(selected = tab == 3, onClick = { tab = 3 },

@@ -22,8 +22,10 @@ import kotlin.math.pow
  * **Architecture.**
  *   - [lookAheadSamples]-sample circular delay line, per channel
  *   - linked-stereo peak detector: max(|L|, |R|) per frame
- *   - sliding-window peak max over the LA window (brute-force scan; ~220
- *     compares per output sample at 44.1k LA=5ms — well under 1% of one core)
+ *   - sliding-window peak max via a monotonic deque (O(1) amortized push/pop);
+ *     bit-exact same windowed-max as a brute-force scan, but without the
+ *     ~440-compare-per-frame busywork that the prior brute-force version
+ *     was costing the audio thread on bass-boosted content
  *   - target gain = clamp via threshold + soft knee in dB domain
  *   - envelope follower with 1 ms attack, 50 ms release smooths gain control
  *   - apply smoothed gain to the delayed signal
@@ -67,11 +69,28 @@ class Limiter {
     private var delayLine: Array<DoubleArray> = emptyArray()
     private var delayWritePos = 0
 
-    // Linked-stereo absolute-peak window. Each slot holds max(|x_ch|) for one
-    // input frame. The windowed max over this whole array is the "peak the
-    // limiter is anticipating" for the current output frame.
-    private var peakWindow: DoubleArray = DoubleArray(0)
-    private var peakWritePos = 0
+    // ---- Sliding-window-max (linked-stereo peak) via monotonic deque ----
+    //
+    // Each entry holds (sampleIndex, peakValue) for one frame's
+    // max(|x_ch|). The deque stays monotonically *non-increasing* from
+    // head -> tail in [dequeValues]: any entry whose value is smaller
+    // than a newer arrival is popped from the back, because as long as
+    // the newer (and larger) entry is in the window, the smaller one can
+    // never be the windowed max again. The head is therefore always the
+    // current windowed max, and we expire it from the front when its
+    // sample index falls outside [currentIndex - lookAheadSamples + 1,
+    // currentIndex]. O(1) amortized peak detection — replaces the
+    // earlier brute-force scan over the whole window.
+    private var dequeValues: DoubleArray = DoubleArray(0)
+    private var dequeIndices: LongArray = LongArray(0)
+    /** Index of the front (= current windowed max). */
+    private var dequeHead = 0
+    /** One past the back (= insertion point). */
+    private var dequeTail = 0
+    /** Number of entries currently in the deque. */
+    private var dequeSize = 0
+    /** Monotonic frame counter, advanced once per processFrame/drainFrame call. */
+    private var sampleCounter = 0L
 
     // Envelope follower state. Linear gain in (0, 1]: 1 = no reduction.
     // currentGain is what we multiply the delayed signal by; it's smoothed
@@ -111,7 +130,10 @@ class Limiter {
         // sound-localization JND for casual listening).
         lookAheadSamples = (sampleRate * LOOK_AHEAD_SECONDS).toInt().coerceAtLeast(1)
         delayLine = Array(channelCount) { DoubleArray(lookAheadSamples) }
-        peakWindow = DoubleArray(lookAheadSamples)
+        // Deque holds at most [lookAheadSamples] entries — one per frame in the
+        // window. Pre-allocated; no allocation in the hot loop.
+        dequeValues = DoubleArray(lookAheadSamples)
+        dequeIndices = LongArray(lookAheadSamples)
         // One-pole filter coefficients: tau = 1/(sr * timeConstantSec).
         attackCoef = 1.0 - exp(-1.0 / (sampleRate * ATTACK_SECONDS))
         releaseCoef = 1.0 - exp(-1.0 / (sampleRate * RELEASE_SECONDS))
@@ -120,11 +142,15 @@ class Limiter {
 
     fun reset() {
         for (ch in delayLine) ch.fill(0.0)
-        peakWindow.fill(0.0)
         delayWritePos = 0
-        peakWritePos = 0
         currentGain = 1.0
         lastReductionDb = 0.0
+        // Clear the deque. The arrays themselves don't need to be zeroed —
+        // dequeSize == 0 means none of their contents are reachable.
+        dequeHead = 0
+        dequeTail = 0
+        dequeSize = 0
+        sampleCounter = 0L
     }
 
     /**
@@ -147,17 +173,11 @@ class Limiter {
             val a = abs(input[ch])
             if (a > framePeak) framePeak = a
         }
-        peakWindow[peakWritePos] = framePeak
-        peakWritePos = (peakWritePos + 1) % lookAheadSamples
 
-        // Brute-force windowed max. ~220 doubles at LA=5ms@44.1k; a few hundred
-        // ns per call. A monotonic-deque could amortize O(1) but the constant
-        // factor is so low that the deque overhead (branch mispredicts, index
-        // math) likely costs more than the scan saves at this window size.
-        var windowedMax = 0.0
-        for (v in peakWindow) {
-            if (v > windowedMax) windowedMax = v
-        }
+        // Advance the windowed-max deque. Bit-exact same result as the prior
+        // O(N) scan; just amortizes peak retrieval to O(1) so the audio thread
+        // doesn't spend ~440 compares per frame on a 5 ms LA at 88.2k.
+        val windowedMax = pushPeakAndQueryMax(framePeak)
 
         val targetGain = computeTargetGain(windowedMax)
 
@@ -194,14 +214,10 @@ class Limiter {
      * [drainFrameCount] times after [EqAudioProcessor.onQueueEndOfStream].
      */
     fun drainFrame(output: DoubleArray) {
-        // Zero-input fall-through: peak detector sees no new energy.
-        peakWindow[peakWritePos] = 0.0
-        peakWritePos = (peakWritePos + 1) % lookAheadSamples
-
-        var windowedMax = 0.0
-        for (v in peakWindow) {
-            if (v > windowedMax) windowedMax = v
-        }
+        // Zero-input fall-through: peak detector sees no new energy. The deque
+        // still ages out old peaks via expireFront, so the windowed max
+        // smoothly walks down to zero as the LA buffer empties.
+        val windowedMax = pushPeakAndQueryMax(0.0)
 
         val targetGain = computeTargetGain(windowedMax)
         val coef = if (targetGain < currentGain) attackCoef else releaseCoef
@@ -219,6 +235,50 @@ class Limiter {
             delayLine[ch][delayWritePos] = 0.0
         }
         delayWritePos = (delayWritePos + 1) % lookAheadSamples
+    }
+
+    /**
+     * Advance the sliding-window-max deque by one frame: expire any front
+     * entries whose sample index has fallen out of the [lookAheadSamples]-frame
+     * window, pop back entries whose value is `<= peak` (they can't be max
+     * while the new arrival is in the window), then push the new (index,
+     * peak) pair. Returns the windowed max after the update — i.e. the
+     * largest absolute peak across the [lookAheadSamples] most recent frames.
+     *
+     * O(1) amortized: every entry is pushed once and popped once. No
+     * allocation; arrays are pre-sized to [lookAheadSamples] in [configure],
+     * which is the worst-case deque size (the window itself).
+     */
+    private fun pushPeakAndQueryMax(peak: Double): Double {
+        val current = sampleCounter
+        sampleCounter++
+
+        val n = lookAheadSamples
+        val cutoff = current - n + 1  // oldest index still inside the window
+
+        // Expire front entries that have aged out of the window.
+        while (dequeSize > 0 && dequeIndices[dequeHead] < cutoff) {
+            dequeHead = (dequeHead + 1) % n
+            dequeSize--
+        }
+
+        // Pop back entries dominated by the new value.
+        while (dequeSize > 0) {
+            val backIdx = (dequeTail - 1 + n) % n
+            if (dequeValues[backIdx] <= peak) {
+                dequeTail = backIdx
+                dequeSize--
+            } else break
+        }
+
+        // Push (current, peak) at the back.
+        dequeValues[dequeTail] = peak
+        dequeIndices[dequeTail] = current
+        dequeTail = (dequeTail + 1) % n
+        dequeSize++
+
+        // Front is the windowed max (deque is non-increasing head → tail).
+        return dequeValues[dequeHead]
     }
 
     /**

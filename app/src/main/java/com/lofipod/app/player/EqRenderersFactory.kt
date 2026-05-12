@@ -6,6 +6,7 @@ import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioTrackBufferSizeProvider
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.SilenceSkippingProcessor
@@ -51,10 +52,28 @@ class EqRenderersFactory(
             /* silenceSkippingAudioProcessor = */ SilenceSkippingAudioProcessor(),
             /* sonicAudioProcessor = */ SonicAudioProcessor()
         )
+        // AudioTrack output buffer sized for variable-speed playback. Media3's
+        // default DefaultAudioTrackBufferSizeProvider gives a 250 ms minimum
+        // PCM buffer with a 4× multiplier of the OS minimum. At 2× playback
+        // speed (the user's common setting) that buffer drains in 125 ms
+        // wall-clock — any momentary DSP-thread slowdown longer than 125 ms
+        // (thermal throttle, JIT, GC pause, kernel scheduling jitter) starves
+        // the AudioTrack and produces the cycling-position underrun loop.
+        //
+        // Bumped to 1.5 s minimum / 3.0 s max with an 8× multiplier so a
+        // short DSP hiccup at 2× has up to ~750 ms wall-clock to recover
+        // before the AudioTrack runs dry. ~576 KB at 48 kHz stereo int16 —
+        // negligible on any modern device, large win against the hang.
+        val bufferSizeProvider = DefaultAudioTrackBufferSizeProvider.Builder()
+            .setMinPcmBufferDurationUs(1_500_000)
+            .setMaxPcmBufferDurationUs(3_000_000)
+            .setPcmBufferMultiplicationFactor(8)
+            .build()
         return DefaultAudioSink.Builder(context)
             .setAudioProcessorChain(chain)
             .setEnableFloatOutput(false)        // we want int16 in our processor
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .setAudioTrackBufferSizeProvider(bufferSizeProvider)
             .build()
     }
 }

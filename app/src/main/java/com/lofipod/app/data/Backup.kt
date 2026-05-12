@@ -88,6 +88,11 @@ object Backup {
                     put(JSONObject().apply {
                         put("feedUrl", p.feedUrl)
                         if (p.defaultSpeed != null) put("defaultSpeed", p.defaultSpeed.toDouble())
+                        // v0.6.11+ — per-podcast EQ override moved here from
+                        // episode_state. Only emit non-default values to keep
+                        // backup files compact for the common case.
+                        if (p.eqDisabled) put("eqDisabled", true)
+                        if (p.eqBandsCsvOverride != null) put("eqBandsCsvOverride", p.eqBandsCsvOverride)
                     })
                 }
             })
@@ -250,6 +255,8 @@ object Backup {
                     PodcastStateEntity(
                         feedUrl = p.getString("feedUrl"),
                         defaultSpeed = speed,
+                        eqDisabled = p.optBoolean("eqDisabled", false),
+                        eqBandsCsvOverride = p.optStringOrNull("eqBandsCsvOverride"),
                     )
                 )
                 podcastStatesRestored++

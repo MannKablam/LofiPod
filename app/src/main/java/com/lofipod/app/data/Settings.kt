@@ -120,6 +120,28 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Surfaces an extra "Diagnostics" tab on the Player screen alongside
+     * Notes / Details / Transcript. When the user is actively listening and
+     * something sounds wrong, this is the fastest path to the audio-chain
+     * telemetry — no top-bar trip → Settings → Audio Fine-tuning →
+     * Diagnostics. Default false: the tab is off-the-shelf only useful for
+     * users actively diagnosing, and a 4th tab crowds the strip on narrow
+     * devices.
+     *
+     * Toggle lives in the Settings → Audio diagnostics section (alongside
+     * the "Open full audio diagnostics" entry point); when on, the Player
+     * screen auto-grows a 4th tab + the tab supports an in-player
+     * full-screen mode that keeps the mini-player at the bottom for
+     * transport while you read the live readouts.
+     */
+    val showDiagnosticsTabInPlayer: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER] ?: false }
+
+    suspend fun setShowDiagnosticsTabInPlayer(v: Boolean) {
+        context.dataStore.edit { it[KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER] = v }
+    }
+
+    /**
      * How many days a *played* episode lingers in the per-podcast list before
      * the auto-archive sweep moves it to the archive. 0 = off (never
      * auto-archive). Default 3 days, matching the original hardcoded constant.
@@ -148,12 +170,11 @@ class Settings(private val context: Context) {
 
     /**
      * Master "Audio enhancement" toggle from the EQ screen. Default true.
-     * Distinct from the per-episode `episode_state.eqDisabled` override —
+     * Distinct from the per-podcast `podcast_state.eqDisabled` override —
      * both feed into [com.lofipod.app.player.PlayerController.applyEqOverrideFor],
-     * which applies effective enabled = (global && !episodeDisabled). Persisting
+     * which applies effective enabled = (global && !podcastDisabled). Persisting
      * here means the global toggle survives navigation and isn't silently
-     * overwritten by per-episode overrides on track transition (the bug it
-     * was added to fix).
+     * overwritten by per-podcast overrides on track transition.
      */
     val audioEnhancementEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[KEY_AUDIO_ENHANCEMENT_ENABLED] ?: true }
@@ -174,6 +195,56 @@ class Settings(private val context: Context) {
 
     suspend fun setDcBlockerEnabled(v: Boolean) {
         context.dataStore.edit { it[KEY_DC_BLOCKER_ENABLED] = v }
+    }
+
+    /**
+     * Set of feedUrls excluded from the canon-browse Bible index. Lets the
+     * user hide a noisy feed (e.g., one that mistags a lot) from the
+     * book/chapter/verse grids without removing it from the catalog. CSV
+     * stored as the value (DataStore doesn't have native Set support).
+     * Empty = include everything.
+     */
+    val canonBrowseExcludedFeeds: Flow<Set<String>> =
+        context.dataStore.data.map {
+            it[KEY_CANON_BROWSE_EXCLUDED]?.split(",")?.filter { s -> s.isNotBlank() }?.toSet()
+                ?: emptySet()
+        }
+
+    suspend fun setCanonBrowseExcludedFeeds(feedUrls: Set<String>) {
+        context.dataStore.edit {
+            if (feedUrls.isEmpty()) it.remove(KEY_CANON_BROWSE_EXCLUDED)
+            else it[KEY_CANON_BROWSE_EXCLUDED] = feedUrls.joinToString(",")
+        }
+    }
+
+    /**
+     * When the user starts an episode that has a detected scripture ref,
+     * the next-up at end-of-stream comes from the canon-order resolver
+     * (next sermon strictly after the current passage in Bible order)
+     * instead of the standard queue/feed-next chain. Default off — the
+     * user opts in via the canon-browse "Play through" affordance.
+     */
+    val canonAutoplayEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_CANON_AUTOPLAY] ?: false }
+
+    suspend fun setCanonAutoplayEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_CANON_AUTOPLAY] = v }
+    }
+
+    /**
+     * EQ phase-mode toggle. False (default) = minimum-phase biquad cascade
+     * (~6.4 ms total chain latency); true = linear-phase 4096-tap FIR
+     * convolution (~52 ms total). Linear preserves transient waveform shape
+     * exactly at the cost of higher CPU + latency. Default minimum because
+     * it's transparent for almost all listeners and the existing latency
+     * budget assumes it; opt-in for audiophiles who specifically want
+     * preserved transient response.
+     */
+    val phaseModeLinear: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_PHASE_MODE_LINEAR] ?: false }
+
+    suspend fun setPhaseModeLinear(v: Boolean) {
+        context.dataStore.edit { it[KEY_PHASE_MODE_LINEAR] = v }
     }
 
     // ---- Auto-backup ----
@@ -275,6 +346,46 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_THEME] = t.name }
     }
 
+    /**
+     * Selected body font. Stored as the [com.lofipod.app.ui.theme.BodyFontChoice]
+     * enum name; default `THEME_DEFAULT` so the theme spec's bodyFont stays
+     * in charge until the user actively picks something on the Text settings
+     * screen. Read by `LofiPodTheme` and folded into the active Material
+     * typography.
+     */
+    val bodyFontChoiceKey: Flow<String> =
+        context.dataStore.data.map { it[KEY_BODY_FONT_CHOICE] ?: "THEME_DEFAULT" }
+
+    suspend fun setBodyFontChoiceKey(key: String) {
+        context.dataStore.edit { it[KEY_BODY_FONT_CHOICE] = key }
+    }
+
+    /**
+     * Notes text size in sp. Applies to the body of each [NoteCard] (the
+     * text the user typed). 14 sp default matches the prior bodyMedium-ish
+     * sizing; range 12..22 sp gives readable body up through "I prefer
+     * larger text" without growing past the card's reasonable bounds.
+     */
+    val notesTextSizeSp: Flow<Float> =
+        context.dataStore.data.map { it[KEY_NOTES_TEXT_SIZE] ?: 14f }
+
+    suspend fun setNotesTextSizeSp(v: Float) {
+        context.dataStore.edit { it[KEY_NOTES_TEXT_SIZE] = v.coerceIn(10f, 28f) }
+    }
+
+    /**
+     * Notes pop-up (editor dialog) text size in sp. Independent from the
+     * card display size because the editing surface is a different
+     * ergonomic context — typing benefits from a larger size than reading.
+     * Default 16 sp; same 12..22 range.
+     */
+    val notesPopupTextSizeSp: Flow<Float> =
+        context.dataStore.data.map { it[KEY_NOTES_POPUP_TEXT_SIZE] ?: 16f }
+
+    suspend fun setNotesPopupTextSizeSp(v: Float) {
+        context.dataStore.edit { it[KEY_NOTES_POPUP_TEXT_SIZE] = v.coerceIn(10f, 28f) }
+    }
+
     companion object {
         private val KEY_THEME = androidx.datastore.preferences.core.stringPreferencesKey("theme")
         private val KEY_AUTO_PLAY_NEXT_FEED =
@@ -287,6 +398,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.floatPreferencesKey("text_scale")
         private val KEY_SHOW_PLAYED =
             androidx.datastore.preferences.core.booleanPreferencesKey("show_played_in_list")
+        private val KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER =
+            androidx.datastore.preferences.core.booleanPreferencesKey("show_diagnostics_tab_in_player")
         private val KEY_AUTO_ARCHIVE_DAYS =
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
         private val KEY_SKIP_SILENCE_LEVEL =
@@ -295,6 +408,12 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
         private val KEY_DC_BLOCKER_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
+        private val KEY_PHASE_MODE_LINEAR =
+            androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
+        private val KEY_CANON_BROWSE_EXCLUDED =
+            androidx.datastore.preferences.core.stringPreferencesKey("canon_browse_excluded_feeds")
+        private val KEY_CANON_AUTOPLAY =
+            androidx.datastore.preferences.core.booleanPreferencesKey("canon_autoplay_enabled")
         private val KEY_BACKUP_TREE_URI =
             androidx.datastore.preferences.core.stringPreferencesKey("backup_tree_uri")
         private val KEY_BACKUP_INTERVAL_HOURS =
@@ -309,6 +428,12 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("update_available_version_code")
         private val KEY_UPDATE_AVAILABLE_NAME =
             androidx.datastore.preferences.core.stringPreferencesKey("update_available_version_name")
+        private val KEY_BODY_FONT_CHOICE =
+            androidx.datastore.preferences.core.stringPreferencesKey("body_font_choice")
+        private val KEY_NOTES_TEXT_SIZE =
+            androidx.datastore.preferences.core.floatPreferencesKey("notes_text_size_sp")
+        private val KEY_NOTES_POPUP_TEXT_SIZE =
+            androidx.datastore.preferences.core.floatPreferencesKey("notes_popup_text_size_sp")
     }
 }
 

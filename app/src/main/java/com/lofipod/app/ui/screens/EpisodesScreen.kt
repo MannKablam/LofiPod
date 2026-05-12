@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.*
@@ -16,7 +17,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.exoplayer.offline.Download
+import com.lofipod.app.data.LofiDownload
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.ui.theme.ThemedArtwork
 import com.lofipod.app.data.db.EpisodeStateEntity
@@ -134,6 +135,26 @@ fun EpisodesScreen(
         }
     }
 
+    // Scroll-to-now-playing on entry. One-shot per screen instance: when the
+    // visible list first contains the current episode (paused or playing),
+    // animate to its position. Subsequent scrolls aren't auto-driven — once
+    // the user has been pointed at the right row, manual scrolling owns the
+    // viewport. Keys on size + currentEpisodeGuid because the filtered list's
+    // identity changes every recomposition; size is a stable proxy for "list
+    // contents settled."
+    val listState = rememberLazyListState()
+    var didInitialScroll by remember { mutableStateOf(false) }
+    LaunchedEffect(visibleEpisodes.size, playerState.currentEpisodeGuid) {
+        if (didInitialScroll) return@LaunchedEffect
+        val guid = playerState.currentEpisodeGuid ?: return@LaunchedEffect
+        if (visibleEpisodes.isEmpty()) return@LaunchedEffect
+        val idx = visibleEpisodes.indexOfFirst { it.guid == guid }
+        if (idx >= 0) {
+            listState.animateScrollToItem(idx)
+            didInitialScroll = true
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -188,6 +209,7 @@ fun EpisodesScreen(
             return@Scaffold
         }
         LazyColumn(
+            state = listState,
             modifier = Modifier.padding(padding),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -244,13 +266,21 @@ fun EpisodesScreen(
                     },
                     onToggleDownload = {
                         val d = downloadsByGuid[ep.guid]
-                        if (d == null || d.state == Download.STATE_FAILED) {
+                        if (d == null || d.state == LofiDownload.State.FAILED) {
                             scope.launch {
                                 upsertState(app, ep, pod)
                                 app.downloadsApi.start(ep)
+                                // Manual trigger — clear any prior auto-download
+                                // flag so the 1-hour-after-finished sweep won't
+                                // expire this user-requested download.
+                                withContext(Dispatchers.IO) {
+                                    app.db.autoDownloadDao().delete(ep.guid)
+                                }
                                 snackbarHostState.showSnackbar("Download started")
                             }
                         } else {
+                            // remove() inside Downloads also clears the auto_download
+                            // row, so no extra cleanup needed here.
                             app.downloadsApi.remove(ep.guid)
                         }
                     },
@@ -418,7 +448,7 @@ private fun EpisodeRow(
     podcastArt: String?,
     state: EpisodeUiState,
     isQueued: Boolean,
-    download: Download?,
+    download: LofiDownload?,
     isCurrent: Boolean,
     isPlaying: Boolean,
     autoplayDirectionUp: Boolean,
@@ -641,6 +671,26 @@ private fun EpisodeRow(
                 Spacer(Modifier.weight(1f))
                 HeartTierButton(tier = state.favoriteTier, onCycle = onCycleHeart)
             }
+            // Bandwidth + disk readout. Single number — streaming and
+            // downloading both pull the full enclosure file, so one
+            // figure covers both questions ("how much data will this
+            // cost?" and "how much disk?"). Pinned to the bottom-right
+            // corner of the card so it reads as a passive "vital stat"
+            // rather than competing with the action buttons above.
+            ep.audioByteSize?.let { bytes ->
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Text(
+                        formatMb(bytes),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                            .copy(alpha = textAlpha),
+                    )
+                }
+            }
         }
     }
 }
@@ -708,6 +758,15 @@ private fun HeartTierButton(tier: Int, onCycle: () -> Unit) {
 }
 
 /** Best-effort plain-text view of an HTML-ish description. */
+/** Format byte count as a compact "Nmb" string for the episode-row meta
+ *  line. Sub-megabyte sizes show as "<1mb" rather than rounding to "0mb"
+ *  (which would mis-imply zero bytes). Whole megabytes only — fractional
+ *  precision isn't useful for a quick budget read. */
+private fun formatMb(bytes: Long): String {
+    val mb = bytes / 1_048_576L  // 1024 * 1024
+    return if (mb == 0L) "<1mb" else "${mb}mb"
+}
+
 private fun String.stripHtml(): String =
     this.replace(Regex("<[^>]*>"), "")
         .replace(Regex("&nbsp;"), " ")

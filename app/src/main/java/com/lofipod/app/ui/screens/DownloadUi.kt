@@ -20,37 +20,35 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.exoplayer.offline.Download
+import com.lofipod.app.data.LofiDownload
 
 /**
  * Shared download-status button used by EpisodesScreen, PlayerScreen, and
- * anywhere else that surfaces per-episode download state. Five visual
- * states matching Media3's [Download] state machine:
+ * anywhere else that surfaces per-episode download state. Four visual
+ * states matching [LofiDownload.State]:
  *
  *   - null              -> Download icon (tap = start)
- *   - QUEUED/DOWNLOADING/RESTARTING -> spinner + percent (tap = cancel)
+ *   - QUEUED/DOWNLOADING -> spinner + percent (tap = cancel)
  *   - COMPLETED         -> DownloadDone icon (tap = delete)
  *   - FAILED            -> Refresh icon, error tint (tap = retry)
- *   - else              -> Download icon (defensive)
  *
  * The caller decides what tap means in context — [onClick] is fired for
- * every state. See [downloadButtonAction] for the standard start-vs-remove
- * dispatch logic.
+ * every state.
  */
 @Composable
-fun DownloadButton(download: Download?, onClick: () -> Unit) {
+fun DownloadButton(download: LofiDownload?, onClick: () -> Unit) {
     when (download?.state) {
         null -> {
             IconButton(onClick = onClick) {
                 Icon(Icons.Filled.Download, contentDescription = "Download")
             }
         }
-        Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_RESTARTING -> {
+        LofiDownload.State.QUEUED, LofiDownload.State.DOWNLOADING -> {
             // Show the percentage *next to* the spinner so progress reads even
             // when the download finishes in a couple of seconds. Without the
             // number, fast downloads look like the button just teleported to
             // the checkmark state.
-            val pct = download.percentDownloaded
+            val pct = download.percent
             val pctLabel = when {
                 !pct.isFinite() -> "…"
                 pct < 0f -> "…"
@@ -87,7 +85,7 @@ fun DownloadButton(download: Download?, onClick: () -> Unit) {
                 Spacer(Modifier.width(4.dp))
             }
         }
-        Download.STATE_COMPLETED -> {
+        LofiDownload.State.COMPLETED -> {
             IconButton(onClick = onClick) {
                 Icon(
                     Icons.Filled.DownloadDone,
@@ -96,18 +94,13 @@ fun DownloadButton(download: Download?, onClick: () -> Unit) {
                 )
             }
         }
-        Download.STATE_FAILED -> {
+        LofiDownload.State.FAILED -> {
             IconButton(onClick = onClick) {
                 Icon(
                     Icons.Filled.Refresh,
                     contentDescription = "Retry download",
                     tint = MaterialTheme.colorScheme.error
                 )
-            }
-        }
-        else -> {
-            IconButton(onClick = onClick) {
-                Icon(Icons.Filled.Download, contentDescription = "Download")
             }
         }
     }

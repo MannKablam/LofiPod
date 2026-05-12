@@ -116,6 +116,17 @@ fun PlayerScreen(
     previewGuid: String? = null,
     /** Open the full-page Transcript route for the given guid. */
     onOpenTranscript: (String) -> Unit = {},
+    /**
+     * Notifies the host (MainActivity / AppNav) when the bottom-tabs region
+     * enters or exits full-screen mode. The host uses this to keep the
+     * mini-player anchored to the bottom of the screen during full-screen
+     * — without it, full-screen mode hides every transport control along
+     * with the player chrome, which is fine for reading-mode Notes but
+     * leaves the user stranded if they want to pause / skip while watching
+     * Diagnostics scroll by. Default no-op so existing call sites don't
+     * have to change.
+     */
+    onPlayerTabsFullscreenChange: (Boolean) -> Unit = {},
 ) {
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
@@ -129,6 +140,13 @@ fun PlayerScreen(
     // Per-episode download state for the inline DownloadButton. Recomposes
     // automatically as downloads progress / change state.
     val downloadsByGuid by app.downloadsApi.byId.collectAsState()
+
+    // Audio file size for the displayed episode — drives the single-figure
+    // size readout below the playback bar. For preview, comes from the
+    // already-loaded Episode in [previewData]. For live, looked up via
+    // episode_state -> repo cache -> Episode. Refreshed when [displayedGuid]
+    // changes (track transition / live-vs-preview swap).
+    var episodeSizeBytes by remember { mutableStateOf<Long?>(null) }
 
     // Resolve preview data once per [previewGuid]. Loaded async because we
     // hit the DB; stays null until ready (we render a brief loading state
@@ -146,6 +164,22 @@ fun PlayerScreen(
 
     /** The guid the screen is rendering data for. Drives heart, tabs, etc. */
     val displayedGuid: String? = if (isPreview) previewGuid else state.currentEpisodeGuid
+
+    // Refresh size readout when the displayed guid changes. For preview,
+    // pulled directly from the Episode object once it's loaded. For live,
+    // looked up via episode_state -> repo cache to find the parsed Episode
+    // (single DB read + one in-memory list scan, runs off the IO dispatcher).
+    LaunchedEffect(displayedGuid, isPreview, previewData) {
+        episodeSizeBytes = when {
+            displayedGuid == null -> null
+            isPreview -> previewData?.episode?.audioByteSize
+            else -> withContext(Dispatchers.IO) {
+                val state = app.db.episodeStateDao().get(displayedGuid)
+                val pod = state?.let { app.repo.cached(it.feedUrl) }
+                pod?.episodes?.find { it.guid == displayedGuid }?.audioByteSize
+            }
+        }
+    }
 
     // Live favorite tier for whichever episode is being displayed (live or
     // preview). Observed so the top-bar heart stays in sync if the user
@@ -183,6 +217,44 @@ fun PlayerScreen(
 
     var menuExpanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Bottom-tabs fullscreen toggle. Tapping the currently-selected tab
+    // expands the tabs container to take the whole screen below the top
+    // bar, hiding the artwork / title / scrubber / controls block above
+    // it. Tap the active tab again to collapse back. Per-screen state
+    // (resets when the user navigates away and back).
+    var tabsFullscreen by remember { mutableStateOf(false) }
+
+    // Mirror the fullscreen flag up to the host (MainActivity / AppNav) so
+    // it can flip the mini-player from hidden (default on player route) to
+    // visible during full-screen — necessary so the user keeps transport
+    // controls when the full-screen tab hides the player chrome above. Also
+    // resets to false on dispose so a back-navigation while still in
+    // fullscreen mode doesn't leave the host with a stale flag.
+    LaunchedEffect(tabsFullscreen) {
+        onPlayerTabsFullscreenChange(tabsFullscreen)
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { onPlayerTabsFullscreenChange(false) }
+    }
+
+    // Diagnostics-tab toggle from Settings. When false (default) the player
+    // tab strip is Notes / Details / Transcript only. When true, a 4th
+    // "Diagnostics" tab joins for in-player live audio-chain health.
+    val showDiagnosticsTab by remember(app) {
+        com.lofipod.app.data.Settings(app).showDiagnosticsTabInPlayer
+    }.collectAsState(initial = false)
+
+    // Surface controller-side transient messages as snackbars so play-button
+    // taps that hit a no-op state (player not bound, no media loaded,
+    // already buffering) get explicit user feedback rather than feeling
+    // dead. SharedFlow with replay=0 means leftover messages from a prior
+    // composition don't replay on screen revisit.
+    LaunchedEffect(controller) {
+        controller.transientMessages.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -271,9 +343,13 @@ fun PlayerScreen(
                     }
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenEq) {
+                        // Tune (slider knobs) for Audio Fine-tuning, distinct
+                        // from GraphicEq (used as the live "now playing" glyph
+                        // in the top-bar title above + Catalog overflow).
+                        // Keeps the two affordances visually separable.
                         Icon(
-                            Icons.Filled.GraphicEq,
-                            contentDescription = "EQ",
+                            Icons.Filled.Tune,
+                            contentDescription = "Audio Fine-tuning",
                             modifier = Modifier.size(28.dp)
                         )
                     }
@@ -334,7 +410,9 @@ fun PlayerScreen(
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             // Top: artwork + title + scrubber + transport (compact, wraps content).
-            Column(
+            // Hidden entirely when tabsFullscreen is on so the bottom tabs
+            // get the whole screen real estate.
+            if (!tabsFullscreen) Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp, vertical = 12.dp),
@@ -421,15 +499,28 @@ fun PlayerScreen(
                             download = download,
                             onClick = {
                                 val d = downloadsByGuid[displayedGuid]
-                                if (d == null || d.state == androidx.media3.exoplayer.offline.Download.STATE_FAILED) {
+                                if (d == null || d.state == com.lofipod.app.data.LofiDownload.State.FAILED) {
                                     // Start. Preview has full Episode in
                                     // hand; live looks up via episode_state.
+                                    // Both paths are MANUAL — user pressed
+                                    // the download button — so any prior
+                                    // auto-download flag must be cleared
+                                    // (live path's controller.startDownloadForCurrent
+                                    // already handles its own cleanup; preview
+                                    // path needs an inline clear).
                                     if (isPreview) {
-                                        previewData?.episode?.let { app.downloadsApi.start(it) }
+                                        previewData?.episode?.let { ep ->
+                                            app.downloadsApi.start(ep)
+                                            scope.launch(Dispatchers.IO) {
+                                                app.db.autoDownloadDao().delete(ep.guid)
+                                            }
+                                        }
                                     } else {
                                         controller.startDownloadForCurrent(displayedGuid)
                                     }
                                 } else {
+                                    // remove() inside Downloads clears the auto_download
+                                    // row internally, so no extra cleanup needed.
                                     app.downloadsApi.remove(displayedGuid)
                                 }
                             }
@@ -455,6 +546,22 @@ fun PlayerScreen(
                     Text(formatTime(positionMs), style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.weight(1f))
                     Text(formatTime(durationMs), style = MaterialTheme.typography.bodyLarge)
+                }
+                // Single-figure size readout, bottom-right of the playback
+                // bar. Streaming and downloading both pull the full
+                // enclosure file so one number covers both questions
+                // ("how much data?" / "how much disk?"). Hidden when the
+                // feed didn't publish an enclosure length.
+                episodeSizeBytes?.let { bytes ->
+                    Spacer(Modifier.height(2.dp))
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            formatMb(bytes),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -529,11 +636,13 @@ fun PlayerScreen(
                             )
                             // Buffering ring — drawn on top of the play button
                             // when the player is in BUFFERING with
-                            // playWhenReady=true. Tells the user "I heard your
-                            // tap, I'm trying" rather than letting them wonder
+                            // playWhenReady=true OR when the stall watchdog
+                            // has flagged a renderer underrun. Tells the user
+                            // "I heard your tap / I see this is stuck, I'm
+                            // working on it" rather than letting them wonder
                             // if the button is dead. Suppressed during the
                             // countdown so the two indicators don't stack.
-                            state.isBuffering && !isPreview -> CircularProgressIndicator(
+                            (state.isBuffering || state.isStalled) && !isPreview -> CircularProgressIndicator(
                                 modifier = Modifier.size(88.dp),
                                 strokeWidth = 3.dp,
                             )
@@ -604,6 +713,9 @@ fun PlayerScreen(
                 controller = controller,
                 isPreview = isPreview,
                 onOpenTranscript = onOpenTranscript,
+                fullscreen = tabsFullscreen,
+                onToggleFullscreen = { tabsFullscreen = !tabsFullscreen },
+                showDiagnosticsTab = showDiagnosticsTab,
                 modifier = Modifier.weight(1f).fillMaxWidth()
             )
         }
@@ -734,33 +846,85 @@ private fun BottomTabs(
     controller: PlayerController,
     isPreview: Boolean,
     onOpenTranscript: (String) -> Unit,
+    fullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    showDiagnosticsTab: Boolean,
     modifier: Modifier = Modifier
 ) {
     var tabIndex by remember { mutableStateOf(0) }
-    val tabs = listOf("Notes", "Details", "Transcript")
+
+    // Transcript tab visibility. Driven by whether kabod metadata for this
+    // episode has a non-blank transcriptUrl. Most podcasts won't have a
+    // transcript URL bundled, so by default the tab is hidden — surface
+    // it only when there's actually something to show.
+    val app = LocalContext.current.applicationContext as LofiPodApp
+    var hasTranscript by remember(episodeGuid) { mutableStateOf(false) }
+    LaunchedEffect(episodeGuid) {
+        if (episodeGuid == null) {
+            hasTranscript = false
+            return@LaunchedEffect
+        }
+        val url = withContext(Dispatchers.IO) {
+            app.db.episodeKabodDao().get(episodeGuid)?.transcriptUrl
+        }
+        hasTranscript = !url.isNullOrBlank()
+    }
+
+    // Build the tabs list dynamically. Transcript only when the episode
+    // has one; Diagnostics only when the user has opted in via Settings.
+    // remember key includes both flags so the list rebuilds when either
+    // flips. tabIndex bounds-check after the rebuild keeps the strip from
+    // rendering against a stale index when a tab disappears.
+    val tabs = remember(hasTranscript, showDiagnosticsTab) {
+        buildList {
+            add("Notes")
+            add("Details")
+            if (hasTranscript) add("Transcript")
+            if (showDiagnosticsTab) add("Diagnostics")
+        }
+    }
+    if (tabIndex >= tabs.size) tabIndex = 0
 
     Column(modifier = modifier) {
         TabRow(selectedTabIndex = tabIndex) {
             tabs.forEachIndexed { i, label ->
                 Tab(
                     selected = tabIndex == i,
-                    onClick = { tabIndex = i },
+                    onClick = {
+                        // Tap the active tab → toggle fullscreen.
+                        // Tap a different tab → switch (keep fullscreen
+                        // state as it is). Lets the user switch between
+                        // tabs while staying in fullscreen reading mode.
+                        if (tabIndex == i) onToggleFullscreen()
+                        else tabIndex = i
+                    },
                     text = { Text(label) }
                 )
             }
         }
         Box(modifier = Modifier.fillMaxSize()) {
-            when (tabIndex) {
-                0 -> NotesTab(
+            when (tabs[tabIndex]) {
+                "Notes" -> NotesTab(
                     episodeGuid = episodeGuid,
                     controller = controller,
                     isPreview = isPreview,
                 )
-                1 -> DetailsTab(episodeGuid = episodeGuid, controller = controller)
-                else -> TranscriptContent(
+                "Details" -> DetailsTab(episodeGuid = episodeGuid, controller = controller)
+                "Transcript" -> TranscriptContent(
                     episodeGuid = episodeGuid,
                     showFullPageButton = true,
                     onOpenFullPage = { episodeGuid?.let(onOpenTranscript) },
+                )
+                "Diagnostics" -> PlayerDiagnosticsTab(
+                    episodeGuid = episodeGuid,
+                    controller = controller,
+                    isFullScreen = fullscreen,
+                    // The chip-style "Full-screen" button in the
+                    // Diagnostics tab is the third path into / out of
+                    // fullscreen mode (the others being a tap on the
+                    // active tab in the strip and back-navigation off
+                    // the player). Reuses the existing toggle.
+                    onToggleFullScreen = onToggleFullscreen,
                 )
             }
         }
@@ -1077,4 +1241,13 @@ private fun formatTime(ms: Long): String {
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+/** Same byte-size formatter the EpisodeRow uses — single number, whole
+ *  megabytes, "<1mb" floor for tiny clips. Duplicated here rather than
+ *  shared because the call sites are local to two screens; if a third
+ *  screen needs it, extract to a util. */
+private fun formatMb(bytes: Long): String {
+    val mb = bytes / 1_048_576L
+    return if (mb == 0L) "<1mb" else "${mb}mb"
 }

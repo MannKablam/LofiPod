@@ -12,25 +12,39 @@ import kotlin.math.sin
 
 /**
  * Plays the autoplay-confirmation beeps using a synthesized square-wave tone
- * (piezo-buzzer character) at high frequency, while ducking the given
- * [Player]'s output volume to zero for the duration of each beep — GPS-style.
+ * (piezo-buzzer character) at high frequency. Pauses the given [Player] for
+ * the duration of each beep so the beep is unmixed with podcast audio —
+ * GPS-style "stop the music, play the chime, resume the music."
  *
- * Pre-v0.4.x used [android.media.ToneGenerator]'s `TONE_PROP_BEEP`, but that
- * tone is a low/mid dual-frequency chirp that gets buried under typical
- * podcast-voice content. Switched to a self-rendered AudioTrack so we can
- * pick a high single-frequency square wave that punches through speech the
- * way an actual piezo alarm does. Duration is now sustained for the full
- * [BEEP_DURATION_MS] (was ~35 ms of ToneGenerator's built-in envelope), and
- * the gap between strikes matches that duration so the cadence reads as
- * deliberate rather than rushed.
+ * **Ducking design (v0.5.9 redesign).** Earlier versions tried to duck via
+ * `player.volume = 0f`; user reports showed it didn't actually silence on
+ * device. The path through `MediaController` → session → `ExoPlayer.volume`
+ * is supposed to be synchronous, but in practice some combination of
+ * decoder buffer + audio sink + MediaController IPC delay was leaving the
+ * podcast audible during the beep. Switching to `pause()` + `play()` is
+ * bulletproof: when paused, ExoPlayer stops feeding the audio sink and
+ * the audio output silences within one buffer (tens of ms). On resume, the
+ * audio sink picks up where it left off — no buffer flush, no rebuffer.
+ *
+ * The beep AudioTrack also gets an explicit `setVolume(BEEP_TRACK_VOLUME)`
+ * call so the dev has a runtime tuning knob independent of the
+ * pre-rendered amplitude (`sustainPeak` in the synthesizer). Combine for
+ * effective amplitude = `sustainPeak * BEEP_TRACK_VOLUME` at full system
+ * volume.
+ *
+ * Pre-v0.4.x used [android.media.ToneGenerator]'s `TONE_PROP_BEEP`, but
+ * that tone is a low/mid dual-frequency chirp that gets buried under
+ * typical podcast-voice content. Switched to a self-rendered AudioTrack
+ * so we can pick a high single-frequency square wave that punches
+ * through speech.
  *
  * Lifecycle: instantiate per autoplay-confirmation window, run beeps via
- * [playBeeps], call [release] in a `finally` so cancellation can't leak the
- * underlying AudioTracks or leave the player permanently muted.
+ * [playBeeps], call [release] in a `finally` so cancellation can't leak
+ * the underlying AudioTracks or leave the player permanently paused.
  *
- * All Player volume reads/writes are wrapped in `runCatching` because the
+ * All Player operations are wrapped in `runCatching` because the
  * MediaController behind the Player can be torn down mid-flight (release
- * during the autoplay window) and we'd rather miss a volume restore than
+ * during the autoplay window) and we'd rather miss a state restore than
  * crash the timer coroutine.
  */
 class BeepPlayer(private val player: Player) {
@@ -39,6 +53,16 @@ class BeepPlayer(private val player: Player) {
     private val toneBuffer: ShortArray = synthesizePiezoTone(
         freqHz = TONE_FREQ_HZ,
         durationMs = BEEP_DURATION_MS,
+        sampleRate = SAMPLE_RATE,
+    )
+
+    /** Shorter tone for the playback-handoff cue (HTTP -> local file swap).
+     *  80 ms is just long enough to register as an intentional ping rather
+     *  than a click — short enough that a 2-beep cue lands in ~200 ms total
+     *  and partially fills the audio gap from setMediaItem + prepare. */
+    private val quickToneBuffer: ShortArray = synthesizePiezoTone(
+        freqHz = TONE_FREQ_HZ,
+        durationMs = QUICK_BEEP_DURATION_MS,
         sampleRate = SAMPLE_RATE,
     )
 
@@ -55,17 +79,62 @@ class BeepPlayer(private val player: Player) {
         }
     }
 
+    /**
+     * Two short tones, no ducking. Used as the handoff cue when the
+     * player swaps from HTTP streaming to a freshly-completed local
+     * file mid-playback — the swap itself causes a brief silent gap
+     * (setMediaItem + prepare), and these beeps land inside that gap
+     * to make the transition feel intentional rather than glitched.
+     *
+     * No `pause()/play()` ducking because the swap already silences
+     * the source for ~50–100 ms; we don't want to extend that with a
+     * full BEEP_DURATION_MS pause-and-resume cycle.
+     */
+    suspend fun playHandoffCue() {
+        repeat(2) { i ->
+            if (i > 0) delay(QUICK_BEEP_GAP_MS)
+            unduckedBeep(quickToneBuffer)
+        }
+    }
+
+    private suspend fun unduckedBeep(buf: ShortArray) {
+        var track: AudioTrack? = null
+        try {
+            track = buildTrack(buf.size)
+            runCatching { track.setVolume(BEEP_TRACK_VOLUME) }
+            track.write(buf, 0, buf.size)
+            track.play()
+            delay(buf.size * 1000L / SAMPLE_RATE)
+        } catch (e: Exception) {
+            // OEM audio quirks (rare). Degrade quietly.
+            Log.w(TAG, "Unducked beep failed; skipping handoff cue", e)
+        } finally {
+            runCatching { track?.stop() }
+            runCatching { track?.release() }
+        }
+    }
+
     private suspend fun duckedBeep() {
-        val priorVolume = runCatching { player.volume }.getOrDefault(1f)
-        runCatching { player.volume = 0f }
+        // Pause the podcast so the beep plays unmixed. Capture wasPlaying
+        // BEFORE pausing so we can correctly restore on the way out — we
+        // don't want to auto-resume if the user had already paused before
+        // the beep window started.
+        val wasPlaying = runCatching { player.isPlaying }.getOrDefault(false)
+        if (wasPlaying) {
+            runCatching { player.pause() }
+        }
         var track: AudioTrack? = null
         try {
             track = buildTrack()
+            // Per-track volume cap independent of the pre-rendered tone
+            // amplitude. Effective level = sustainPeak * BEEP_TRACK_VOLUME
+            // at full system volume; tune either or both.
+            runCatching { track.setVolume(BEEP_TRACK_VOLUME) }
             // STATIC mode: write once, then play. Smaller-than-buffer writes
             // would short-play; we sized the track to exactly the buffer.
             track.write(toneBuffer, 0, toneBuffer.size)
             track.play()
-            // Block for the tone duration so the next beep / unduck happens
+            // Block for the tone duration so the next beep / unpause happens
             // after the audio actually finishes. AudioTrack.MODE_STATIC keeps
             // playing until the buffer ends, but we still need to wait that
             // wallclock time before continuing.
@@ -77,15 +146,18 @@ class BeepPlayer(private val player: Player) {
         } finally {
             runCatching { track?.stop() }
             runCatching { track?.release() }
-            runCatching { player.volume = priorVolume }
+            // Resume playback if we paused it. If the user paused mid-beep,
+            // wasPlaying was already false and we leave them paused.
+            if (wasPlaying) {
+                runCatching { player.play() }
+            }
         }
     }
 
-    private fun buildTrack(): AudioTrack {
+    private fun buildTrack(samples: Int = toneBuffer.size): AudioTrack {
         // A fresh AudioTrack per beep keeps state simple — no need to track
         // playback-head position or reset between strikes. The allocation
-        // cost is small (~22 KB buffer at 22 kHz / 500 ms) and beeps fire at
-        // most once per minute.
+        // cost is small and beeps fire at most a few times per session.
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -98,7 +170,7 @@ class BeepPlayer(private val player: Player) {
         return AudioTrack(
             attrs,
             fmt,
-            toneBuffer.size * 2,  // bytes (int16)
+            samples * 2,  // bytes (int16)
             AudioTrack.MODE_STATIC,
             AudioManager.AUDIO_SESSION_ID_GENERATE,
         )
@@ -128,10 +200,31 @@ class BeepPlayer(private val player: Player) {
         const val BEEP_DURATION_MS = 500L
         const val BEEP_GAP_MS = 500L
 
+        /** Handoff-cue tone duration. Short enough to feel like a quick
+         *  ping ("✓✓") rather than an alarm. Total cue with one gap
+         *  lands at 80 + 40 + 80 = 200 ms. */
+        const val QUICK_BEEP_DURATION_MS = 80L
+        const val QUICK_BEEP_GAP_MS = 40L
+
         // 22.05 kHz mono is plenty of headroom for a 2.7 kHz fundamental
         // (Nyquist is 11 kHz; the square wave's harmonics up to ~9 kHz pass
         // cleanly). Halving the rate vs 44.1 kHz also halves buffer size.
         private const val SAMPLE_RATE = 22050
+
+        /**
+         * Per-AudioTrack volume cap, multiplied with the pre-rendered tone
+         * amplitude (`sustainPeak`) to give the effective beep level at full
+         * system volume. 0.5 is a starting point — the user can iterate
+         * via this knob without rebuilding the synthesized buffer.
+         *
+         * The earlier "duck via player.volume = 0" approach was unreliable
+         * on device, so the beep often mixed with the podcast at full
+         * podcast level — making any beep feel "too loud." The pause/play
+         * design in [duckedBeep] means the beep plays alone now, so this
+         * volume controls the actual audible level rather than fighting
+         * mixed audio.
+         */
+        private const val BEEP_TRACK_VOLUME = 0.5f
 
         /**
          * Render a square-wave-with-soft-edges PCM buffer for one beep. Soft
@@ -148,7 +241,14 @@ class BeepPlayer(private val player: Player) {
             val buf = ShortArray(numSamples)
             val period = sampleRate.toDouble() / freqHz
             val rampSamples = (sampleRate * 0.005).toInt().coerceAtLeast(1)  // 5 ms
-            val sustainPeak = 0.85  // leave a bit of headroom
+            // 0.3 amplitude × BEEP_TRACK_VOLUME = effective ~0.15 (~-16 dBFS)
+            // at full system volume. Earlier values (0.85 → 0.5 → 0.2) were
+            // calibrated against a broken ducking implementation that left
+            // the beep mixed with podcast audio. With the v0.5.9 pause/play
+            // ducking redesign the beep plays alone, so the perceived level
+            // is just sustainPeak × BEEP_TRACK_VOLUME × system volume —
+            // tune either constant to taste.
+            val sustainPeak = 0.3
             for (i in 0 until numSamples) {
                 // Square wave value at this position (±1.0).
                 val phase = (i % period.toInt()).toDouble() / period

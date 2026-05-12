@@ -154,9 +154,60 @@ private val PRIMARY_ROUTES = setOf(
  * — back from it goes to the most recent primary in the back stack.
  */
 private val NESTED_PARENTS = mapOf(
-    "audioDiagnostics" to "settings",
+    // audioDiagnostics + audiophileNotes used to be pinned to "settings"
+    // here, but they're now reachable from EqScreen too (right-justified
+    // links at the top of the screen). Pinning to one parent route would
+    // teleport the user past EqScreen on back when they arrived via that
+    // path; plain popBackStack handles both entry points correctly. Kept
+    // appDiagnostics + notes/{guid} pinned because those still have a
+    // single canonical parent.
+    "appDiagnostics" to "settings",
     "notes/{guid}" to "notesBrowser",
 )
+
+/**
+ * Navigate to the player in a way that doesn't accumulate historical
+ * entries. Walks the current back stack to find the most recent
+ * "player flavor" entry (`player`, `player/preview/...`, or
+ * `player/transcript/...`), pops up to (and excluding) the route
+ * immediately below it, and then pushes a fresh `player` on top.
+ *
+ * The end-state stack is therefore `[..., naturalParent, player]` — where
+ * `naturalParent` is whatever the user was on when they last navigated
+ * into the player. Back from player goes there, regardless of how many
+ * `player -> settings -> miniplayer -> player -> ...` cycles preceded it.
+ *
+ * Used by every "shortcut" entry to player: miniplayer tap, the
+ * Catalog "Now Playing" link, and the system-media-notification's
+ * `ACTION_OPEN_PLAYER` intent. NOT used for the explicit-play paths
+ * (tap an episode in EpisodesScreen / MyLists / Search) — those
+ * establish a new natural parent and should push fresh.
+ *
+ * Edge case: no player has ever been in the stack this session (e.g.
+ * cold-start where audio resumed without the player being shown). In
+ * that case we fall through to a plain navigate, accepting that "back
+ * from player" goes to whatever screen the user was just on.
+ */
+private fun navigateToPlayerCleanly(nav: NavController) {
+    val routes = nav.currentBackStack.value.map { it.destination.route }
+    val lastPlayerIdx = routes.indexOfLast { route ->
+        route == "player" ||
+            route?.startsWith("player/preview/") == true ||
+            route?.startsWith("player/transcript/") == true
+    }
+    if (lastPlayerIdx > 0) {
+        val belowPlayer = routes[lastPlayerIdx - 1]
+        if (belowPlayer != null) {
+            // popBackStack(name, inclusive=false) pops top-down to the
+            // FIRST (most recent) entry whose route template matches.
+            // For `episodes/{feed}` this means we pop to the most-recent
+            // episodes screen — the right one for the most-recent
+            // player's natural parent in any multi-feed listening session.
+            nav.popBackStack(belowPlayer, inclusive = false)
+        }
+    }
+    nav.navigate("player") { launchSingleTop = true }
+}
 
 /**
  * Single back-handler used by every screen + the system back gesture so the
@@ -219,12 +270,13 @@ private fun AppNav(
     }
 
     // Route to the Player whenever the system media notification (or any other
-    // out-of-Compose source) asks us to. launchSingleTop avoids stacking
-    // duplicate Player entries when the notification is tapped repeatedly.
+    // out-of-Compose source) asks us to. Use the cleaning helper so the back
+    // chain lands on the player's natural parent rather than walking through
+    // whatever the user was incidentally on when the notification fired.
     LaunchedEffect(Unit) {
         openPlayerEvents.collect {
             if (nav.currentDestination?.route != "player") {
-                nav.navigate("player") { launchSingleTop = true }
+                navigateToPlayerCleanly(nav)
             }
         }
     }
@@ -237,13 +289,27 @@ private fun AppNav(
         currentRoute?.startsWith("player/preview/") == true ||
         currentRoute?.startsWith("player/transcript/") == true
 
+    // Lifted state: when PlayerScreen's bottom-tab region is full-screen
+    // (Diagnostics live-readout mode in particular, but also reading-mode
+    // Notes / Transcript), the player chrome above the tabs is hidden.
+    // Without this override the user would lose transport controls in
+    // full-screen — keep the mini-player visible at the bottom so they
+    // can pause / skip / scrub while the tab content fills the screen.
+    // Reset by PlayerScreen on disposal so navigating away cleans up.
+    var forceMiniPlayerOnPlayer by remember { mutableStateOf(false) }
+    val miniPlayerVisible =
+        playerState.currentEpisodeGuid != null && (
+            !onPlayerRoute ||
+                (onPlayerRoute && forceMiniPlayerOnPlayer)
+            )
+
     Scaffold(
         bottomBar = {
-            if (!onPlayerRoute && playerState.currentEpisodeGuid != null) {
+            if (miniPlayerVisible) {
                 MiniPlayer(
                     controller = controller,
                     state = playerState,
-                    onClick = { nav.navigate("player") }
+                    onClick = { navigateToPlayerCleanly(nav) }
                 )
             }
         }
@@ -265,9 +331,10 @@ private fun AppNav(
                     onOpenMetrics = { nav.navigate("metrics") },
                     onOpenNotes = { nav.navigate("notesBrowser") },
                     onOpenSettings = { nav.navigate("settings") },
-                    onOpenNowPlaying = { nav.navigate("player") },
+                    onOpenNowPlaying = { navigateToPlayerCleanly(nav) },
                     onOpenHistory = { nav.navigate("history") },
-                    onOpenSearch = { nav.navigate("search") }
+                    onOpenSearch = { nav.navigate("search") },
+                    onOpenCanonBrowse = { nav.navigate("canonBrowse") },
                 )
             }
 
@@ -310,7 +377,8 @@ private fun AppNav(
                     onOpenTranscript = { guid ->
                         val encoded = URLEncoder.encode(guid, "UTF-8")
                         nav.navigate("player/transcript/$encoded")
-                    }
+                    },
+                    onPlayerTabsFullscreenChange = { fs -> forceMiniPlayerOnPlayer = fs },
                 )
             }
 
@@ -343,14 +411,18 @@ private fun AppNav(
                     onOpenTranscript = { g ->
                         val enc = URLEncoder.encode(g, "UTF-8")
                         nav.navigate("player/transcript/$enc")
-                    }
+                    },
+                    onPlayerTabsFullscreenChange = { fs -> forceMiniPlayerOnPlayer = fs },
                 )
             }
 
             composable("eq") {
                 EqScreen(
                     controller = controller,
-                    onBack = { smartBack(nav, "eq") }
+                    onBack = { smartBack(nav, "eq") },
+                    onOpenAudiophileNotes = { nav.navigate("audiophileNotes") },
+                    onOpenLofiNotes = { nav.navigate("lofiNotes") },
+                    onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
                 )
             }
 
@@ -363,13 +435,61 @@ private fun AppNav(
                     controller = controller,
                     onBack = { smartBack(nav, "settings") },
                     onOpenAudioDiagnostics = { nav.navigate("audioDiagnostics") },
+                    onOpenAudiophileNotes = { nav.navigate("audiophileNotes") },
+                    onOpenLofiNotes = { nav.navigate("lofiNotes") },
+                    onOpenAppDiagnostics = { nav.navigate("appDiagnostics") },
+                    onOpenTextSettings = { nav.navigate("textSettings") },
                 )
             }
 
             composable("audioDiagnostics") {
+                // Plain popBackStack so back returns to whoever sent us
+                // here — Settings, Audio Fine-tuning, or wherever a
+                // future entry point shows up.
                 AudioDiagnosticsScreen(
                     controller = controller,
-                    onBack = { smartBack(nav, "audioDiagnostics") }
+                    onBack = { nav.popBackStack() }
+                )
+            }
+
+            composable("audiophileNotes") {
+                AudiophileNotesScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenLofiNotes = {
+                        // launchSingleTop so flipping back-and-forth between
+                        // the two notes pages doesn't accumulate stack
+                        // entries; popBackStack first if we're already
+                        // descended from the lofi-notes screen.
+                        nav.navigate("lofiNotes") { launchSingleTop = true }
+                    },
+                )
+            }
+
+            composable("lofiNotes") {
+                NonAudiophileLofiNotesScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenAudiophileNotes = {
+                        nav.navigate("audiophileNotes") { launchSingleTop = true }
+                    },
+                )
+            }
+
+            composable("textSettings") {
+                TextSettingsScreen(
+                    onBack = { nav.popBackStack() }
+                )
+            }
+
+            composable("appDiagnostics") {
+                AppDiagnosticsScreen(
+                    onBack = { smartBack(nav, "appDiagnostics") }
+                )
+            }
+
+            composable("canonBrowse") {
+                CanonBrowseScreen(
+                    controller = controller,
+                    onBack = { smartBack(nav, "canonBrowse") },
                 )
             }
 
@@ -534,9 +654,13 @@ private fun MiniPlayer(
                         // Subtle buffering ring on the mini-player play
                         // button — gives the user the same "I'm trying"
                         // signal the full player shows, without taking extra
-                        // vertical space. Suppressed during the countdown so
-                        // the two indicators don't stack.
-                        state.isBuffering -> CircularProgressIndicator(
+                        // vertical space. Driven by buffering OR stall so
+                        // a renderer underrun on the audio chain (the
+                        // watchdog's domain) is visible at the bottom of
+                        // every screen, not only the full Player.
+                        // Suppressed during the countdown so the two
+                        // indicators don't stack.
+                        (state.isBuffering || state.isStalled) -> CircularProgressIndicator(
                             modifier = Modifier.size(48.dp),
                             strokeWidth = 2.dp,
                         )

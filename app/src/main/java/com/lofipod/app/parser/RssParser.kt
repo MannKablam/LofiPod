@@ -25,9 +25,44 @@ object RssParser {
     private const val NS_ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 
     fun parse(feedUrl: String, input: InputStream): Podcast {
+        // Read the whole stream so we can retry with a sanitized copy if
+        // strict XML parsing fails. Most feeds parse cleanly on the first
+        // pass; the sanitization pass costs one regex sweep over the
+        // text. Worst-case feed is ~5 MB (Ask Pastor John) — acceptable
+        // memory cost given the alternative is no episodes shown for
+        // bare-ampersand feeds (CCM Sunday-service feeds reproduce this).
+        val raw = input.bufferedReader().use { it.readText() }
+        return try {
+            parseString(feedUrl, raw)
+        } catch (e: org.xmlpull.v1.XmlPullParserException) {
+            // Retry once with a tolerant pass that escapes bare ampersands
+            // (the most common cause: feeds that emit `Q&A` or `Tom & Jerry`
+            // in titles without `&amp;`). Negative lookahead keeps already-
+            // escaped entities (`&amp;`, `&#39;`, `&#x27;`) untouched, so
+            // we don't double-encode. Doesn't fix unclosed tags / bad
+            // quoting; those will re-throw as the upstream feed-failure log
+            // entry. Surface in [com.lofipod.app.diagnostics.AppDiagnostics]
+            // so the user can see which feeds needed the rescue.
+            try {
+                val sanitized = AMPERSAND_FIXUP.replace(raw, "&amp;")
+                parseString(feedUrl, sanitized).also {
+                    com.lofipod.app.diagnostics.AppDiagnostics.recordFeedRescue(
+                        feedUrl, "bare ampersand"
+                    )
+                }
+            } catch (_: Exception) {
+                throw e
+            }
+        }
+    }
+
+    private val AMPERSAND_FIXUP =
+        Regex("&(?!(?:[a-zA-Z]+|#\\d+|#x[\\da-fA-F]+);)")
+
+    private fun parseString(feedUrl: String, xml: String): Podcast {
         val parser: XmlPullParser = Xml.newPullParser()
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-        parser.setInput(input, null)
+        parser.setInput(xml.byteInputStream(), null)
 
         var channelTitle = ""
         var channelDesc: String? = null
@@ -101,6 +136,7 @@ object RssParser {
         var desc: String? = null
         var audioUrl: String? = null
         var audioType: String? = null
+        var audioBytes: Long? = null
         var duration: String? = null
         var epArt: String? = null
 
@@ -119,6 +155,7 @@ object RssParser {
                 "enclosure" -> {
                     audioUrl = parser.getAttributeValue(null, "url")
                     audioType = parser.getAttributeValue(null, "type")
+                    audioBytes = parser.getAttributeValue(null, "length")?.toLongOrNull()
                     skip(parser)
                 }
                 else -> {
@@ -153,7 +190,8 @@ object RssParser {
             audioUrl = audioUrl!!,
             audioMimeType = audioType,
             durationSeconds = parseDuration(duration),
-            episodeArtworkUrl = epArt
+            episodeArtworkUrl = epArt,
+            audioByteSize = audioBytes,
         )
     }
 
@@ -195,21 +233,41 @@ object RssParser {
         }
     }
 
-    // Common feed pubDate format: RFC 822 / RFC 1123
+    // pubDate format menagerie. Different feeds emit different shapes:
+    //   - RFC 822 / RFC 1123: "Sun, 26 Apr 1998 00:00:00 GMT" (most podcasts)
+    //   - ISO 8601 with offset: "1998-04-26T00:00:00+00:00"
+    //   - ISO 8601 with Z: "1998-04-26T00:00:00Z" (Megaphone, Castos)
+    //   - ISO 8601 with milliseconds + Z: "1998-04-26T00:00:00.000Z"
+    //   - Date only: "1998-04-26" (some kabod-pack-style sources)
+    // SimpleDateFormat doesn't accept 'Z' as a literal, so for the Z variants
+    // we strip/replace it before parsing rather than adding more format
+    // strings. Order matters: we try the most-common first to avoid
+    // unnecessary exception throws.
     private val pubDateFormats = listOf(
         "EEE, dd MMM yyyy HH:mm:ss zzz",
         "EEE, dd MMM yyyy HH:mm:ss Z",
         "dd MMM yyyy HH:mm:ss zzz",
-        "yyyy-MM-dd'T'HH:mm:ssXXX"
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS",
+        "yyyy-MM-dd",
     )
 
     private fun parsePubDate(s: String?): Long? {
         if (s.isNullOrBlank()) return null
+        // Normalize ISO 'Z' (UTC) to '+00:00' so the XXX format specifier
+        // parses cleanly. Keeps the format list short.
+        val normalized = s.trim().let { raw ->
+            if (raw.endsWith("Z") && raw.length >= 11 && raw[10] == 'T') {
+                raw.dropLast(1) + "+00:00"
+            } else raw
+        }
         for (fmt in pubDateFormats) {
             try {
                 val sdf = SimpleDateFormat(fmt, Locale.ENGLISH)
                 sdf.timeZone = TimeZone.getTimeZone("UTC")
-                return sdf.parse(s)?.time
+                return sdf.parse(normalized)?.time
             } catch (_: Exception) { /* try next */ }
         }
         return null

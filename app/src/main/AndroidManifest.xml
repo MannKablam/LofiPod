@@ -6,8 +6,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- API 34+: needed for the download foreground service -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- No FOREGROUND_SERVICE_DATA_SYNC: the v0.6.9 download rewrite ditched
+         Media3's DownloadService entirely. Downloads now run on the app
+         process while the PlaybackService (mediaPlayback type) keeps it
+         alive during playback. -->
+
     <!-- API 33+: needed to post the media notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- In-app updater: needed to invoke the system installer for an APK
@@ -15,6 +18,15 @@
          per-app "Install unknown apps" permission once via system Settings;
          the app detects that and prompts. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Lets the app launch ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS to
+         prompt the user to mark LofiPod as "Unrestricted." Doze and App
+         Standby can throttle background CPU/scheduling even with a
+         mediaPlayback foreground service, causing playback jitter at long
+         sessions or >1x speed. Without this permission the system rejects
+         the intent with SecurityException. The user still has to confirm
+         the prompt — declaring this permission only enables the request,
+         not the exemption itself. Surfaced in Settings -> System. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".LofiPodApp"
@@ -44,11 +56,6 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
-
-        <service
-            android:name=".player.LofiPodDownloadService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
 
         <!-- FileProvider for sharing the downloaded APK URI with the system
              installer. Direct file:// URIs are blocked since Android 7;

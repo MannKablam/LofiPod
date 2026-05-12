@@ -33,7 +33,7 @@ import kotlin.math.pow
  * buffer with a 2048-sample equal-power cross-fade so the user can drag EQ
  * sliders without clicks.
  *
- * Total chain latency: ~5.7 ms (5 ms limiter LA + ~0.7 ms FIR group delay
+ * Total chain latency: ~6.4 ms (5 ms limiter LA + ~1.4 ms FIR group delay
  * across both oversampling stages). Inaudible. CPU footprint: a few percent
  * of one core for stereo at 44.1k.
  */
@@ -44,6 +44,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
     @Volatile private var gainDb: Float = 0f          // volume boost, 0..+12 dB typical
     @Volatile private var enabled: Boolean = true
     @Volatile private var dcBlocker: Boolean = false  // pre-EQ DC removal; off by default
+    // When true, the EQ stage runs as a 4096-tap linear-phase FIR convolution
+    // (Phase C). When false (default), it runs as the 10-band minimum-phase
+    // biquad cascade (Phase A). The downstream chain (DC blocker, gain,
+    // oversampler, limiter, dither) is identical in both modes — only the EQ
+    // stage swaps.
+    @Volatile private var phaseModeLinear: Boolean = false
     @Volatile private var dirty: Boolean = true       // recompute coefficients on next buffer
 
     // ---- Internal DSP state ----
@@ -94,6 +100,11 @@ class EqAudioProcessor : BaseAudioProcessor() {
     // a multiplication, which spreads the spectrum) so it does. See
     // Oversampler.kt for the FIR design and polyphase math.
     private val oversampler = Oversampler()
+    // Linear-phase EQ via FFT overlap-add convolution. Used only when
+    // [phaseModeLinear] is true. Owns its own worker scope for kernel
+    // synthesis on band changes; reset on flush; released on processor reset.
+    // See LinearPhaseEq.kt for the kernel synthesis + convolution math.
+    private val linearPhaseEq = LinearPhaseEq()
     // Scratch arrays sized to channelCount, allocated on configure. Used to
     // hand whole frames between stages: 1x-rate arrays for input/output,
     // plus two 2x-rate arrays for the upsampler→limiter→downsampler bridge
@@ -106,10 +117,18 @@ class EqAudioProcessor : BaseAudioProcessor() {
     private var up1Frame: DoubleArray = DoubleArray(0)
     private var lim0Frame: DoubleArray = DoubleArray(0)
     private var lim1Frame: DoubleArray = DoubleArray(0)
+    // Scratch for popping linear-phase EQ output frames into per-channel
+    // doubles before they enter the gain → oversample → limiter chain.
+    // Sized at configure to channelCount; reused every frame.
+    private var linearPhasePop: DoubleArray = DoubleArray(0)
 
     fun setBands(newBands: List<EqBand>) {
         bands = newBands
         dirty = true
+        // Linear-phase EQ kicks off async kernel re-synthesis on its worker
+        // scope. Cheap to call even when phase mode is min — the worker just
+        // produces a kernel that goes unused until the user toggles modes.
+        linearPhaseEq.setBands(newBands)
         // Counter increments per call; the actual cross-fade only fires inside
         // ensureCoefficients (where we also log the breadcrumb event). Cheap
         // enough to call from the UI thread on every slider tick.
@@ -125,6 +144,27 @@ class EqAudioProcessor : BaseAudioProcessor() {
         AudioChainTelemetry.dcBlockerEnabled = on
         AudioChainTelemetry.logEvent("dc_blocker", if (on) "on" else "off")
     }
+    /**
+     * Switch the EQ stage between minimum-phase biquad cascade (false,
+     * default) and linear-phase FIR convolution (true). The mode change
+     * takes effect on the next audio buffer; mid-buffer audio in flight
+     * through the previous mode is not cross-faded — there will be a brief
+     * (< 50 ms) audible artifact at the transition. Acceptable for a manual
+     * mode switch; could be smoothed with a parallel cross-fade later.
+     */
+    fun setPhaseModeLinear(on: Boolean) {
+        if (phaseModeLinear == on) return
+        phaseModeLinear = on
+        // Clear linear-phase state on entry / exit so a stale partial chunk
+        // from a prior session can't leak into the next mode switch.
+        linearPhaseEq.reset()
+        AudioChainTelemetry.logEvent("phase_mode", if (on) "linear" else "minimum")
+    }
+
+    /** Read-only accessor for the current phase mode. Used by the in-Player
+     *  diagnostics tab to surface "Linear (4096-tap FIR)" vs "Minimum
+     *  (biquad)" without needing a Settings round-trip on every recompose. */
+    fun isPhaseModeLinear(): Boolean = phaseModeLinear
 
     /**
      * True when the chain would have no audible effect — every band is at 0 dB,
@@ -186,6 +226,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
         up1Frame = DoubleArray(channelCount)
         lim0Frame = DoubleArray(channelCount)
         lim1Frame = DoubleArray(channelCount)
+        linearPhasePop = DoubleArray(channelCount)
+        // Linear-phase EQ: allocate per-channel state + synthesize the
+        // initial kernel from the current bands. Cheap to do even when phase
+        // mode is minimum — the kernel just sits unused until mode switches.
+        linearPhaseEq.configure(sampleRate, channelCount)
+        linearPhaseEq.setBands(bands)
         dirty = true
 
         // Diagnostic snapshot: chain config + counters + breadcrumb. Logged
@@ -230,6 +276,9 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // limiter. ~16 frames at 1x of pre-seek audio would otherwise leak
         // into the post-seek output.
         oversampler.reset()
+        // Reset the linear-phase EQ accumulators + overlap-add tail so seeks
+        // don't leak ~46 ms of pre-seek audio out the convolution back end.
+        linearPhaseEq.reset()
         // Cancel any in-flight fade — flush usually means a seek, and
         // continuing a fade across a seek would mix stale state into the
         // new audio.
@@ -246,12 +295,17 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // reallocate next time.
         limiter.reset()
         oversampler.reset()
+        // Linear-phase EQ: reset state AND release the worker scope so the
+        // synthesis coroutine doesn't outlive the processor lifecycle.
+        linearPhaseEq.reset()
+        linearPhaseEq.release()
         frameInput = DoubleArray(0)
         frameOutput = DoubleArray(0)
         up0Frame = DoubleArray(0)
         up1Frame = DoubleArray(0)
         lim0Frame = DoubleArray(0)
         lim1Frame = DoubleArray(0)
+        linearPhasePop = DoubleArray(0)
     }
 
     private fun ensureCoefficients() {
@@ -347,9 +401,38 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (AudioChainTelemetry.passthrough) {
             AudioChainTelemetry.passthrough = false
             AudioChainTelemetry.logEvent("passthrough", "exit")
+            // Linear-phase mode keeps a stateful output queue and overlap-
+            // add tail. Resuming after a passthrough window (e.g. release of
+            // the Hold-to-A/B button) without reset would emit ~50 ms of
+            // stale pre-bypass audio before live audio caught up. Clear the
+            // state so resumption sounds like a clean restart instead.
+            if (phaseModeLinear) linearPhaseEq.reset()
         }
         AudioChainTelemetry.incDspBuffers()
         AudioChainTelemetry.addFrames(frameCount)
+
+        // Wallclock the DSP path so the diagnostics screen can show how close
+        // each buffer is to its real-time deadline (= load factor). This
+        // catches thermal/power-saver throttling — when the phone goes in
+        // a pocket and the OS clamps CPU, the load factor climbs toward 1.0
+        // and underruns become likely.
+        val dspStartNs = System.nanoTime()
+
+        // Linear-phase branch — FIR convolution path. The DC blocker still
+        // runs frame-by-frame upstream of the linear-phase EQ, but the EQ
+        // stage is a chunked overlap-add convolution rather than the biquad
+        // cascade. Output frame count per call may differ from input frame
+        // count (chunks accumulate then emit in 1024-frame bursts), so the
+        // helper handles its own [replaceOutputBuffer] sizing.
+        if (phaseModeLinear) {
+            queueInputLinearPhase(inputBuffer, frameCount)
+            val elapsedNsLinear = System.nanoTime() - dspStartNs
+            val audioNsLinear = if (sampleRate > 0) {
+                frameCount.toLong() * 1_000_000_000L / sampleRate
+            } else 0L
+            AudioChainTelemetry.recordBufferTiming(elapsedNsLinear, audioNsLinear)
+            return
+        }
 
         val out = replaceOutputBuffer(inputBuffer.remaining()).order(ByteOrder.nativeOrder())
         val src = inputBuffer.order(ByteOrder.nativeOrder())
@@ -471,11 +554,106 @@ class EqAudioProcessor : BaseAudioProcessor() {
             if (fading) fadeRemaining--
         }
         out.flip()
+
+        // Push wallclock + audio-time to telemetry. Audio time is derived from
+        // frameCount + sampleRate; processing time is the elapsed nanos since
+        // [dspStartNs]. The diagnostics screen reads these to surface load
+        // factor (= processing/audio): values close to 1.0 mean the audio
+        // thread is saturated and underruns are likely.
+        val dspElapsedNs = System.nanoTime() - dspStartNs
+        val audioNs = if (sampleRate > 0) {
+            frameCount.toLong() * 1_000_000_000L / sampleRate
+        } else 0L
+        AudioChainTelemetry.recordBufferTiming(dspElapsedNs, audioNs)
+    }
+
+    /**
+     * Linear-phase queueInput path. Replaces the biquad cascade (and its
+     * cross-fade machinery) with a 4096-tap FIR convolution provided by
+     * [linearPhaseEq]. The rest of the chain (DC blocker, gain,
+     * oversampler ↔ limiter, dither, truncation) is shared with the
+     * minimum-phase path.
+     *
+     * Output frame count != input frame count: the EQ accumulates input
+     * into [LinearPhaseEq.FRAME_SIZE] chunks before convolving, then emits
+     * in [LinearPhaseEq.FRAME_SIZE]-sized bursts. Total chain latency in
+     * this mode is ~52 ms (~46 ms FIR group delay + ~6.4 ms post-gain
+     * chain). When the EQ is still accumulating its first chunk after a
+     * configure / flush / mode switch, this method emits zero output bytes
+     * for the buffer (no [replaceOutputBuffer] call) and consumes the input
+     * fully — Media3's audio sink waits and queues more input on the next
+     * call.
+     */
+    private fun queueInputLinearPhase(inputBuffer: ByteBuffer, frameCount: Int) {
+        val src = inputBuffer.order(ByteOrder.nativeOrder())
+        val driveScale = 1.0 / 32768.0
+        val invDrive = 32767.0
+        val gainLinear = 10.0.pow(gainDb / 20.0)
+        val applyDcBlocker = dcBlocker
+
+        // Pass 1: read the whole input buffer through the DC blocker into the
+        // linear-phase EQ. Per-channel accumulators inside [linearPhaseEq]
+        // hold partial chunks across queueInput calls; complete chunks
+        // (FRAME_SIZE samples per channel) trigger the FFT convolution.
+        for (frame in 0 until frameCount) {
+            for (ch in 0 until channelCount) {
+                val sampleI = src.short.toInt()
+                var x = sampleI * driveScale
+                if (applyDcBlocker) x = dcBlockers[ch].process(x)
+                frameInput[ch] = x
+            }
+            linearPhaseEq.pushFrame(frameInput)
+        }
+
+        // Pass 2: how many output frames are ready? May be 0 (the EQ is still
+        // accumulating its first chunk after a mode switch / flush / configure)
+        // or several thousand (if multiple chunks completed in one call).
+        val outputFrames = linearPhaseEq.outputFramesAvailable()
+        if (outputFrames == 0) return
+
+        val byteCount = outputFrames * channelCount * 2
+        val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
+
+        for (frame in 0 until outputFrames) {
+            linearPhaseEq.popFrame(linearPhasePop)
+            // Apply gain and compute input-meter peak (same telemetry the
+            // min-phase path feeds).
+            var inFramePeak = 0.0
+            for (ch in 0 until channelCount) {
+                val v = linearPhasePop[ch] * gainLinear
+                frameInput[ch] = v
+                val a = if (v >= 0) v else -v
+                if (a > inFramePeak) inFramePeak = a
+            }
+            AudioChainTelemetry.pushInputSample(inFramePeak)
+
+            // Same post-gain chain as the min-phase path: 2x upsample,
+            // limiter at 2x, 2x downsample, gated TPDF dither, int16
+            // truncation. Reusing the existing scratch arrays.
+            oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+            limiter.processFrame(up0Frame, lim0Frame)
+            limiter.processFrame(up1Frame, lim1Frame)
+            oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
+            val ditherEnabled = limiter.lastReductionDb < 0.0
+            var outFramePeak = 0.0
+            for (ch in 0 until channelCount) {
+                val y = if (ditherEnabled) frameOutput[ch] + dither.next() else frameOutput[ch]
+                val a = if (y >= 0) y else -y
+                if (a > outFramePeak) outFramePeak = a
+                val outI = (y * invDrive).toInt().coerceIn(-32768, 32767)
+                out.putShort(outI.toShort())
+            }
+            AudioChainTelemetry.pushOutputSample(outFramePeak)
+            AudioChainTelemetry.reductionDb = limiter.lastReductionDb
+            AudioChainTelemetry.fading = false  // no biquad cross-fade in linear-phase mode
+            AudioChainTelemetry.ditherActive = ditherEnabled
+        }
+        out.flip()
     }
 
     /**
      * End-of-stream drain. The 2x oversampler + look-ahead limiter chain
-     * holds enough audio in its internal delay lines to fill ~5.7 ms — without
+     * holds enough audio in its internal delay lines to fill ~6.4 ms — without
      * this drain, the last bit of every track would be silently eaten as
      * Media3 stops calling [queueInput] and the chain never gets a chance to
      * flush its tail.
@@ -503,19 +681,81 @@ class EqAudioProcessor : BaseAudioProcessor() {
             return
         }
         AudioChainTelemetry.incDrains()
-        AudioChainTelemetry.logEvent("eos_drain", "${limiter.drainFrameCount / 2} frames @1x")
-        // Total chain delay at 1x rate. limiter.drainFrameCount is in 2x-rate
-        // frames (LA window in 2x samples); divide by 2 for 1x equivalent.
-        // Add the oversampler's combined up+down FIR group delay at 1x.
-        val drainFrames = oversampler.totalDelayFrames1x + limiter.drainFrameCount / 2
-        val byteCount = drainFrames * channelCount * 2
+
+        val gainLinear = 10.0.pow(gainDb / 20.0)
+        val invDrive = 32767.0
+        // Post-gain chain delay at 1x rate. Common to both phase modes:
+        // limiter.drainFrameCount is in 2x-rate frames (LA window in 2x
+        // samples); divide by 2 for 1x equivalent. Add the oversampler's
+        // combined up+down FIR group delay at 1x.
+        val postGainDrain = oversampler.totalDelayFrames1x + limiter.drainFrameCount / 2
+
+        if (phaseModeLinear) {
+            // Linear-phase drain has two stages stacked back-to-back:
+            //   1) push zero frames into linearPhaseEq to flush any partial
+            //      accumulator chunk + the kernel's group delay (~46 ms).
+            //      Three FRAME_SIZE chunks of zeros covers a worst-case
+            //      partial accumulator (FRAME_SIZE-1 samples) + 2 chunks of
+            //      group delay flush + a chunk of slack.
+            //   2) drain the post-gain chain (oversampler ↔ limiter) with
+            //      zero input, same as the min-phase drain below.
+            val zeroFramesIn = LinearPhaseEq.FRAME_SIZE * 3
+            for (ch in 0 until channelCount) frameInput[ch] = 0.0
+            for (i in 0 until zeroFramesIn) linearPhaseEq.pushFrame(frameInput)
+            val linearOut = linearPhaseEq.outputFramesAvailable()
+            val totalDrainFrames = linearOut + postGainDrain
+            AudioChainTelemetry.logEvent(
+                "eos_drain",
+                "linear: $linearOut + post: $postGainDrain @1x"
+            )
+            val byteCount = totalDrainFrames * channelCount * 2
+            if (byteCount <= 0) return
+            val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
+            // Stage 1: drain linearPhaseEq output through gain → post-gain chain.
+            for (frame in 0 until linearOut) {
+                linearPhaseEq.popFrame(linearPhasePop)
+                for (ch in 0 until channelCount) {
+                    frameInput[ch] = linearPhasePop[ch] * gainLinear
+                }
+                oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+                limiter.processFrame(up0Frame, lim0Frame)
+                limiter.processFrame(up1Frame, lim1Frame)
+                oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
+                val ditherEnabled = limiter.lastReductionDb < 0.0
+                for (ch in 0 until channelCount) {
+                    val y = if (ditherEnabled) frameOutput[ch] + dither.next() else frameOutput[ch]
+                    val outI = (y * invDrive).toInt().coerceIn(-32768, 32767)
+                    out.putShort(outI.toShort())
+                }
+            }
+            // Stage 2: zero-input drain of the post-gain chain.
+            for (ch in 0 until channelCount) frameInput[ch] = 0.0
+            for (frame in 0 until postGainDrain) {
+                oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+                limiter.processFrame(up0Frame, lim0Frame)
+                limiter.processFrame(up1Frame, lim1Frame)
+                oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
+                val ditherEnabled = limiter.lastReductionDb < 0.0
+                for (ch in 0 until channelCount) {
+                    val y = if (ditherEnabled) frameOutput[ch] + dither.next() else frameOutput[ch]
+                    val outI = (y * invDrive).toInt().coerceIn(-32768, 32767)
+                    out.putShort(outI.toShort())
+                }
+            }
+            out.flip()
+            return
+        }
+
+        // Min-phase drain — push zeros through oversampler ↔ limiter and emit.
+        AudioChainTelemetry.logEvent("eos_drain", "$postGainDrain frames @1x")
+        val byteCount = postGainDrain * channelCount * 2
         if (byteCount <= 0) return
         val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
         // Zero 1x input frame, reused every drain step. Pre-zero just in case
         // [frameInput] held real audio; we want clean silence going into the
         // chain so real audio drains out cleanly.
         for (ch in 0 until channelCount) frameInput[ch] = 0.0
-        for (frame in 0 until drainFrames) {
+        for (frame in 0 until postGainDrain) {
             // Same chain as the queueInput hot path, just with zero input.
             // Each call reads one stale frame off the back of the chain.
             oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
@@ -525,7 +765,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
             val ditherEnabled = limiter.lastReductionDb < 0.0
             for (ch in 0 until channelCount) {
                 val y = if (ditherEnabled) frameOutput[ch] + dither.next() else frameOutput[ch]
-                val outI = (y * 32767.0).toInt().coerceIn(-32768, 32767)
+                val outI = (y * invDrive).toInt().coerceIn(-32768, 32767)
                 out.putShort(outI.toShort())
             }
         }
