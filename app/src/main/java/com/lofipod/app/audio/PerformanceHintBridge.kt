@@ -45,6 +45,18 @@ class PerformanceHintBridge(context: Context) {
     @Volatile private var currentTargetNsValue: Long = 0L
     @Volatile private var lastErrorMessage: String? = null
 
+    /**
+     * TID the active session is pinned to. -1 means "no session". A change
+     * detected on subsequent `ensureSession` calls indicates the audio sink
+     * has swapped threads (sink rebuild on format change, low-power audio
+     * path swap on some OEMs); the existing session is bound to a dead
+     * thread and must be torn down so the new TID gets its own hint
+     * session. Without this, a thread swap leaves the hint pointed at a TID
+     * the scheduler will never see again — the new thread runs unhinted
+     * for the lifetime of the process.
+     */
+    @Volatile private var currentThreadId: Int = -1
+
     init {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
@@ -82,12 +94,29 @@ class PerformanceHintBridge(context: Context) {
         if (targetNs <= 0L || threadId <= 0) return
         try {
             val typedMgr = mgr as android.os.PerformanceHintManager
-            val typedSession = session as? android.os.PerformanceHintManager.Session
+            var typedSession = session as? android.os.PerformanceHintManager.Session
+
+            // TID swap: existing session is pinned to a dead thread, tear
+            // it down so the create-branch below builds a fresh session for
+            // the new TID. Close errors are swallowed — close is best-
+            // effort. After this block we may be in the no-session state
+            // and the create-branch handles it identically to first call.
+            if (typedSession != null && threadId != currentThreadId) {
+                runCatching { typedSession.close() }
+                session = null
+                typedSession = null
+                currentTargetNsValue = 0L
+                // Don't clear lastErrorMessage — preserve diagnostic history
+                // across the swap. currentThreadId updates on successful
+                // create below.
+            }
+
             if (typedSession == null) {
                 val created = typedMgr.createHintSession(intArrayOf(threadId), targetNs)
                 if (created != null) {
                     session = created
                     currentTargetNsValue = targetNs
+                    currentThreadId = threadId
                 }
             } else if (targetNs != currentTargetNsValue) {
                 typedSession.updateTargetWorkDuration(targetNs)
@@ -97,6 +126,7 @@ class PerformanceHintBridge(context: Context) {
             // Drop the session on error; the audio thread will keep running
             // unimpaired and we won't keep retrying every buffer.
             session = null
+            currentThreadId = -1
             lastErrorMessage = "ensure: ${t.message ?: t.javaClass.simpleName}"
         }
     }
@@ -130,5 +160,6 @@ class PerformanceHintBridge(context: Context) {
         }
         session = null
         currentTargetNsValue = 0L
+        currentThreadId = -1
     }
 }

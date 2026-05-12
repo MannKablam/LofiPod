@@ -1,7 +1,10 @@
 package com.lofipod.app.player
 
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -40,6 +43,23 @@ class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var saveTickerJob: Job? = null
 
+    /**
+     * Held while the player is actively playing. Acquiring a PARTIAL_WAKE_LOCK
+     * here is belt-and-braces alongside the mediaPlayback foreground-service
+     * type: the foreground service keeps the process alive across Doze, but
+     * the kernel can still downclock CPU aggressively when the screen is off,
+     * which starves the DSP path on a 2× playback budget. The wake lock asks
+     * the kernel to keep the CPU clocked enough to make scheduling deadlines.
+     *
+     * Released as soon as playback pauses so we don't keep the CPU hot
+     * during idle-pause-mid-listen windows. Released again in onDestroy as a
+     * safety net.
+     *
+     * Permission `android.permission.WAKE_LOCK` is already declared in the
+     * manifest (was unused prior to this change — see BUILD_LOG audit notes).
+     */
+    private var playbackWakeLock: PowerManager.WakeLock? = null
+
     companion object {
         // Shared EQ instance — UI can grab it via app-level holder
         val sharedEq = EqAudioProcessor()
@@ -57,6 +77,14 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         val tOnCreate = System.nanoTime()
         super.onCreate()
+        // Prepare the playback wake lock once at service creation. Tag uses
+        // the documented "app:purpose" convention so it shows up identifiably
+        // in `adb shell dumpsys power`. Reference-counted=false because we
+        // only acquire/release at the isPlaying-true/false transitions —
+        // there's no nested-acquire pattern that would need ref counting.
+        playbackWakeLock = (getSystemService(Context.POWER_SERVICE) as? PowerManager)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LofiPod:playback")
+            ?.apply { setReferenceCounted(false) }
         // Scheme-aware DataSource factory: file:// URIs (downloaded episodes)
         // route through Media3's FileDataSource, http(s):// URIs go to
         // OkHttpDataSource. v0.6.9 reset dropped the streaming-cache
@@ -116,10 +144,12 @@ class PlaybackService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying) {
+                    acquirePlaybackWakeLock()
                     startSaveTicker(player)
                 } else {
                     stopSaveTicker()
                     saveCurrent(player, listenDelta = 0L)
+                    releasePlaybackWakeLock()
                 }
             }
         })
@@ -278,6 +308,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         mediaSession?.player?.let { saveCurrent(it, listenDelta = 0L) }
         stopSaveTicker()
+        releasePlaybackWakeLock()
         mediaSession?.run {
             player.release()
             release()
@@ -285,5 +316,31 @@ class PlaybackService : MediaSessionService() {
         }
         scope.cancel()
         super.onDestroy()
+    }
+
+    /**
+     * Acquire the playback wake lock. Idempotent — already-held is a no-op
+     * (the `isHeld` guard avoids the `WakeLock under-locked` warning we'd
+     * otherwise see on a stray double-acquire). Wrapped in try/catch because
+     * a hostile SELinux denial on some OEM builds can throw at acquire time;
+     * a wake-lock failure must never crash playback.
+     */
+    private fun acquirePlaybackWakeLock() {
+        val wl = playbackWakeLock ?: return
+        try {
+            if (!wl.isHeld) wl.acquire()
+        } catch (t: Throwable) {
+            Log.w("LofiPodPlayback", "WakeLock acquire failed: ${t.message}")
+        }
+    }
+
+    /** Symmetric release; tolerant of unheld-state via the [isHeld] guard. */
+    private fun releasePlaybackWakeLock() {
+        val wl = playbackWakeLock ?: return
+        try {
+            if (wl.isHeld) wl.release()
+        } catch (t: Throwable) {
+            Log.w("LofiPodPlayback", "WakeLock release failed: ${t.message}")
+        }
     }
 }

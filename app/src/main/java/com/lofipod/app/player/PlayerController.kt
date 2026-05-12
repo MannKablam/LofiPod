@@ -205,6 +205,11 @@ class PlayerController(private val context: Context) {
                 kotlinx.coroutines.delay(150)
                 if (controller == null) return@launch
                 pendingPlay = null
+                // Re-assert the captured autoplay status BEFORE the replay so
+                // an autoplay-induced bail still re-arms the confirmation
+                // timer on the replayed play. The replayed playEpisode will
+                // consume the flag again at its entry.
+                if (p.wasAutoplay) lastPlayWasAutoplay = true
                 playEpisode(p.ep, p.podcastTitle, p.podcastArt, p.forcedStartMs)
             }
             // Belt-and-suspenders: when the activity is recreated against a
@@ -464,7 +469,16 @@ class PlayerController(private val context: Context) {
             lastErrorVerbose = "${error.errorCodeName}: $codeName$verboseTail"
             pushState()
         }
-        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) = pushState()
+        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+            // Mirror the live speed into AudioChainTelemetry so the PerfHint
+            // bridge gets a speed-adjusted wall-clock target (audioNs / speed).
+            // Without this, at 2× the OS gets a deadline twice as generous
+            // as reality and downclocks the CPU. Volatile write; audio thread
+            // sees it within one buffer.
+            com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed =
+                playbackParameters.speed
+            pushState()
+        }
         // The next two fire as the MediaController syncs its state from a
         // running session — without them, reconnecting to a session that's
         // already mid-playback (cold launch case) leaves PlayerState empty
@@ -575,20 +589,27 @@ class PlayerController(private val context: Context) {
         podcastArt: String?,
         forcedStartMs: Long? = null
     ) {
+        // Consume the autoplay-detection flag UNCONDITIONALLY at entry,
+        // before the controller-null check. Otherwise a bailed-to-pendingPlay
+        // call would leave the flag set for the next playEpisode invocation,
+        // which would then arm the autoplay-confirmation timer for a play the
+        // user perceives as manual (the "spurious autoplay-style beep on cold
+        // playback start" symptom). The flag travels into PendingPlay so the
+        // drain in connect() can restore it for the replayed call.
+        val wasAutoplay = lastPlayWasAutoplay
+        lastPlayWasAutoplay = false
+
         val c = controller
         if (c == null) {
             // Controller still building — queue and bail. The drain in
-            // [connect]'s listener replays this call once we're live.
-            pendingPlay = PendingPlay(ep, podcastTitle, podcastArt, forcedStartMs)
+            // [connect]'s listener replays this call once we're live, with
+            // the autoplay flag re-asserted from the captured snapshot.
+            pendingPlay = PendingPlay(ep, podcastTitle, podcastArt, forcedStartMs, wasAutoplay)
             return
         }
-        // Consume the autoplay-detection flag at entry. Whether or not we
-        // re-arm the timer below, any previous timer is for a different
-        // episode and must be torn down: the body uses guid identity to
-        // decide whether to pause, but the StateFlow still drives a stale
-        // countdown UI until cleared explicitly.
-        val wasAutoplay = lastPlayWasAutoplay
-        lastPlayWasAutoplay = false
+        // Any previous timer is for a different episode and must be torn down:
+        // the body uses guid identity to decide whether to pause, but the
+        // StateFlow still drives a stale countdown UI until cleared explicitly.
         autoplayTimerJob?.cancel()
         autoplayTimerJob = null
         _autoplayTimer.value = null
@@ -716,7 +737,15 @@ class PlayerController(private val context: Context) {
                 podcastStateDao.get(ep.feedUrl)?.defaultSpeed
             }
             if (speedOverride != null && kotlin.math.abs(speedOverride - 1.0f) > 0.001f) {
+                // Mirror speed into AudioChainTelemetry too — see setSpeed
+                // for rationale (PerfHint target wall-clock budget scaling).
+                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = speedOverride
                 c.setPlaybackSpeed(speedOverride)
+            } else {
+                // No override (or 1.0×): reset the mirror so a previous
+                // episode's per-podcast speed doesn't leak into PerfHint
+                // math for this one.
+                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = 1.0f
             }
 
             // Mark this feed as "seen" — kills the new-episodes badge in Catalog
@@ -737,9 +766,24 @@ class PlayerController(private val context: Context) {
             // progress. Just a plain HTTP fetch into filesDir/episode_audio/.
             // A prior FAILED state is treated as "needs start" so a replay
             // naturally retries the offline copy.
+            //
+            // Race: the in-memory `byId` map is hydrated asynchronously at
+            // app launch (LofiPodDownloader.init { cleanupScope.launch {
+            // hydrate() } }). A fast-play on cold start can see
+            // `byId.value[guid] == null` even though the DAO row exists and
+            // the file is fully downloaded. Re-firing start() in that window
+            // wastes work AND emits a COMPLETED transition on byId, which
+            // [observeDownloadCompletion] interprets as "download just
+            // finished, mid-playback handoff!" — firing the handoff cue
+            // beeps and a setMediaItem swap right at the moment audio
+            // finally starts. Use completedFile() (DAO-fallback aware) as
+            // the authoritative check.
+            val existingFile = app.downloadsApi.completedFile(ep.guid)
             val existingDl = app.downloadsApi.byId.value[ep.guid]
-            val needsStart = existingDl == null ||
-                existingDl.state == com.lofipod.app.data.LofiDownload.State.FAILED
+            val needsStart = existingFile == null && (
+                existingDl == null ||
+                    existingDl.state == com.lofipod.app.data.LofiDownload.State.FAILED
+                )
             if (needsStart) {
                 withContext(Dispatchers.IO) {
                     autoDownloadDao.upsert(
@@ -1467,7 +1511,14 @@ class PlayerController(private val context: Context) {
     }
 
     fun setSpeed(speed: Float) {
-        controller?.setPlaybackSpeed(speed.coerceIn(0.5f, 3.0f))
+        val clamped = speed.coerceIn(0.5f, 3.0f)
+        // Mirror speed into AudioChainTelemetry immediately so the PerfHint
+        // bridge sees the new wall-clock budget on the very next buffer. The
+        // onPlaybackParametersChanged listener also writes it (covers session-
+        // side originators), but writing here too closes the window between
+        // setPlaybackSpeed and the listener fire.
+        com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = clamped
+        controller?.setPlaybackSpeed(clamped)
     }
 
     fun currentPositionMs(): Long = controller?.currentPosition ?: 0L
@@ -1856,4 +1907,14 @@ private data class PendingPlay(
     val podcastTitle: String,
     val podcastArt: String?,
     val forcedStartMs: Long?,
+    /**
+     * Snapshot of [PlayerController.lastPlayWasAutoplay] at the moment this
+     * play attempt was queued. Without this field, the autoplay flag would
+     * leak across a controller-null bail: advanceToNextInQueue sets the flag
+     * true and calls playEpisode, the null-controller branch stores the play
+     * in pendingPlay and returns BEFORE consuming the flag, and a subsequent
+     * manual playEpisode tap arrives, consumes the stale flag, and arms the
+     * autoplay-confirmation timer for a play the user perceives as manual.
+     */
+    val wasAutoplay: Boolean,
 )

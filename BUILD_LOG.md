@@ -2,6 +2,115 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Audio-thread hardening: wake lock + speed-aware PerfHint + re-elevation + TID swap
+
+Pest-control sweep against the screen-off-DSP-chop pattern reported on
+S7 plus the post-auto-download freeze observed 2026-05-11. Four
+independent fixes targeting the audio-thread / scheduling surface; the
+playback state-machine fixes that explain the autoplay-style beep on
+manual playback land in a separate commit.
+
+**PARTIAL_WAKE_LOCK acquired during `isPlaying`.** `WAKE_LOCK`
+permission was declared but never acquired anywhere in `app/src/main`.
+Foreground service (`mediaPlayback` type) keeps the process alive
+across Doze but doesn't constrain the CPU governor from downclocking
+when the screen goes off. PARTIAL_WAKE_LOCK acquired on
+`Player.Listener.onIsPlayingChanged(true)` and released on `false`;
+also released in `onDestroy` as a safety net. `setReferenceCounted(false)`
+because acquire/release follow the listener strictly. `isHeld` guards
+on both sides tolerate accidental double-call without the under-locked
+warning. Try/catch around acquire so a hostile SELinux denial can't
+crash playback.
+
+**PerformanceHintBridge target now scaled by playback speed.** Bridge
+was passing `targetNs = frameCount * 1e9 / sampleRate` — the audio
+duration of the buffer, not the wall-clock budget. At 2× playback the
+budget is half that. The governor was choosing a CPU frequency for a
+deadline twice as generous as reality; screen-on the compositor masked
+the slack, screen-off the DSP path started missing deadlines (the
+S7-reported chop pattern). Added `@Volatile var playbackSpeed: Float`
+on `AudioChainTelemetry`, written by `PlayerController` from
+`onPlaybackParametersChanged`, `setSpeed`, and the per-podcast default
+override branch in `playEpisode`. `recordBufferTiming` divides
+`audioNs` by the current speed before calling `bridge.ensureSession`.
+
+**PerformanceHintBridge invalidates session on TID change.**
+`ensureSession` previously had create + retarget branches only; a TID
+swap (sink rebuild on format change, low-power audio path swap on some
+OEMs) left the hint session pinned to a dead thread and the new audio
+thread ran unhinted forever. Added `currentThreadId` tracking and a
+TID-swap branch that closes the existing session before the create
+path runs. AudioChainTelemetry already detected the swap and logged
+the `audio_thread` breadcrumb — now the hint follows the breadcrumb.
+
+**Active priority re-elevation on demotion detection.** When
+`Process.getThreadPriority(tid) >= 0` (audio thread no longer above
+normal scheduler priority), the previous code only logged + counted.
+Now it calls `Process.setThreadPriority(tid, THREAD_PRIORITY_AUDIO)`
+once per demotion transition and reads back the new priority. The
+breadcrumb message reflects whether re-elevation succeeded
+("re-elevated to AUDIO") or didn't ("re-elevation failed; likely
+cgroup-bound"). Free mitigation for pure-nice-value demotions
+(e.g. Media3 didn't elevate after a thread recreate); inert on OEM
+cgroup migrations (cpuset/cpu group caps survive nice changes — the
+"D1" blind spot still warrants direct `/proc/self/task/<tid>/cgroup`
+reading, not addressed in this sweep).
+
+Files affected:
+- `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+- `app/src/main/java/com/lofipod/app/audio/AudioChainTelemetry.kt`
+- `app/src/main/java/com/lofipod/app/audio/PerformanceHintBridge.kt`
+- `app/src/main/java/com/lofipod/app/player/PlayerController.kt` (speed
+  mirror writes; the rest of this file's changes land in the
+  state-machine commit)
+
+ai_contamination: true # claude opus 4.7
+
+## Playback state-machine: autoplay-flag leak + already-downloaded handoff misfire
+
+Two narrow defects in the playback startup path observed during the
+Pattern B repro 2026-05-11. Both produced user-visible "weird beep at
+play start, then freeze ~5 s later" without an obvious cause because
+each defect on its own was silent — they only made noise when they
+compounded.
+
+**`lastPlayWasAutoplay` leaked across a controller-null bail.**
+`playEpisode` used to consume the flag immediately AFTER the
+`controller == null` early-return — so a call from
+`advanceToNextInQueue` (which sets the flag) that arrived while the
+MediaController was still binding stored the play in `pendingPlay` and
+returned without consuming the flag. A subsequent user-initiated
+`playEpisode` (a manual tap) consumed the stale flag and armed the
+autoplay-confirmation timer; the user heard the 60-second countdown
+beep on a play they perceived as manual. Fix: consume the flag
+unconditionally at function entry, pass it through `PendingPlay` so
+the drain in `connect()` can restore it on the replayed call.
+
+**Auto-download fired for already-downloaded episodes during
+`_byId` hydrate window.** The `needsStart` check at the auto-download
+trigger gated on `app.downloadsApi.byId.value[guid] == null ||
+state == FAILED`. `_byId` is hydrated asynchronously at app launch
+(`LofiPodDownloader.init { cleanupScope.launch { hydrate() } }`), so a
+fast-play on cold start saw `null` even when the DAO row existed and
+the file was fully on disk. The auto-download start emitted a
+COMPLETED transition on `byId`, which `observeDownloadCompletion`
+interpreted as "download just finished, mid-playback handoff!" —
+firing `playHandoffCue` (two unducked quick beeps) plus a
+`setMediaItem` swap right at the moment audio finally started. The
+`setMediaItem(newItem, savedPosMs); prepare()` cycle dropped the
+player back into STATE_BUFFERING for `bufferForPlaybackAfterRebufferMs
+= 8 s` — the observed "playback froze 5 seconds after the beeps."
+Toggling Audio Enhancement off didn't help because the freeze was in
+the rebuffer cycle, not in DSP. Fix: use the already-suspending
+`completedFile()` helper (DAO-fallback aware) as the authoritative
+"is this on disk?" check; only fire start() when no file exists AND
+the in-memory state agrees.
+
+Files affected:
+- `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+
+ai_contamination: true # claude opus 4.7
+
 ## EqScreen layout polish: tooltip-hint + reference-menu collapse
 
 Two UX cleanups on Audio Fine-tuning, both followups to the v0.7.3

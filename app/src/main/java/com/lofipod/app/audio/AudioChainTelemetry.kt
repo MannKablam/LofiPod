@@ -153,6 +153,25 @@ object AudioChainTelemetry {
     fun priorityDemotionCount(): Int = priorityDemotions.get()
 
     /**
+     * Current playback speed, as last observed via PlayerController's
+     * Player.Listener.onPlaybackParametersChanged or PlayerController.setSpeed.
+     * Used to scale the wall-clock budget passed to the
+     * [PerformanceHintManager] target: each buffer holds N frames of audio
+     * worth `audioNs` of media time, but at 2× playback that audio drains in
+     * `audioNs / 2` of wall-clock, so the OS scheduler's deadline budget is
+     * `audioNs / speed` — without this scaling, the governor picks a CPU
+     * frequency for a deadline twice as generous as reality and the DSP
+     * thread starts missing deadlines when the screen goes off and the
+     * compositor stops masking the slack.
+     *
+     * @Volatile so a Main-thread setter is visible to the audio thread
+     * without synchronization. Default 1.0f matches Media3's default
+     * PlaybackParameters.speed so first-buffer math is correct before any
+     * onPlaybackParametersChanged event has fired.
+     */
+    @Volatile var playbackSpeed: Float = 1.0f
+
+    /**
      * Application-scoped bridge to [android.os.PerformanceHintManager], lazily
      * installed once at process start by [installPerformanceHintBridge]. Held
      * here (rather than in a separate singleton) so the audio thread can hop
@@ -271,9 +290,30 @@ object AudioChainTelemetry {
             if (isWrong && !priorityDemotionLogged) {
                 priorityDemotionLogged = true
                 priorityDemotions.incrementAndGet()
+                // Active recovery: try to push the priority back up to
+                // THREAD_PRIORITY_AUDIO before logging. This is a free
+                // mitigation when the demotion is a pure nice-value issue
+                // (e.g. Media3 didn't elevate the thread post-recreate). It
+                // will NOT fix OEM cgroup migrations — those cap CPU at the
+                // cpuset/cpu group level regardless of thread nice. We log
+                // the attempted-priority value alongside so the diagnostics
+                // dump shows what we tried.
+                val reelevated = try {
+                    android.os.Process.setThreadPriority(
+                        tid, android.os.Process.THREAD_PRIORITY_AUDIO
+                    )
+                    val readback = try {
+                        android.os.Process.getThreadPriority(tid)
+                    } catch (_: Throwable) { priority }
+                    audioThreadPriority = readback
+                    readback < 0
+                } catch (_: Throwable) {
+                    false
+                }
                 logEvent(
                     "priority_demoted",
-                    "tid=$tid priority=$priority (expected -16 AUDIO; thread will compete with normal app threads)"
+                    "tid=$tid priority=$priority " +
+                        (if (reelevated) "(re-elevated to AUDIO)" else "(re-elevation failed; likely cgroup-bound)")
                 )
             } else if (!isWrong && priorityDemotionLogged) {
                 priorityDemotionLogged = false
@@ -285,10 +325,21 @@ object AudioChainTelemetry {
         }
 
         // Performance hint: target = wall-clock budget for this buffer's
-        // worth of audio; actual = how long the DSP path took. On API <31
-        // or when the service is unavailable, both calls no-op cheaply.
+        // worth of audio, ADJUSTED for playback speed. audioNs is the audio
+        // duration the buffer represents; at speed=2.0 the audio thread has
+        // only audioNs/2 of wall-clock to finish before the next buffer is
+        // due. Without this division the OS gets a deadline twice as
+        // generous as reality at 2× and downclocks the CPU mid-buffer,
+        // producing the screen-off chop. On API <31 or when the service is
+        // unavailable, both calls no-op cheaply.
         perfHint?.let { bridge ->
-            bridge.ensureSession(tid, audioNs)
+            val speed = playbackSpeed
+            val targetNs = if (speed > 0f && speed != 1.0f) {
+                (audioNs.toDouble() / speed).toLong()
+            } else {
+                audioNs
+            }
+            bridge.ensureSession(tid, targetNs)
             bridge.reportActual(processingNs)
         }
     }
