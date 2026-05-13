@@ -2,6 +2,56 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.8 — Band-change crossfade in UpcConvolver (2026-05-13)
+
+Brief #10 lands: zipper-free EQ slider drags in FIR modes. Adds a
+parallel-path dual-kernel mix during a ~93 ms fade window after each
+`setKernelTaps` call. With UPC's input-history FDL, the same FDL drives
+both old and new kernel multiply-accumulates — no need for separate
+input buffers; just one extra IFFT and ~3 extra MACs per channel per
+block during the fade.
+
+**How it works:**
+  - `setKernelTaps` now captures the current live `kernelPartitionSpectra`
+    as `prevKernelPartitionSpectra` before publishing the new one, and
+    arms `fadeChunksRemaining = FADE_CHUNKS` (= 4 blocks ≈ 93 ms at
+    1024 @ 44.1k).
+  - `processBlock` checks the fade counter at the top of each block.
+    When fading, it runs the same FDL against BOTH kernels (new in
+    `accumSpec`, old in `accumSpecOld`), IFFTs both, then mixes the
+    time-domain outputs via a linear α ramp:
+      `out[n] = newOut[n] * α + oldOut[n] * (1 - α)`
+    where α grows from `fadeIdx/FADE_CHUNKS` at the start of the chunk
+    to `(fadeIdx + 1)/FADE_CHUNKS` at the end.
+  - After `FADE_CHUNKS` blocks, the prev kernel reference is dropped
+    and the dual-path machinery goes dormant again.
+
+**Rapid slider drag handling:** each `setKernelTaps` captures whatever
+the current live kernel is (which might itself be a mid-fade new kernel)
+as the new "prev" and restarts the fade from α=0. The user always hears
+a smooth ramp from the immediately-prior live state to the new state,
+regardless of drag speed.
+
+**CPU cost during fade:** one extra IFFT and one extra set of P MACs
+per channel per block. With PFFFT's NEON SIMD, that's well within budget
+even at 2× playback on mid-range ARM. After the fade window the cost is
+identical to v0.9.7 — no permanent overhead.
+
+**Reset behavior:** `UpcConvolver.reset()` (called from chainReset on
+seek / flush / mode toggle) clears the prev kernel reference and zeros
+the fade counter, so the chain comes back from a flush without an
+unwanted ramp-from-pre-flush-state.
+
+**Affects modes:** Min FIR, Linear FIR, Mixed — all three FIR modes
+inherit the crossfade for free since they all go through the same
+UpcConvolver. PURE_IIR has its own biquad cross-fade machinery
+(separate code path).
+
+This was the brief's last unfinished engineering item. The remaining
+deferred item is #12 (off-thread DSP worker with SPSC ring) — pure
+optimization that's mostly mooted by PFFFT's 3-5x speedup in v0.9.6.
+Skipping for now.
+
 ## v0.9.7 — PFFFT integration fixes (preempting v0.9.6 CI failure) (2026-05-13)
 
 Web-search-driven preemptive fix tag — v0.9.6's PFFFT integration had

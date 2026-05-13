@@ -107,6 +107,27 @@ class UpcConvolver(
     @Volatile
     private var kernelPartitionSpectra: Array<FloatArray> = buildIdentityPartitions()
 
+    /**
+     * Previous kernel partition spectra retained for band-change crossfade
+     * (v0.9.8+). When non-null, [processBlock] convolves the current FDL
+     * against BOTH the new and old kernels for [fadeChunksRemaining]
+     * blocks, then mixes the two outputs via a linear α ramp (α going
+     * from 0 → 1 across the fade window). After the fade finishes, this
+     * reference is cleared and the dual-path machinery dormant again.
+     *
+     * Why we can share one FDL across both kernels: the FDL stores
+     * frequency-domain INPUT history, not kernel-convolved output. Both
+     * kernels see the same input — only the multiply-accumulate against
+     * each kernel's partition spectra differs.
+     */
+    @Volatile
+    private var prevKernelPartitionSpectra: Array<FloatArray>? = null
+
+    /** Blocks remaining in the band-change fade. >0 means dual-kernel
+     *  output mixing is active. */
+    @Volatile
+    private var fadeChunksRemaining: Int = 0
+
     /** Frequency-domain delay line per channel: ring of P partition spectra
      *  of past input (PFFFT internal layout). */
     private val fdl: Array<Array<FloatArray>> =
@@ -123,9 +144,21 @@ class UpcConvolver(
     private val workspace: Array<FloatArray> =
         Array(channels) { FloatArray(fftSize) }
 
-    /** Per-channel spectral accumulator for the partition multiply-accumulate. */
+    /** Per-channel spectral accumulator for the partition multiply-accumulate
+     *  (new kernel during fade, sole kernel otherwise). */
     private val accumSpec: Array<FloatArray> =
         Array(channels) { FloatArray(fftSize) }
+
+    /** Per-channel spectral accumulator for the OLD kernel during a fade.
+     *  Unused outside the fade window. Allocated once at construction so
+     *  no audio-thread allocation on slider drags. */
+    private val accumSpecOld: Array<FloatArray> =
+        Array(channels) { FloatArray(fftSize) }
+
+    /** Per-channel time-domain output of the OLD kernel during a fade,
+     *  used to mix against the new kernel's output. */
+    private val blockOutOld: Array<FloatArray> =
+        Array(channels) { FloatArray(blockSize) }
 
     /**
      * Replace the convolution kernel. Synthesizes partition spectra from
@@ -160,7 +193,22 @@ class UpcConvolver(
             workerBridge.transform(ws, forward = true)
             ws
         }
+        // Band-change crossfade (v0.9.8+): snapshot the current live kernel
+        // as the "previous" reference, then atomically publish the new
+        // kernel, then arm the fade counter. The audio thread will mix
+        // outputs from both kernels via a linear α ramp over the next
+        // FADE_CHUNKS blocks. After the ramp completes, the prev reference
+        // is dropped automatically inside processBlock.
+        //
+        // If a fade was already in progress (rapid slider drags),
+        // `kernelPartitionSpectra` was the mid-fade "new" kernel and
+        // becomes the new "prev"; the ramp restarts from α=0 against this
+        // most-recent-just-replaced kernel. Result: the user always hears
+        // a smooth ramp from the immediately-prior live state to the new
+        // state, regardless of how fast they drag.
+        prevKernelPartitionSpectra = kernelPartitionSpectra
         kernelPartitionSpectra = partitions
+        fadeChunksRemaining = FADE_CHUNKS
     }
 
     /**
@@ -174,7 +222,18 @@ class UpcConvolver(
      * blockSize-sample boundary.
      */
     fun processBlock(input: Array<FloatArray>, output: Array<FloatArray>) {
-        val parts = kernelPartitionSpectra  // snapshot once
+        // Snapshot all crossfade-relevant state once at the top of the
+        // block so a worker-thread setKernelTaps mid-block can't tear
+        // the read. Each @Volatile read is individually atomic; the
+        // worst-case race produces a one-block slice with stale prev
+        // (which is benign — both kernels are valid, we just mix the
+        // "wrong" two for one block).
+        val parts = kernelPartitionSpectra
+        val prevParts = prevKernelPartitionSpectra
+        val fadeRem = fadeChunksRemaining
+        val fading = fadeRem > 0 && prevParts != null
+        val fadeIdx = if (fading) FADE_CHUNKS - fadeRem else 0
+
         for (ch in 0 until channels) {
             val ws = workspace[ch]
             val acc = accumSpec[ch]
@@ -195,22 +254,66 @@ class UpcConvolver(
             val head = fdlHead[ch]
             System.arraycopy(ws, 0, fdl[ch][head], 0, fftSize)
 
-            // Accumulate Σ FDL[head - p] · K[p] using PFFFT's SIMD
-            // zconvolve_accumulate. Zero the accumulator first.
+            // Accumulate Σ FDL[head - p] · K_new[p] into [acc] using
+            // PFFFT's SIMD zconvolve_accumulate.
             java.util.Arrays.fill(acc, 0.0f)
             for (p in 0 until numPartitions) {
                 val idx = ((head - p) % numPartitions + numPartitions) % numPartitions
                 audioBridge.zconvolveAccumulate(fdl[ch][idx], parts[p], acc, 1.0f)
             }
-            fdlHead[ch] = (head + 1) % numPartitions
-
-            // Inverse FFT (scaled by 1/N to match canonical IFFT convention).
             audioBridge.transform(acc, forward = false)
 
-            // Emit second half (overlap-save: first L samples are circular
-            // wrap-around garbage; second L is the linear convolution
-            // output we want).
-            System.arraycopy(acc, blockSize, out, 0, blockSize)
+            if (fading) {
+                // Same FDL, different kernel: accumulate Σ FDL[head - p] · K_old[p]
+                // into [accOld] and IFFT to time-domain. Then mix the two
+                // outputs via a linear α ramp.
+                val accOld = accumSpecOld[ch]
+                val outOld = blockOutOld[ch]
+                java.util.Arrays.fill(accOld, 0.0f)
+                for (p in 0 until numPartitions) {
+                    val idx = ((head - p) % numPartitions + numPartitions) % numPartitions
+                    audioBridge.zconvolveAccumulate(fdl[ch][idx], prevParts!![p], accOld, 1.0f)
+                }
+                audioBridge.transform(accOld, forward = false)
+                // accOld now contains the OLD kernel's full IFFT'd output;
+                // emit second half into outOld (same overlap-save extraction
+                // as the new-kernel path).
+                System.arraycopy(accOld, blockSize, outOld, 0, blockSize)
+
+                // Linear α ramp across the fade window. Sample n within
+                // this block contributes at fractional position
+                //   (fadeIdx + n / blockSize) / FADE_CHUNKS
+                // → α going from 0/N at the start of the first fade chunk
+                //   to (N-1+1)/N = 1.0 at the end of the last chunk.
+                val invBlock = 1.0f / blockSize.toFloat()
+                val invFadeChunks = 1.0f / FADE_CHUNKS.toFloat()
+                val baseAlpha = fadeIdx.toFloat() * invFadeChunks
+                val perSampleAlpha = invBlock * invFadeChunks
+                val accNew = acc  // alias for readability
+                for (n in 0 until blockSize) {
+                    val alpha = baseAlpha + perSampleAlpha * n.toFloat()
+                    val oneMinusAlpha = 1.0f - alpha
+                    out[n] = accNew[blockSize + n] * alpha + outOld[n] * oneMinusAlpha
+                }
+            } else {
+                // No fade — emit second half of the new kernel's output
+                // directly (overlap-save: first L samples are circular
+                // wrap-around garbage; second L is the linear convolution
+                // output we want).
+                System.arraycopy(acc, blockSize, out, 0, blockSize)
+            }
+
+            fdlHead[ch] = (head + 1) % numPartitions
+        }
+
+        // Decrement fade counter once per processBlock call (all channels
+        // share the same fade). When it hits zero, drop the prev kernel
+        // reference so future blocks skip the dual-path machinery cleanly.
+        if (fading) {
+            fadeChunksRemaining--
+            if (fadeChunksRemaining == 0) {
+                prevKernelPartitionSpectra = null
+            }
         }
     }
 
@@ -225,8 +328,16 @@ class UpcConvolver(
                 java.util.Arrays.fill(fdl[ch][p], 0.0f)
             }
             java.util.Arrays.fill(prevInput[ch], 0.0f)
+            java.util.Arrays.fill(accumSpec[ch], 0.0f)
+            java.util.Arrays.fill(accumSpecOld[ch], 0.0f)
+            java.util.Arrays.fill(blockOutOld[ch], 0.0f)
             fdlHead[ch] = 0
         }
+        // Drop any in-flight band-change crossfade. Reset usually means
+        // seek / flush / mode toggle — situations where the user wants a
+        // clean break, not a smooth ramp from pre-flush state.
+        prevKernelPartitionSpectra = null
+        fadeChunksRemaining = 0
     }
 
     /** Free the native PFFFT setups + aligned scratch. Call from the
@@ -275,5 +386,15 @@ class UpcConvolver(
          * length kernels at modest CPU.
          */
         const val DEFAULT_BLOCK_SIZE = 1024
+
+        /**
+         * Band-change crossfade duration in BLOCK-sized chunks. 4 blocks
+         * at 1024 samples / 44.1k = ~93 ms. Long enough that the per-
+         * block α step is sub-perceptible (~25 ms apart), short enough
+         * that the user perceives slider drags as immediate. Bumping this
+         * to 8 (~186 ms) gives an even gentler ramp at the cost of more
+         * dual-kernel CPU during the fade window.
+         */
+        const val FADE_CHUNKS = 4
     }
 }
