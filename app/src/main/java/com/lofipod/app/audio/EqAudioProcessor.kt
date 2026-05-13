@@ -189,6 +189,39 @@ class EqAudioProcessor : BaseAudioProcessor() {
     fun isPhaseModeLinear(): Boolean = phaseModeLinear
 
     /**
+     * Total chain latency from input to audible output, in microseconds.
+     *
+     *   - Linear-phase FIR: (KERNEL_LENGTH-1)/2 samples ≈ 46.4 ms at 44.1k.
+     *     Only contributes when the linear-phase path is active. Always 0
+     *     in v0.9.0+ since the chip is hidden and PlaybackService forces
+     *     `phaseModeLinear = false` regardless of the saved pref. Returns
+     *     to non-zero in v0.9.4 when the rebuilt linear chip ships.
+     *   - Oversampler FIR group delay (both up + down stages combined):
+     *     `totalDelayFrames1x` samples at 1× rate, ≈ 1.4 ms at 44.1k.
+     *   - Limiter look-ahead: `drainFrameCount/2` 1×-equiv samples, ≈ 5 ms.
+     *
+     * Returns 0 when the chain is disabled or in effective passthrough —
+     * those paths copy bytes through untouched, no latency contribution.
+     *
+     * Used by [PlayerController.currentPositionMs] to subtract the chain's
+     * algorithmic delay from the position reported to the UI, so the
+     * progress bar tracks what the user is actually hearing rather than
+     * what the audio sink last wrote to AudioTrack. Watchdog and DB
+     * persistence intentionally stay on raw position. See
+     * _LOFIPOD_V1_BRIEF.md §A4.
+     */
+    fun getChainLatencyUs(): Long {
+        if (sampleRate == 0) return 0L
+        if (!enabled || isPassthroughEffective()) return 0L
+        val linUs = if (phaseModeLinear) {
+            ((LinearPhaseEq.KERNEL_LENGTH - 1).toLong() / 2) * 1_000_000L / sampleRate
+        } else 0L
+        val osUs = oversampler.totalDelayFrames1x.toLong() * 1_000_000L / sampleRate
+        val limUs = (limiter.drainFrameCount.toLong() / 2L) * 1_000_000L / sampleRate
+        return linUs + osUs + limUs
+    }
+
+    /**
      * True when the chain would have no audible effect — every band is at 0 dB,
      * no global gain, AND the DC blocker is off. Cheap O(bands) check run per
      * buffer; the volatile reads are fine since the audio thread re-checks

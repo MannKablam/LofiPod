@@ -2,6 +2,42 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.2 — Latency-honest transport (2026-05-13)
+
+Third tag of the audio rebuild roadmap. Brief #7: the audio chain's
+algorithmic delay is now subtracted from the position reported to the UI,
+so the scrubber matches what the user is audibly hearing. Pro-DAW
+behavior; sets up the larger v0.9.4 cut where linear-phase returns and the
+chain-latency number grows from ~6 ms to ~52 ms when linear is engaged.
+
+**Brief #7 — `EqAudioProcessor.getChainLatencyUs()`.** Public method
+returns the chain's total algorithmic delay in microseconds:
+linear-phase FIR group delay (when active — always 0 in v0.9.x while the
+chip is hidden) + oversampler combined up/down group delay + limiter
+look-ahead. Returns 0 when the chain is disabled or in passthrough
+(those paths copy bytes through untouched). At v0.9.2 with the chain
+engaged in minimum-phase: ~6.4 ms total; v0.9.4+ with linear-phase
+restored: ~52 ms when linear is on.
+
+**`PlayerController.currentPositionMs()` now subtracts chain latency.**
+All UI consumers (scrubber polls, note-creation position, diagnostics
+display, mini-player) automatically pick up the compensated reading.
+Stall watchdog, DB persistence, checkpoints, and `jumpToPosition()`
+deliberately keep reading `controller.currentPosition` directly — their
+forward-progress / save-restore invariants are about raw frames advancing
+through the audio sink, not about audible alignment.
+
+**`PlayerController.seekTo(positionMs)` now compensates the target.**
+A tap on "1:00" in the scrubber lands AUDIBLE-1:00 instead of
+RAW-1:00 (which would be audible ~46 ms before 1:00 in linear mode,
+~6 ms in min-phase). Sub-perceptible per-seek, but compounds visibly when
+seeking repeatedly to a chapter or saved-note position.
+
+Built-in `seekBack()` / `seekForward()` (the ±15 s / ±30 s buttons that
+go through Media3's `Player.seekBack()`/`seekForward()`) are NOT
+explicitly compensated — both endpoints are raw, so the audible offset
+is the same constant on both sides and the relative seek is exact.
+
 ## v0.9.1 — Hardening: Media3 upgrade + downloader integrity + ADPF floor (2026-05-13)
 
 Second tag of the audio rebuild roadmap. Three small-to-medium fixes from

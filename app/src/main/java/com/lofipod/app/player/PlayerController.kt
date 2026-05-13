@@ -1507,7 +1507,16 @@ class PlayerController(private val context: Context) {
     fun seekForward() { controller?.seekForward() }
 
     fun seekTo(positionMs: Long) {
-        controller?.seekTo(positionMs)
+        // Compensate the requested UI position by the chain's algorithmic
+        // delay so the AUDIBLE result lands at the position the user asked
+        // for. Without compensation, a tap on "1:00" lands the user's ear
+        // ~46 ms before "1:00" in linear-phase mode (~6 ms in min-phase) —
+        // sub-perceptible alone, but compounds visibly when seeking
+        // repeatedly to a chapter marker or to a saved note position.
+        // See _LOFIPOD_V1_BRIEF.md §A4.
+        val latUs = PlaybackService.sharedEq.getChainLatencyUs()
+        val target = positionMs + latUs / 1000L
+        controller?.seekTo(target)
     }
 
     fun setSpeed(speed: Float) {
@@ -1521,7 +1530,25 @@ class PlayerController(private val context: Context) {
         controller?.setPlaybackSpeed(clamped)
     }
 
-    fun currentPositionMs(): Long = controller?.currentPosition ?: 0L
+    /**
+     * Latency-compensated position for UI consumers (scrubber, time
+     * readout). Subtracts the audio chain's algorithmic delay from
+     * `controller.currentPosition` so the reading matches what the user is
+     * audibly hearing right now.
+     *
+     * **Do not use this for the stall watchdog, DB persistence, or
+     * checkpoints.** Those should call `controller.currentPosition`
+     * directly — the watchdog's forward-progress invariant is about raw
+     * frames advancing through the audio sink, and DB persistence is
+     * about resuming at the same raw frame on next play (so the chain's
+     * delay applies symmetrically on both sides). See
+     * _LOFIPOD_V1_BRIEF.md §A4.
+     */
+    fun currentPositionMs(): Long {
+        val raw = controller?.currentPosition ?: 0L
+        val latMs = PlaybackService.sharedEq.getChainLatencyUs() / 1000L
+        return (raw - latMs).coerceAtLeast(0L)
+    }
     fun durationMs(): Long = controller?.duration?.takeIf { it > 0 } ?: 0L
 
     // ---------- Queue ----------
