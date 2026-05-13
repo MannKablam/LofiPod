@@ -22,7 +22,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <android/log.h>
-#include "pffft.h"
+// marton78/pffft places the public header at `include/pffft/pffft.h` and
+// the PFFFT::PFFFT target exports that include directory.
+#include "pffft/pffft.h"
 
 #define LOG_TAG "lofipod_fft"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)

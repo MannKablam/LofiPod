@@ -2,6 +2,54 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.7 — PFFFT integration fixes (preempting v0.9.6 CI failure) (2026-05-13)
+
+Web-search-driven preemptive fix tag — v0.9.6's PFFFT integration had
+three wrong assumptions about marton78/pffft's repo layout that would
+have failed the CI build at CMake configure / compile time:
+
+**1. Source-file path was wrong.** v0.9.6's CMakeLists tried to compile
+`${pffft_src_SOURCE_DIR}/pffft.c` directly. marton78/pffft's source is
+split across multiple .c files under `src/` (e.g., `src/pffft_common.c`,
+`src/pffft_priv_impl.h`) and `pffft.c` at the repo root doesn't exist.
+Switched to `FetchContent_MakeAvailable(pffft)` + linking the
+`PFFFT::PFFFT` target so their CMake takes care of source assembly.
+
+**2. Header include path was wrong.** marton78/pffft places the public
+header at `include/pffft/pffft.h` (under a `pffft/` subdir for namespace
+hygiene). v0.9.6's JNI bridge had `#include "pffft.h"`. Fixed to
+`#include "pffft/pffft.h"`. The `PFFFT::PFFFT` target exports the
+right include directory.
+
+**3. Subproject uninstall conflict.** v1.1.0 (released Feb 2026) had
+an unconditional uninstall target that conflicts when PFFFT is consumed
+as a subproject. Commit a4b0359 (2026-04-22) restricted it to top-level
+projects only. Pinned `GIT_TAG` to that specific commit SHA for both
+reproducibility and to pick up the fix.
+
+**Other tightenings while we're here:**
+- Disabled `PFFFT_USE_TYPE_DOUBLE` (we only use single precision).
+- Disabled `PFFFT_BUILD_TESTS / _BENCHMARKS / _EXAMPLES` and
+  `INSTALL_PFFFT` (we're a subproject; we don't need their install rules
+  or testing infrastructure).
+- Set `BUILD_SHARED_LIBS=OFF` so PFFFT compiles as a static lib that
+  links into our single JNI .so instead of shipping a separate
+  libPFFFT.so alongside.
+- Removed `GIT_SHALLOW TRUE` — shallow clones don't reach pinned commit
+  SHAs reliably (only HEAD).
+
+**Function-name verification.** Confirmed from
+`include/pffft/pffft.h` that `pffft_new_setup`, `pffft_transform`,
+`pffft_zconvolve_accumulate`, `pffft_aligned_malloc/free`, and
+`pffft_zreorder` all use the bare `pffft_` prefix (no `pffftf_` or
+`pffftd_` variants when only `PFFFT_USE_TYPE_FLOAT=ON`). v0.9.6's JNI
+bridge already used these names — no change needed there.
+
+**Risk note.** v0.9.6 + v0.9.7 are both untested first-NDK-build tags.
+v0.9.7 fixes the three issues I caught preemptively via marton78/pffft
+docs + source inspection. There may be more issues I missed; expect at
+least one more iteration (v0.9.8+) if CI fails.
+
 ## v0.9.6 — PFFFT (NEON-SIMD FFT) replaces JTransforms on audio thread (2026-05-13)
 
 Brief #15 lands: replaces the pure-JVM JTransforms FFT on the audio-
