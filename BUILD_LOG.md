@@ -2,6 +2,81 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.0 — Audio pest-control + linear-phase chip hidden for rebuild (2026-05-13, untagged on dev)
+
+First tag of the multi-release audio rebuild captured in `_LOFIPOD_V1_BRIEF.md`.
+Stability cut: silent bug fixes + one user-visible regression (linear-phase
+chip removed) paired with a release note explaining the v0.9.4 return. Tracks
+toward v0.10.0 (the brief calls that endpoint "v1.0.0" but v1.0.0 is reserved
+for the user-triggered public launch).
+
+**Brief #1 — Eliminate ArrayDeque<Double> autobox GC on the audio thread.**
+`LinearPhaseEq.outputQueue` was `Array<ArrayDeque<Double>>`. Every
+`addLast(value: Double)` autoboxed to `java.lang.Double` (Kotlin generic
+collections force primitive boxing). At FRAME_SIZE=1024, stereo, 44.1 kHz
+that's ~88,200 transient heap allocations/sec on the audio thread plus the
+same on pop — sustained ~1.4 MB/s of ART garbage on the worst possible thread.
+Symptom: sporadic clicks every 5–30 s on long sessions correlated with GC
+activity. Replaced with a primitive-backed `DoubleRing` (power-of-two
+DoubleArray + head/tail/mask), nested inside LinearPhaseEq. No autoboxing on
+push/pop; ~64 KB/channel for the 8192-cap ring, negligible vs the existing
+~80 KB working set.
+
+**Brief #6 — Precompute FLAT kernel; remove sync FFT from configure().**
+`configure(rate, channels)` previously called `synthesizeKernelSync(FLAT)` —
+an 8192-pt FFT + IFFT + window + FFT on the audio/format-change thread
+(~2–15 ms cold). Hoisted to a `FLAT_KERNEL_SPECTRUM` companion val
+computed once at class load. For FLAT the magnitude response is unity at every
+bin → impulse is rate-independent, so the cached spectrum is shared across
+all sample rates.
+
+**Brief #4 — Hoist chainReset(); call from both onFlush() and
+setPhaseModeLinear().** Previously `onFlush` cleared filters / biquads / DC
+blocker / limiter / oversampler / linear-phase EQ, but
+`setPhaseModeLinear(on)` only reset the linear-phase EQ — the limiter's
+look-ahead, oversampler delay lines, and biquad cross-fade state held the
+previous mode's audio and produced a brief level burst at the mode-toggle
+boundary. Extracted shared `chainReset()` private; both call paths now reset
+the full chain.
+
+**Brief #2 — Tune DefaultLoadControl for local files.** Was
+`min=180s / max=600s / prioritize-time=true / no byte ceiling`. On local
+`file://` sources the Loader read continuously up to the time threshold
+(potentially ~106 MB decoded PCM at 256 kbps stereo), pressuring ART and
+opening underrun windows during long GCs. New config: `min=30s / max=60s /
+playbackMs=2/5 / prioritize-time=false / target-buffer-bytes=8 MB`. Plenty
+for podcasts at any speed; engages the byte ceiling on local sources.
+
+**Brief #5 — fsync downloaded file before markCompleted.** The DB row flip to
+COMPLETED is the visibility barrier for handoff / completedFile()
+consumers. Without fsync, an OS crash between fclose() and SQLite commit
+could leave a COMPLETED row pointing at partial bytes. Added
+`runCatching { raf.fd.sync() }` immediately before the RAF closes. Tolerated
+silently if the FS doesn't support it (some FUSE passthroughs).
+
+**Brief #11 — Hide linear-phase chip in EqScreen, suppress rehydrate, preserve
+saved pref.** Linear-phase mode is removed from the user-facing chip set in
+v0.9.0 while the convolution path is rebuilt. The DataStore key
+`phase_mode_linear` is left untouched — v0.9.4 picks the user's preference
+back up when the chip is restored (rebuilt on UPC + crossfade alongside a
+new Min-Phase FIR mode). PlaybackService.onCreate rehydrate suppresses the
+saved value (always boots into minimum-phase regardless). EqScreen displays
+an explanatory note that surfaces the user's preserved preference when
+they had linear on previously.
+
+**Kept unchanged (deliberately):** Mid-playback streaming→downloaded handoff
+(brief #3). The handoff is part of how the app is used in practice (start
+streaming → drive into a connectivity-poor area → switch to local file
+seamlessly). The chainReset on flush (#4) + LoadControl tightening (#2)
+quietly harden the swap path; tweaks land per-issue rather than wholesale
+disable.
+
+**Not yet in v0.9.0 (queued for later tags):** UPC infrastructure (#13,
+v0.9.3), off-thread DSP worker (#12, v0.9.3), band-change crossfade (#10,
+v0.9.4), Min-Phase FIR mode (#14, v0.9.4), PFFFT migration (#15, v0.9.5),
+Mixed-Phase mode (#17, v0.10.0). Brief covers all of them; this is the
+stability cut only.
+
 ## v0.8.0 — In-Player Diagnostics tab + full-screen mode + snapshot-to-note
 
 Bigger than a patch release. Adds a fast-path for the user to inspect

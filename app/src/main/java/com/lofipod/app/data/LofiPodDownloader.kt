@@ -345,10 +345,24 @@ class LofiPodDownloader(
                 // Final position emit so the UI lands exactly on the
                 // completion bytes, regardless of tick alignment.
                 emitProgress(ep.guid, totalWritten, totalLen)
+                // fsync before close — the DB row about to flip to COMPLETED
+                // is the visibility barrier for downstream consumers (player
+                // handoff, file URI lookup), so the file contents must be
+                // durable BEFORE that DB write lands. Without this, an OS
+                // crash between fclose() and SQLite commit can leave the
+                // user with a COMPLETED row pointing at zero-length or
+                // partial bytes. raf.fd.sync() forces dirty pages out and
+                // blocks until the FS acknowledges. Tolerated to fail
+                // silently on backends that don't support sync (some FUSE
+                // passthroughs); the file is still as durable as a normal
+                // write+close there. See _LOFIPOD_V1_BRIEF.md §E4.
+                runCatching { raf.fd.sync() }
             }
         }
 
-        // If we got here without throwing, the body fully drained.
+        // If we got here without throwing, the body fully drained AND was
+        // fsync'd. Safe to mark COMPLETED — the DB row is now a real
+        // visibility barrier; observers can rely on the file at filePath.
         markCompleted(ep.guid, target.length(), filePath)
     }
 

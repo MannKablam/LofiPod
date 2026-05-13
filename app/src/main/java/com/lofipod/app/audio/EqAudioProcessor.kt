@@ -155,10 +155,32 @@ class EqAudioProcessor : BaseAudioProcessor() {
     fun setPhaseModeLinear(on: Boolean) {
         if (phaseModeLinear == on) return
         phaseModeLinear = on
-        // Clear linear-phase state on entry / exit so a stale partial chunk
-        // from a prior session can't leak into the next mode switch.
-        linearPhaseEq.reset()
+        // Reset the full chain on a phase-mode toggle. The linear-phase EQ has
+        // its own buffered state, but the post-EQ stages (limiter look-ahead,
+        // oversampler delay lines, biquad cross-fade state) also hold the
+        // previous mode's audio; failing to clear them produces a brief level
+        // burst or click at the moment of switching. See
+        // _LOFIPOD_V1_BRIEF.md §A8.
+        chainReset()
         AudioChainTelemetry.logEvent("phase_mode", if (on) "linear" else "minimum")
+    }
+
+    /**
+     * Reset every stateful DSP stage in the chain (DC blocker, biquad cascade
+     * + cross-fade state, linear-phase EQ accumulators/OLA tail/output ring,
+     * oversampler FIR delay lines, look-ahead limiter buffer + peak window).
+     * Called from [onFlush] (seek / setMediaItem) and from
+     * [setPhaseModeLinear] (mid-playback mode toggle). Idempotent and cheap;
+     * does not free or reallocate any buffers.
+     */
+    private fun chainReset() {
+        for (ch in filters) for (b in ch) b.reset()
+        for (ch in oldFilters) for (b in ch) b.reset()
+        for (b in dcBlockers) b.reset()
+        limiter.reset()
+        oversampler.reset()
+        linearPhaseEq.reset()
+        fadeRemaining = 0
     }
 
     /** Read-only accessor for the current phase mode. Used by the in-Player
@@ -264,25 +286,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun onFlush() {
-        for (ch in filters) for (b in ch) b.reset()
-        for (ch in oldFilters) for (b in ch) b.reset()
-        for (b in dcBlockers) b.reset()
-        // Reset the limiter delay line + peak window. Without this, a seek
-        // (which triggers onFlush) would emit ~5 ms of audio from BEFORE the
-        // seek as the start of the post-seek output, then the audio that
-        // currently lives in the buffer. Audible glitch.
-        limiter.reset()
-        // Reset the oversampler FIR delay lines — same reasoning as the
-        // limiter. ~16 frames at 1x of pre-seek audio would otherwise leak
-        // into the post-seek output.
-        oversampler.reset()
-        // Reset the linear-phase EQ accumulators + overlap-add tail so seeks
-        // don't leak ~46 ms of pre-seek audio out the convolution back end.
-        linearPhaseEq.reset()
-        // Cancel any in-flight fade — flush usually means a seek, and
-        // continuing a fade across a seek would mix stale state into the
-        // new audio.
-        fadeRemaining = 0
+        // Full chain reset on seek / setMediaItem / format-change-pre-resume.
+        // Without this, the limiter (~5 ms LA), oversampler (~16 frames @1x),
+        // linear-phase EQ (~46 ms OLA tail), biquad cross-fade state, and DC
+        // blocker (one-frame) would each leak a slice of pre-flush audio
+        // into the start of the post-flush output. See [chainReset].
+        chainReset()
         AudioChainTelemetry.incFlushes()
         AudioChainTelemetry.logEvent("flush")
     }

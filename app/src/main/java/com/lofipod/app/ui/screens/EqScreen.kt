@@ -351,52 +351,42 @@ fun EqScreen(
             }
             Spacer(Modifier.height(16.dp))
 
-            // ---- Phase mode (Minimum / Linear) ----
-            // Switches the EQ stage between the default minimum-phase biquad
-            // cascade and the linear-phase FIR convolution. Distinct from
-            // the master toggle: that turns the chain off entirely; this
-            // chooses HOW the EQ shaping is implemented when the chain is
-            // on. Mid-playback switches have a brief audible artifact
-            // (~50 ms) at the transition since the two paths have different
-            // group delays. Could be smoothed with a parallel cross-fade
-            // later; acceptable for a manual-mode-switch affordance.
+            // ---- Phase mode ----
+            // v0.9.0: the Linear-phase FIR chip is intentionally hidden while
+            // the convolution path is rebuilt (Phase-mode rebuild lands in
+            // v0.9.4 on a partitioned-convolution backbone with band-change
+            // crossfade, alongside a new Min-Phase FIR mode). The
+            // PlaybackService rehydrate path also suppresses the saved
+            // `phase_mode_linear=true` pref so existing users boot into
+            // minimum-phase without losing their preference (the value stays
+            // in DataStore for v0.9.4 to pick up). The `phaseModeLinear`
+            // collectAsState above is left wired so the v0.9.4 chip-restore
+            // is a UI-only re-add.
+            //
+            // Display reads `phaseModeLinear` only to surface the saved
+            // preference back to the user in the explanatory note — the
+            // active mode is always minimum-phase in this version.
             Text("Phase mode", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(2.dp))
             Text(
-                "Minimum: ~6.4 ms latency, transparent for nearly all listeners (default). " +
-                    "Linear: ~52 ms latency, preserves transient waveform shape exactly. " +
-                    "Higher CPU; opt-in for audiophile-grade A/B testing.",
+                "Minimum-phase biquad (~6.4 ms latency).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                if (phaseModeLinear) {
+                    "Linear-phase FIR is temporarily hidden in v0.9.0 while the " +
+                        "convolution path is rebuilt. Your saved preference is preserved " +
+                        "and will restore when the rebuilt mode ships in v0.9.4 " +
+                        "(alongside a new min-phase FIR option)."
+                } else {
+                    "Linear-phase FIR returns in v0.9.4 with a partitioned-convolution " +
+                        "rebuild, alongside a new min-phase FIR mode."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(8.dp))
-            Row {
-                FilterChip(
-                    selected = !phaseModeLinear,
-                    onClick = {
-                        composeScope.launch {
-                            withContext(Dispatchers.IO) {
-                                settings.setPhaseModeLinear(false)
-                            }
-                            eq.setPhaseModeLinear(false)
-                        }
-                    },
-                    label = { Text("Minimum") }
-                )
-                Spacer(Modifier.width(8.dp))
-                FilterChip(
-                    selected = phaseModeLinear,
-                    onClick = {
-                        composeScope.launch {
-                            withContext(Dispatchers.IO) {
-                                settings.setPhaseModeLinear(true)
-                            }
-                            eq.setPhaseModeLinear(true)
-                        }
-                    },
-                    label = { Text("Linear") }
-                )
-            }
             Spacer(Modifier.height(20.dp))
 
             // ---- Hold to A/B button ----

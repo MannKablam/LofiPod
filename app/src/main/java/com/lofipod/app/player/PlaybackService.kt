@@ -109,32 +109,29 @@ class PlaybackService : MediaSessionService() {
         val dataSourceFactory = (application as LofiPodApp).downloads.dataSourceFactory
         val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory)
 
-        // Audio buffer sizes — significantly larger than Media3 defaults
-        // because we play at variable speed. The buffer durations here are
-        // in MEDIA TIME (the duration of audio held), not wall-clock; at 2x
-        // playback, source material is consumed at 2x wall-clock rate. So
-        // a 60s media-time buffer drains in 30s wall-clock at 2x, and any
-        // network slowdown longer than that starves the renderer.
+        // Audio buffer sizes. The previous v0.6.x→v0.8.0 config (min=180s,
+        // max=600s, prioritize-time=true) was sized to survive ~5 min of
+        // wall-clock at 2× without rebuffering, but on local file:// sources
+        // the Loader read continuously until the time threshold, pulling up
+        // to ~600 s media-time of decoded audio into SampleQueue allocations
+        // — at 256 kbps stereo that's ~106 MB of decoded PCM, dangerously
+        // close to OOM on 1–2 GB devices and a real GC-pause source on the
+        // audio thread. See _LOFIPOD_V1_BRIEF.md §E2.
         //
-        // Symptom (v0.6.x reports): at 2x for ~7 min the playback would
-        // stall with the position cycling through the last ~5s of decoded
-        // audio (renderer underrun loop), then resume after a flush. At
-        // 1.75x, the same effect appeared as severe stuttering. Both were
-        // network slowdowns landing while the buffer was already small.
-        //
-        // New thresholds give 5 min wall-clock headroom at 2x (10 min
-        // media-time max), and require 8s of buffer after a rebuffer
-        // before resuming so the audio doesn't immediately re-stall.
-        // Memory cost: ~10 min of audio at 256 kbps stereo is ~19 MB.
-        // Acceptable on any modern phone.
+        // 30/60 s with prioritize-time disabled re-engages the byte ceiling
+        // (8 MB ≈ 4 min @256 kbps stereo PCM) and is plenty for podcasts at
+        // 64–256 kbps even at 2× playback. bufferForPlayback stays at
+        // 2 s / 5 s — same fast-start feel as the prior config without the
+        // pathological local-file fill.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 180_000,
-                /* maxBufferMs = */ 600_000,
-                /* bufferForPlaybackMs = */ 5_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 8_000
+                /* minBufferMs = */ 30_000,
+                /* maxBufferMs = */ 60_000,
+                /* bufferForPlaybackMs = */ 2_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 5_000
             )
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setPrioritizeTimeOverSizeThresholds(false)
+            .setTargetBufferBytes(8 * 1024 * 1024)
             .build()
 
         val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq, sharedSkipSilence))
@@ -204,12 +201,17 @@ class PlaybackService : MediaSessionService() {
             // DC-offset-y feeds can flip it on.
             sharedEq.setDcBlockerEnabled(settings.dcBlockerEnabled.first())
 
-            // EQ phase mode (Phase C). False = minimum-phase biquad (default,
-            // ~6.4 ms latency); true = linear-phase FIR convolution (~52 ms).
-            // Rehydrated here so the user's preference survives a process
-            // restart — without this, the chain would always start in
-            // minimum-phase regardless of the saved setting.
-            sharedEq.setPhaseModeLinear(settings.phaseModeLinear.first())
+            // EQ phase mode. v0.9.0: ALWAYS boot into minimum-phase
+            // regardless of the saved `phase_mode_linear` value. The linear-
+            // phase chip is hidden in EqScreen while the convolution path is
+            // rebuilt (v0.9.4: UPC + crossfade, plus a new min-phase FIR
+            // mode). The DataStore pref is preserved untouched so v0.9.4 can
+            // restore the user's prior choice by simply removing this
+            // suppression and going back to:
+            //     sharedEq.setPhaseModeLinear(settings.phaseModeLinear.first())
+            // No DataStore migration needed at v0.9.4 — the value is sitting
+            // there waiting.
+            sharedEq.setPhaseModeLinear(false)
         }
 
         // Notification tap target: route through MainActivity with a custom

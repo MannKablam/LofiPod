@@ -87,10 +87,13 @@ class LinearPhaseEq {
     // beyond the current chunk that will mix into future chunks' outputs.
     // Length [KERNEL_LENGTH] - 1 per channel.
     private var pending: Array<DoubleArray> = emptyArray()
-    // Output queue per channel. ArrayDeque<Double> is allocation-light for
-    // FIFO operations and matches our "push L per chunk, pop 1 per frame"
-    // pattern. Sized typically a few thousand entries.
-    private var outputQueue: Array<ArrayDeque<Double>> = emptyArray()
+    // Output ring per channel. Primitive DoubleArray-backed ring buffer; no
+    // autoboxing on push/pop. Replaced ArrayDeque<Double> in v0.9.0 — the
+    // generic deque allocated a java.lang.Double on every addLast, producing
+    // ~88k boxed allocations/sec on the audio thread at 44.1k stereo and
+    // generating sustained GC pressure correlated with click/pop artifacts.
+    // See _LOFIPOD_V1_BRIEF.md §A1.
+    private var outputQueue: Array<DoubleRing> = emptyArray()
 
     // Synthesis worker. Owns its own FFT instance to avoid contending with
     // the audio-thread FFTs.
@@ -106,12 +109,18 @@ class LinearPhaseEq {
         inputAccumPos = IntArray(channels)
         workspace = Array(channels) { DoubleArray(FFT_SIZE) }
         pending = Array(channels) { DoubleArray(KERNEL_LENGTH - 1) }
-        outputQueue = Array(channels) { ArrayDeque() }
-        // Initial kernel = FLAT response (impulse). Synthesizing this gives a
-        // 4096-tap symmetric kernel with peak at center; convolution becomes
-        // identity (modulo group delay). This way the chain still functions
-        // before the first setBands call lands a real kernel.
-        synthesizeKernelSync(EqPresets.FLAT)
+        // Ring capacity: largest expected residency = one chunk's worth of
+        // output (FRAME_SIZE) plus a chunk of slack so a delayed drain on the
+        // pop side never overflows. 8192 (≥ FRAME_SIZE * 8) is power-of-two
+        // for cheap mask indexing and burns ~64 KB per channel — negligible.
+        outputQueue = Array(channels) { DoubleRing(OUTPUT_RING_CAPACITY) }
+        // Initial kernel = FLAT response. Precomputed once at companion init
+        // (rate-independent for FLAT: all magnitudes are 1.0), so this is a
+        // zero-FFT @Volatile publish on the audio/format-change thread —
+        // previous v0.8.0 path ran an 8192-pt FFT+IFFT here (~2–15 ms) and
+        // measurably contributed to first-buffer stalls on format changes.
+        // See _LOFIPOD_V1_BRIEF.md §A6.
+        kernelSpectrum = FLAT_KERNEL_SPECTRUM
     }
 
     /**
@@ -217,6 +226,47 @@ class LinearPhaseEq {
     }
 
     /**
+     * Single-producer single-consumer ring buffer of primitive doubles, with
+     * power-of-two capacity for cheap mask indexing. Replaces
+     * ArrayDeque<Double> on the audio thread — autoboxing every Double on
+     * push/pop was generating ~88k transient java.lang.Double allocations/sec
+     * at 44.1k stereo, sustained ~1.4 MB/s of heap garbage, and correlated
+     * GC pauses with click/pop artifacts on long sessions.
+     */
+    internal class DoubleRing(capacityPow2: Int) {
+        init {
+            require(capacityPow2 > 0 && (capacityPow2 and (capacityPow2 - 1)) == 0) {
+                "DoubleRing capacity must be a positive power of two; got $capacityPow2"
+            }
+        }
+        private val buf = DoubleArray(capacityPow2)
+        private val mask = capacityPow2 - 1
+        private var head = 0   // read index
+        private var tail = 0   // write index
+        var size: Int = 0
+            private set
+
+        fun push(v: Double) {
+            buf[tail] = v
+            tail = (tail + 1) and mask
+            size++
+        }
+
+        fun pop(): Double {
+            val v = buf[head]
+            head = (head + 1) and mask
+            size--
+            return v
+        }
+
+        fun clear() {
+            head = 0
+            tail = 0
+            size = 0
+        }
+    }
+
+    /**
      * Push one frame of input (one sample per channel). When per-channel
      * accumulators reach [FRAME_SIZE], runs the FFT convolution and pushes
      * [FRAME_SIZE] samples per channel into [outputQueue].
@@ -242,16 +292,18 @@ class LinearPhaseEq {
      *  verified [outputFramesAvailable] >= 1. */
     fun popFrame(output: DoubleArray) {
         for (ch in 0 until channelCount) {
-            output[ch] = outputQueue[ch].removeFirst()
+            output[ch] = outputQueue[ch].pop()
         }
     }
 
     private fun processChunk(channel: Int) {
         val ks = kernelSpectrum  // snapshot once per chunk
         if (ks.isEmpty()) {
-            // Kernel not yet synthesized (shouldn't happen post-configure
-            // but guard anyway). Drop input; emit zeros.
-            for (i in 0 until FRAME_SIZE) outputQueue[channel].addLast(0.0)
+            // Kernel not yet synthesized (shouldn't happen post-configure now
+            // that configure() publishes FLAT_KERNEL_SPECTRUM, but guard
+            // anyway). Drop input; emit zeros.
+            val q = outputQueue[channel]
+            for (i in 0 until FRAME_SIZE) q.push(0.0)
             return
         }
 
@@ -275,7 +327,7 @@ class LinearPhaseEq {
         val pendingArr = pending[channel]
         val q = outputQueue[channel]
         for (i in 0 until FRAME_SIZE) {
-            q.addLast(ws[i] + pendingArr[i])
+            q.push(ws[i] + pendingArr[i])
         }
 
         // Slide pending forward by FRAME_SIZE (drop just-consumed prefix),
@@ -421,6 +473,44 @@ class LinearPhaseEq {
                 if (k > 200) break  // belt-and-braces; converges in ~30 iters
             }
             return sum
+        }
+
+        /**
+         * Output ring buffer capacity per channel. Must be a power of two for
+         * the [DoubleRing]'s mask-based modular indexing. Sized at
+         * `FRAME_SIZE * 8 = 8192` doubles ≈ 64 KB/channel — slack across
+         * accumulator + emit windows, negligible vs. the ~80 KB linear-phase
+         * working set already in flight per channel.
+         */
+        private const val OUTPUT_RING_CAPACITY = 8192
+
+        /**
+         * FLAT-response kernel spectrum, precomputed once at class load.
+         * Rate-independent: a FLAT preset's biquad cascade has unity
+         * magnitude at every bin, so the impulse response is a delta at
+         * the kernel center → no rate dependency in the IFFT/window/FFT
+         * pipeline.
+         *
+         * Previously [configure] ran `synthesizeKernelSync(EqPresets.FLAT)`
+         * synchronously on the audio/format-change thread (~2–15 ms warm,
+         * worse from cold). Hoisting it to class load takes that hitch off
+         * track-start / format-change. See _LOFIPOD_V1_BRIEF.md §A6.
+         */
+        private val FLAT_KERNEL_SPECTRUM: DoubleArray = run {
+            // Build the FLAT impulse: a Kaiser-windowed delta centered at
+            // KERNEL_LENGTH/2, zero-padded to FFT_SIZE. For FLAT the
+            // magnitude response is unity at every bin → IFFT → delta at
+            // index 0 → circular-shift by FFT_SIZE/2 → delta at index
+            // KERNEL_LENGTH/2 within the truncation window. Only the center
+            // tap is non-zero before windowing; the Kaiser window value at
+            // center is 1.0 by construction (besselI0(0)/betaI0 = 1).
+            val kernel = DoubleArray(FFT_SIZE)
+            kernel[KERNEL_LENGTH / 2] = KAISER_WINDOW[KERNEL_LENGTH / 2]
+            // FFT to packed-complex spectrum. Dedicated single-shot FFT
+            // instance — class-load only, never reused after this val
+            // resolves.
+            DoubleFFT_1D(FFT_SIZE.toLong()).realForward(kernel)
+            kernel
         }
     }
 }
