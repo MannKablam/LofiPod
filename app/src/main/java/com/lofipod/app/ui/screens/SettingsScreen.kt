@@ -259,6 +259,16 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Open-source audio libraries: " +
+                    "PFFFT (FFT + UPC inner loop, BSD-3-Clause, Julien Pommier / NCAR) — " +
+                    "JTransforms (kernel-synth FFT, BSD-2-Clause, Piotr Wendykier). " +
+                    "Full license texts ship inside the APK under " +
+                    "assets/licenses/.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

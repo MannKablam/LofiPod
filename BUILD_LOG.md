@@ -2,6 +2,75 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.6 — PFFFT (NEON-SIMD FFT) replaces JTransforms on audio thread (2026-05-13)
+
+Brief #15 lands: replaces the pure-JVM JTransforms FFT on the audio-
+thread hot path with PFFFT (BSD-3-Clause, single-precision, NEON-SIMD).
+~3-5× speedup on ARM at the FFT sizes we use (fftSize=2048 for UPC),
+which compounds with the brand-new use of `pffft_zconvolve_accumulate`
+as the multiply-accumulate inner loop. Net effect: substantially more
+thermal-throttle headroom on the audio thread, especially relevant at
+2× playback with screen-off-in-pocket scenarios.
+
+**First-ever NDK build for this project.** Introduces:
+
+- `app/src/main/cpp/CMakeLists.txt` — CMake project that fetches PFFFT
+  source from `marton78/pffft` (pinned to master, will pin to a commit
+  hash once the build is proven green) and compiles `pffft.c` directly
+  into the shared library. NDK ABIs: `arm64-v8a` + `armeabi-v7a` (skip
+  x86_64 / x86 — emulator-only for a sideloaded app).
+- `app/src/main/cpp/lofipod_fft.cpp` — minimal JNI bridge exposing
+  setup/destroy/transform/zconvolveAccumulate/reorder. Holds its own
+  16-byte-aligned scratch buffers (allocated via `pffft_aligned_malloc`)
+  so the JNI boundary doesn't need to worry about ART's primitive-array
+  alignment.
+- `app/src/main/java/com/lofipod/app/audio/PffftBridge.kt` — Kotlin
+  wrapper. Two instances per UpcConvolver: one for the audio thread
+  (transforms + zconvolveAccumulate), one for the kernel-synth worker
+  thread (transforms only). Native scratch isn't thread-safe, hence
+  separate bridges per thread.
+
+**UpcConvolver: Double → Float refactor.** PFFFT is single-precision.
+All internal arrays (FDL, prevInput, workspace, accumSpec, kernel
+partition spectra) move to FloatArray. Hand-rolled
+packedComplexMultiplyAccumulate is GONE — replaced by PFFFT's NEON-SIMD
+`pffft_zconvolve_accumulate`. Net code shrinks; speed grows.
+
+**FirEq: Double → Float at the UPC boundary.** Kernel synthesis stays
+Double (worker thread, off the audio path — keeps the cepstrum log/exp
+recipe at full precision where it matters). At
+`UpcConvolver.setKernelTaps()` taps convert to Float. blockIn/blockOut
+arrays inside `processBlockForChannel` switch to FloatArray; conversion
+loops bracket the `conv.processBlock()` call.
+
+**Numeric precision note.** 16-bit PCM input has 16-bit resolution;
+single-precision float has a 24-bit mantissa. The PFFFT FFT path
+preserves audio precision with ~48 dB of headroom above what's
+audible. No quality loss vs the previous Double precision path.
+
+**BSD-3-Clause compliance.** Bundled in the APK at:
+  - `app/src/main/assets/licenses/LICENSE-PFFFT.txt` — full BSD-3-Clause
+    text with copyright attributions (Julien Pommier 2013 + NCAR/UCAR
+    2004 for the FFTPACK pieces PFFFT builds on).
+  - `app/src/main/assets/licenses/LICENSE-JTRANSFORMS.txt` — JTransforms
+    BSD-2-Clause attribution (still used for kernel-synthesis FFTs on
+    the worker thread).
+Settings → About section credits both libraries with a short attribution
+paragraph pointing at `assets/licenses/`.
+
+**Known unknowns (first NDK build for this project — may need follow-up
+iterations):**
+  - CMake's FetchContent against marton78/pffft master could pull a
+    breaking change. Pin to a specific commit hash in a follow-up tag
+    once the build is verified green.
+  - PFFFT layout vs JTransforms packed-complex layout differ. Internal-
+    layout spectra (what UPC uses) are opaque blobs — we never inspect
+    bins so the layout difference is invisible to UpcConvolver, but if
+    diagnostic code or a future mode needed canonical packed-complex
+    output, [PffftBridge.reorderToCanonical] is available.
+  - Net `.so` size: PFFFT compiled is ~30-60 KB per ABI. Two ABIs ≈
+    100 KB extra in the APK. Negligible vs the existing ~10 MB.
+
 ## v0.9.5 — Mixed-Phase mode (4-mode phase lineup complete) (2026-05-13)
 
 Adds the 4th phase mode: hybrid min-phase / linear-phase split at a

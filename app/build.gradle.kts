@@ -24,6 +24,36 @@ android {
         // monotonic relative to history (rare).
         versionCode = (project.findProperty("lofipodVersionCode") as String?)?.toInt() ?: 2
         versionName = (project.findProperty("lofipodVersionName") as String?) ?: "0.2.0"
+
+        // ---- NDK / native build (v0.9.6+) ----
+        // The lofipod_fft .so is the JNI bridge to PFFFT (BSD-3-Clause FFT
+        // library). See app/src/main/cpp/CMakeLists.txt for the native
+        // build, app/src/main/java/com/lofipod/app/audio/PffftBridge.kt
+        // for the Kotlin side.
+        //
+        // ABIs: arm64-v8a (modern phones, primary), armeabi-v7a (older
+        // 32-bit ARM). Skip x86_64 / x86 — emulator-only, sideloaded app,
+        // not worth the build time.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+        externalNativeBuild {
+            cmake {
+                // -fno-exceptions / -fno-rtti shrink the .so a bit; we
+                // don't use either in the bridge. C++17 for the JNI .cpp.
+                cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti", "-O2")
+                cFlags += listOf("-O3")  // PFFFT benefits from -O3
+            }
+        }
+    }
+
+    // CMake project pointer + version. AGP packs the resulting .so files
+    // into the APK under lib/<abi>/lofipod_fft.so.
+    externalNativeBuild {
+        cmake {
+            path("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     /**

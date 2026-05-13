@@ -87,9 +87,15 @@ class FirEq {
     private var inputAccum: Array<DoubleArray> = emptyArray()
     private var inputAccumPos: IntArray = IntArray(0)
 
-    // Per-channel block scratch for UPC input / output.
-    private var blockIn: Array<DoubleArray> = emptyArray()
-    private var blockOut: Array<DoubleArray> = emptyArray()
+    // Per-channel block scratch for UPC input / output. Float-typed
+    // because v0.9.6's UpcConvolver runs single-precision internally
+    // (backed by PFFFT, which is float-only). Conversion happens here at
+    // the FirEq ↔ UpcConvolver boundary: input accumulators stay Double
+    // (matching the rest of the DSP chain) and convert into blockIn;
+    // UPC output comes back in blockOut as Float and converts back to
+    // Double when pushed into outputQueue.
+    private var blockIn: Array<FloatArray> = emptyArray()
+    private var blockOut: Array<FloatArray> = emptyArray()
 
     // Per-channel output ring buffer. Primitive DoubleArray-backed; no
     // autoboxing on push/pop. Capacity sized for several blocks of slack.
@@ -106,8 +112,8 @@ class FirEq {
         convolver = UpcConvolver(channels = channels)
         inputAccum = Array(channels) { DoubleArray(BLOCK_SIZE) }
         inputAccumPos = IntArray(channels)
-        blockIn = Array(channels) { DoubleArray(BLOCK_SIZE) }
-        blockOut = Array(channels) { DoubleArray(BLOCK_SIZE) }
+        blockIn = Array(channels) { FloatArray(BLOCK_SIZE) }
+        blockOut = Array(channels) { FloatArray(BLOCK_SIZE) }
         outputQueue = Array(channels) { DoubleRing(OUTPUT_RING_CAPACITY) }
         // Initial kernel = FLAT. UpcConvolver defaults to identity already,
         // but synthesize an explicit FLAT-symmetric kernel here so the
@@ -220,14 +226,20 @@ class FirEq {
         if (ch != channelCount - 1) return  // wait until the last channel ticks
 
         val conv = convolver ?: return
+        // Double → Float conversion at the UPC boundary. v0.9.6+ UPC runs
+        // single-precision internally (PFFFT backend).
         for (i in 0 until channelCount) {
-            System.arraycopy(inputAccum[i], 0, blockIn[i], 0, BLOCK_SIZE)
+            val src = inputAccum[i]
+            val dst = blockIn[i]
+            for (n in 0 until BLOCK_SIZE) dst[n] = src[n].toFloat()
         }
         conv.processBlock(blockIn, blockOut)
+        // Float → Double conversion back to the rest of the DSP chain
+        // (post-gain → oversampler → limiter, all still Double).
         for (i in 0 until channelCount) {
             val q = outputQueue[i]
             val out = blockOut[i]
-            for (n in 0 until BLOCK_SIZE) q.push(out[n])
+            for (n in 0 until BLOCK_SIZE) q.push(out[n].toDouble())
         }
     }
 
