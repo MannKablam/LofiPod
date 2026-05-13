@@ -113,7 +113,16 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // --- Media3 (ExoPlayer) ---
-    val media3 = "1.4.1"
+    // 1.4.1 → 1.5.1 (v0.9.1). Brief #8 (_LOFIPOD_V1_BRIEF.md §E6): the
+    // 1.5.0 release picks up the MP3 VBRI table-of-contents fix (#1904)
+    // that was a direct candidate for "downloaded MP3 stops short before
+    // the actual end" symptoms, plus audio-output retry improvements in
+    // DefaultAudioSink. R8 stays OFF — the silent-output regression from
+    // v0.3.0 is a Media3-internal reflection issue, not our code. Our
+    // EqRenderersFactory uses only public APIs (DefaultAudioSink.Builder,
+    // DefaultAudioProcessorChain, DefaultAudioTrackBufferSizeProvider.Builder)
+    // so the upgrade should be a drop-in.
+    val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")
     implementation("androidx.media3:media3-ui:$media3")

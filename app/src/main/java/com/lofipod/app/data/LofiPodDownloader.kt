@@ -274,11 +274,28 @@ class LofiPodDownloader(
         // Resume if we have prior bytes AND the file exists at that size or
         // greater. If file size doesn't match the row, it's a corrupt
         // partial — wipe and start over.
+        //
+        // On resume, truncate to a 64 KB boundary (= BUFFER_SIZE). Rationale:
+        // a SIGKILL between `source.read()` and `raf.write()` could leave
+        // OkHttp-side bytes that never reached the FS, but the row was last
+        // updated at the prior progress tick — so `priorRow.bytesDownloaded`
+        // can be ahead of the file's actual durable tail. Worse, on some
+        // backends `raf.write()` returns before the page cache commits and
+        // a process kill can lose the last unsynced page. Aligning the
+        // resume offset to the read-buffer boundary is cheap defense-in-
+        // depth: we re-fetch at most BUFFER_SIZE bytes and never resume
+        // from the middle of a write. See _LOFIPOD_V1_BRIEF.md §E5.
         val priorRow = downloadDao.get(ep.guid)
         val resumeFrom = if (priorRow != null && priorRow.bytesDownloaded > 0L && target.exists() &&
             target.length() == priorRow.bytesDownloaded
         ) {
-            priorRow.bytesDownloaded
+            val aligned = priorRow.bytesDownloaded - (priorRow.bytesDownloaded % BUFFER_SIZE)
+            if (aligned < priorRow.bytesDownloaded) {
+                // Trim the file to the aligned offset so subsequent writes
+                // start at a clean boundary.
+                RandomAccessFile(target, "rw").use { it.setLength(aligned) }
+            }
+            aligned
         } else {
             if (target.exists()) target.delete()
             0L
@@ -291,6 +308,10 @@ class LofiPodDownloader(
         // Some podcast hosts reject the OkHttp default UA; mirror the player.
         reqBuilder.header("User-Agent", "LofiPod/${BuildIdentifierProvider.versionLabel(context)}")
 
+        // Hoisted out of the resp.use scope so the post-download Content-
+        // Length verification (after the use block closes) can read them.
+        var verifyTotalLen = -1L
+        var verifyWasPartial = false
         httpClient.newCall(reqBuilder.build()).execute().use { resp ->
             if (!resp.isSuccessful) {
                 throw IllegalStateException("HTTP ${resp.code} ${resp.message}")
@@ -310,6 +331,8 @@ class LofiPodDownloader(
                 isPartial -> effectiveStart + responseLen
                 else -> responseLen
             }
+            verifyTotalLen = totalLen
+            verifyWasPartial = isPartial
 
             // Reset the file if server ignored Range or we never had partial
             // bytes to resume from.
@@ -361,9 +384,22 @@ class LofiPodDownloader(
         }
 
         // If we got here without throwing, the body fully drained AND was
-        // fsync'd. Safe to mark COMPLETED — the DB row is now a real
-        // visibility barrier; observers can rely on the file at filePath.
-        markCompleted(ep.guid, target.length(), filePath)
+        // fsync'd. Verify file size matches the authoritative Content-Length
+        // before flipping to COMPLETED — a short read on a server that
+        // doesn't honor Range, a truncated transfer that didn't surface as
+        // an IOException (some intermediaries close the stream cleanly), or
+        // a malformed Transfer-Encoding can all leave the body looking
+        // "drained" while a byte count short of totalLen. If totalLen is
+        // -1 (server omitted Content-Length entirely) skip the check —
+        // we have nothing to compare against. See _LOFIPOD_V1_BRIEF.md §E5.
+        val finalLen = target.length()
+        if (verifyTotalLen >= 0L && finalLen != verifyTotalLen) {
+            throw IllegalStateException(
+                "Size mismatch: got $finalLen bytes, expected $verifyTotalLen " +
+                    "(Content-Length from ${if (verifyWasPartial) "206" else "200"} response)"
+            )
+        }
+        markCompleted(ep.guid, finalLen, filePath)
     }
 
     private suspend fun flipToDownloading(guid: String, bytes: Long, total: Long) {

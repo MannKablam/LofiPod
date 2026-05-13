@@ -334,10 +334,18 @@ object AudioChainTelemetry {
         // unavailable, both calls no-op cheaply.
         perfHint?.let { bridge ->
             val speed = playbackSpeed
+            // 1 ms floor on audioNs before the speed scale to avoid passing
+            // a zero or near-zero target into the hint manager — can happen
+            // briefly during pre-configure callbacks where sampleRate is 0.
+            // Downstream smoothing inside ADPF / governor code can divide by
+            // this; 1 ms is well below any real per-buffer budget (smallest
+            // plausible is ~5 ms = 256 frames @44.1k at 1×) and harmless.
+            // See _LOFIPOD_V1_BRIEF.md §A7.
+            val audioNsClamped = audioNs.coerceAtLeast(1_000_000L)
             val targetNs = if (speed > 0f && speed != 1.0f) {
-                (audioNs.toDouble() / speed).toLong()
+                (audioNsClamped.toDouble() / speed).toLong()
             } else {
-                audioNs
+                audioNsClamped
             }
             bridge.ensureSession(tid, targetNs)
             bridge.reportActual(processingNs)

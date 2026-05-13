@@ -2,6 +2,48 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.1 — Hardening: Media3 upgrade + downloader integrity + ADPF floor (2026-05-13)
+
+Second tag of the audio rebuild roadmap. Three small-to-medium fixes from
+`_LOFIPOD_V1_BRIEF.md`; no user-visible feature changes, all interior plumbing.
+
+**Brief #8 — Media3 1.4.1 → 1.5.1.** Picks up the MP3 VBRI table-of-contents
+fix (#1904), which the brief flagged as a direct candidate for "downloaded
+MP3 stops short of the actual end" symptoms. Also includes audio-output
+retry improvements in DefaultAudioSink that 1.4.x lacked.
+`EqRenderersFactory` uses only public APIs (`DefaultAudioSink.Builder`,
+`DefaultAudioProcessorChain`, `DefaultAudioTrackBufferSizeProvider.Builder`)
+so the upgrade is a drop-in. R8 stays OFF — the v0.3.0 silent-audio
+regression was a Media3-internal reflection issue and the keep-rules set
+hasn't been authored yet.
+
+**Brief #9a — 64 KB boundary truncate on resume.** If a SIGKILL lands
+between `source.read()` and the next `raf.write()`, the row's
+`bytesDownloaded` (last persisted at the prior 500 ms progress tick) can
+sit ahead of the file's actual durable tail. Worse, page-cache flushes
+aren't deterministic post-kill, so the file's apparent length can drift
+relative to what was successfully fsync'd. Resume now truncates to a
+BUFFER_SIZE-aligned offset (64 KB), so re-fetch on resume costs at most
+one buffer's worth and never starts from the middle of a write boundary.
+
+**Brief #9b — Verify Content-Length post-download.** A "drained" body
+isn't always a complete body: some intermediaries close the stream cleanly
+mid-transfer, and some servers return 200 short of the advertised
+Content-Length. Verify `target.length() == totalLen` before flipping the
+row to COMPLETED; mismatch throws and the worker marks FAILED instead.
+Skipped when the server omits Content-Length (totalLen=-1) — nothing to
+compare against.
+
+**Brief #16 — Clamp `audioNs` floor in ADPF reporting.** Defensive 1 ms
+floor on `audioNs` before the speed scale + before passing to
+`PerformanceHintManager.Session`. Avoids passing 0 / near-0 targets that
+downstream ADPF / governor smoothing code can divide by. Floor is well
+below any plausible real per-buffer budget (~5 ms = 256 frames at 1×).
+
+**Not in v0.9.1** (deferred): rest of brief — v0.9.2 latency-honesty,
+v0.9.3 UPC infrastructure + off-thread DSP worker, v0.9.4 FIR rebuild +
+new min-phase FIR mode, v0.9.5 PFFFT, v0.10.0 mixed-phase mode.
+
 ## v0.9.0 — Audio pest-control + linear-phase chip hidden for rebuild (2026-05-13, untagged on dev)
 
 First tag of the multi-release audio rebuild captured in `_LOFIPOD_V1_BRIEF.md`.
