@@ -201,17 +201,18 @@ class PlaybackService : MediaSessionService() {
             // DC-offset-y feeds can flip it on.
             sharedEq.setDcBlockerEnabled(settings.dcBlockerEnabled.first())
 
-            // EQ phase mode. v0.9.0: ALWAYS boot into minimum-phase
-            // regardless of the saved `phase_mode_linear` value. The linear-
-            // phase chip is hidden in EqScreen while the convolution path is
-            // rebuilt (v0.9.4: UPC + crossfade, plus a new min-phase FIR
-            // mode). The DataStore pref is preserved untouched so v0.9.4 can
-            // restore the user's prior choice by simply removing this
-            // suppression and going back to:
-            //     sharedEq.setPhaseModeLinear(settings.phaseModeLinear.first())
-            // No DataStore migration needed at v0.9.4 — the value is sitting
-            // there waiting.
-            sharedEq.setPhaseModeLinear(false)
+            // EQ phase mode (v0.9.3+ enum). The new key reads the explicit
+            // `phase_mode` string and falls back to the legacy
+            // `phase_mode_linear` Boolean if the new key is absent (first-
+            // run-after-upgrade case). v0.9.0–v0.9.2 force-suppressed the
+            // saved value to always boot PURE_IIR while the linear chip was
+            // hidden; v0.9.3 lifts that suppression now that the 3-chip
+            // lineup is back and FIR modes are powered by the rebuilt
+            // UPC convolver (FirEq).
+            val savedMode = com.lofipod.app.audio.PhaseMode.fromStorageKey(
+                settings.phaseMode.first()
+            )
+            sharedEq.setPhaseMode(savedMode)
         }
 
         // Notification tap target: route through MainActivity with a custom

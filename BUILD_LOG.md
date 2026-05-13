@@ -2,6 +2,83 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.3 — UPC convolution + 3-mode phase lineup (2026-05-13)
+
+Fourth tag of the audio rebuild roadmap. Combines the brief's planned
+v0.9.3 (DSP foundation) and v0.9.4 (FIR resurrection + new mode) into one
+release, per user direction — single-user alpha cadence makes the
+brief's "dormant infrastructure then activation" split unnecessary.
+
+**Brief #13 — UpcConvolver.kt** (new file, ~290 LOC). Uniform partitioned
+convolution engine. Splits a 4096-tap kernel into P=4 partitions of L=1024
+samples each, stored as packed-complex spectra; per input block of 1024
+samples, runs ONE forward FFT at 2L=2048, accumulates a frequency-domain
+delay-line multiply-accumulate against the partitions, runs ONE inverse
+FFT, emits the second half (overlap-save). ~3× cheaper per output sample
+than the v0.8.0 monolithic 8192-pt OLA, and the FDL stores INPUT history
+(not output) so mid-stream kernel swaps yield a clean LTI switch — fixes
+the "soft chuff per slider tick" symptom from brief §A2. Reference:
+Wefers 2015 / Gardner 1995.
+
+**FirEq.kt** (new file, ~470 LOC). Wraps UpcConvolver for both linear-
+phase and min-phase FIR modes. Two kernel synthesis paths:
+
+  - **Linear-phase:** same recipe as v0.8.0 (sample biquad cascade
+    magnitude, zero-phase IFFT, circular shift, truncate, Kaiser
+    window).
+  - **Min-phase (NEW):** real-cepstrum derivation per
+    Mian & Nainer 1982 / Oppenheim-Schafer §10.5. Same target
+    magnitude → causal energy-front-loaded impulse response. No
+    pre-ringing, sub-ms group delay across the audio band at typical
+    EQ Qs (0.7–1.4). Best for transient-heavy speech.
+
+DoubleRing primitive output ring moves here from v0.9.0's LinearPhaseEq
+(no autoboxing on the audio thread).
+
+**PhaseMode.kt** (new file). Three-value enum: PURE_IIR (default),
+MIN_FIR, LINEAR_FIR. Replaces the v0.8.0 `phaseModeLinear: Boolean`.
+Serializes as a string in DataStore (string key, future-proof for a
+v0.10.0 Mixed-Phase fourth value).
+
+**Settings — new `phase_mode` key + Boolean migration.** Reads:
+prefer the new string key; fall back to the legacy `phase_mode_linear`
+Boolean if absent (true → "LINEAR_FIR", false → "PURE_IIR"). Writes:
+keep the legacy Boolean in sync so any future downgrade still sees a
+usable value. No one-shot migration job — the read-side fallback
+handles existing installs transparently.
+
+**EqAudioProcessor — 3-mode dispatch.** `setPhaseMode(PhaseMode)` is the
+new entrypoint; `setPhaseModeLinear(Boolean)` is kept as a deprecated
+wrapper. `queueInputFir()` replaces `queueInputLinearPhase()` and routes
+to FirEq for both FIR modes. `getChainLatencyUs()` reflects the new
+mode-dependent algorithmic delays: ~6 ms (PURE_IIR), ~29 ms (MIN_FIR),
+~70 ms (LINEAR_FIR). Chain reset still triggers on mode toggles.
+
+**EqScreen — 3 chips restored.** "Pure IIR" / "Min FIR" / "Linear FIR"
+with the per-mode descriptions visible. The v0.9.0 hide-and-explain
+banner is gone.
+
+**PlaybackService rehydrate** reads `settings.phaseMode.first()` (new
+flow) and applies `setPhaseMode(savedMode)`. Pre-v0.9.0 users with a
+saved `phase_mode_linear=true` get migrated to LINEAR_FIR on first
+boot.
+
+**PlayerDiagnosticsTab** carries the full mode label
+("Pure IIR (biquad cascade)" / "Min-Phase FIR (UPC + cepstrum kernel)" /
+"Linear-Phase FIR (UPC + symmetric kernel)") in the live readout.
+
+**Deleted:** `LinearPhaseEq.kt` — superseded entirely by `UpcConvolver`
++ `FirEq`. Git history preserves the original implementation.
+
+**Not in v0.9.3** (deferred to a later tag): off-thread DSP worker with
+SPSC ring (brief #12) — pure optimization, not required for correctness;
+explicit band-change crossfade ramp (brief #10) — UPC's natural LTI
+switching already resolves the band-change click symptom; PFFFT JNI
+(brief #15); Mixed-Phase mode (brief #17, v0.10.0). The new min-phase
+FIR path replaces the brief's expected band-change crossfade benefit
+by giving users a no-pre-ringing option that's already free of zipper
+artifacts under UPC.
+
 ## v0.9.2 — Latency-honest transport (2026-05-13)
 
 Third tag of the audio rebuild roadmap. Brief #7: the audio chain's

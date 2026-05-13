@@ -76,10 +76,13 @@ fun EqScreen(
     // (survives restart) and to the live processor (takes effect immediately
     // without a track transition). Mirrors the diagnostics screen's reset path.
     val dcBlockerEnabled by settings.dcBlockerEnabled.collectAsState(initial = false)
-    // EQ phase mode. False (default) = minimum-phase biquad cascade,
-    // ~6.4 ms latency. True = linear-phase 4096-tap FIR convolution,
-    // ~52 ms latency, preserves transient waveform shape exactly.
-    val phaseModeLinear by settings.phaseModeLinear.collectAsState(initial = false)
+    // EQ phase mode (v0.9.3 three-mode lineup):
+    //   PURE_IIR (default) — 10-band biquad cascade, ~6 ms total latency
+    //   MIN_FIR — UPC + cepstrum kernel, ~29 ms, no pre-ringing
+    //   LINEAR_FIR — UPC + symmetric kernel, ~70 ms, exact transient shape
+    val phaseModeKey by settings.phaseMode
+        .collectAsState(initial = Settings.PHASE_MODE_PURE_IIR)
+    val phaseMode = com.lofipod.app.audio.PhaseMode.fromStorageKey(phaseModeKey)
 
     // 250 ms poll for the live level meters. Same pattern as
     // AudioDiagnosticsScreen: audio thread updates @Volatile fields on every
@@ -351,42 +354,75 @@ fun EqScreen(
             }
             Spacer(Modifier.height(16.dp))
 
-            // ---- Phase mode ----
-            // v0.9.0: the Linear-phase FIR chip is intentionally hidden while
-            // the convolution path is rebuilt (Phase-mode rebuild lands in
-            // v0.9.4 on a partitioned-convolution backbone with band-change
-            // crossfade, alongside a new Min-Phase FIR mode). The
-            // PlaybackService rehydrate path also suppresses the saved
-            // `phase_mode_linear=true` pref so existing users boot into
-            // minimum-phase without losing their preference (the value stays
-            // in DataStore for v0.9.4 to pick up). The `phaseModeLinear`
-            // collectAsState above is left wired so the v0.9.4 chip-restore
-            // is a UI-only re-add.
+            // ---- Phase mode (v0.9.3 three-mode lineup) ----
+            // PURE_IIR: 10-band biquad cascade, ~6 ms total chain latency.
+            // MIN_FIR: UPC + real-cepstrum kernel, ~29 ms, no pre-ringing.
+            // LINEAR_FIR: UPC + symmetric kernel, ~70 ms, transient-exact.
             //
-            // Display reads `phaseModeLinear` only to surface the saved
-            // preference back to the user in the explanatory note — the
-            // active mode is always minimum-phase in this version.
+            // The two FIR modes share the UPC convolution engine; only the
+            // kernel synthesis differs. Mid-playback switches have a brief
+            // audible artifact (full chain reset). Acceptable for a manual-
+            // mode-switch affordance.
             Text("Phase mode", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(2.dp))
             Text(
-                "Minimum-phase biquad (~6.4 ms latency).",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                if (phaseModeLinear) {
-                    "Linear-phase FIR is temporarily hidden in v0.9.0 while the " +
-                        "convolution path is rebuilt. Your saved preference is preserved " +
-                        "and will restore when the rebuilt mode ships in v0.9.4 " +
-                        "(alongside a new min-phase FIR option)."
-                } else {
-                    "Linear-phase FIR returns in v0.9.4 with a partitioned-convolution " +
-                        "rebuild, alongside a new min-phase FIR mode."
+                when (phaseMode) {
+                    com.lofipod.app.audio.PhaseMode.PURE_IIR ->
+                        "Pure IIR: 10-band biquad cascade, fastest, lowest latency. " +
+                            "Transparent for nearly all listeners. Default."
+                    com.lofipod.app.audio.PhaseMode.MIN_FIR ->
+                        "Min-Phase FIR: real-cepstrum 4096-tap kernel via partitioned " +
+                            "convolution. No pre-ringing, sub-ms group delay across the " +
+                            "spectrum. Best for transient-heavy speech."
+                    com.lofipod.app.audio.PhaseMode.LINEAR_FIR ->
+                        "Linear-Phase FIR: symmetric 4096-tap kernel via partitioned " +
+                            "convolution. Preserves transient waveform shape exactly. " +
+                            "Audible pre-ringing on sharp transients; higher latency."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.PURE_IIR,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseMode(Settings.PHASE_MODE_PURE_IIR)
+                            }
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.PURE_IIR)
+                        }
+                    },
+                    label = { Text("Pure IIR") }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.MIN_FIR,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseMode(Settings.PHASE_MODE_MIN_FIR)
+                            }
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.MIN_FIR)
+                        }
+                    },
+                    label = { Text("Min FIR") }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.LINEAR_FIR,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseMode(Settings.PHASE_MODE_LINEAR_FIR)
+                            }
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.LINEAR_FIR)
+                        }
+                    },
+                    label = { Text("Linear FIR") }
+                )
+            }
             Spacer(Modifier.height(20.dp))
 
             // ---- Hold to A/B button ----

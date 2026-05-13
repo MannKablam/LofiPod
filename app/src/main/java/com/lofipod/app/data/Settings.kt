@@ -232,19 +232,55 @@ class Settings(private val context: Context) {
     }
 
     /**
-     * EQ phase-mode toggle. False (default) = minimum-phase biquad cascade
-     * (~6.4 ms total chain latency); true = linear-phase 4096-tap FIR
-     * convolution (~52 ms total). Linear preserves transient waveform shape
-     * exactly at the cost of higher CPU + latency. Default minimum because
-     * it's transparent for almost all listeners and the existing latency
-     * budget assumes it; opt-in for audiophiles who specifically want
-     * preserved transient response.
+     * Legacy EQ phase-mode Boolean (pre-v0.9.3). False = minimum-phase
+     * biquad; true = linear-phase 4096-tap FIR. Superseded by [phaseMode]
+     * below, but the Boolean key is **preserved** in DataStore so a
+     * downgrade (or a future re-read by something else) still finds it.
+     * v0.9.3's reader prefers the new enum key; if absent, migrates from
+     * the Boolean: true → "LINEAR_FIR", false → "PURE_IIR".
      */
     val phaseModeLinear: Flow<Boolean> =
         context.dataStore.data.map { it[KEY_PHASE_MODE_LINEAR] ?: false }
 
     suspend fun setPhaseModeLinear(v: Boolean) {
         context.dataStore.edit { it[KEY_PHASE_MODE_LINEAR] = v }
+    }
+
+    /**
+     * EQ phase mode (v0.9.3+). Three values:
+     *   - `"PURE_IIR"` — minimum-phase biquad cascade (~6.4 ms total
+     *     chain latency, no FIR convolution). Default. Fast slider
+     *     response, lowest CPU.
+     *   - `"MIN_FIR"` — minimum-phase FIR via UPC + cepstrum-derived
+     *     kernel (~29 ms total latency, no pre-ringing, surgical
+     *     magnitude precision). Best for transient-heavy speech.
+     *   - `"LINEAR_FIR"` — linear-phase FIR via UPC + symmetric kernel
+     *     (~70 ms total latency, preserves transient waveform shape,
+     *     audible pre-ringing on transients). Academic-pure option.
+     *
+     * Reads do an in-place migration: if the new key is absent and the
+     * legacy Boolean is present, derive the enum from it and surface
+     * that value. The DataStore is not written here — it's first written
+     * the next time the user actively chooses a mode in EqScreen.
+     */
+    val phaseMode: Flow<String> =
+        context.dataStore.data.map { prefs ->
+            prefs[KEY_PHASE_MODE]
+                ?: run {
+                    val legacy = prefs[KEY_PHASE_MODE_LINEAR] ?: false
+                    if (legacy) PHASE_MODE_LINEAR_FIR else PHASE_MODE_PURE_IIR
+                }
+        }
+
+    suspend fun setPhaseMode(value: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_PHASE_MODE] = value
+            // Keep the legacy Boolean in sync so external readers (any
+            // hypothetical telemetry, downgrade path) still see a usable
+            // value. true ↔ any FIR mode; false ↔ pure IIR.
+            prefs[KEY_PHASE_MODE_LINEAR] =
+                value == PHASE_MODE_LINEAR_FIR || value == PHASE_MODE_MIN_FIR
+        }
     }
 
     // ---- Auto-backup ----
@@ -410,6 +446,17 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
         private val KEY_PHASE_MODE_LINEAR =
             androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
+        private val KEY_PHASE_MODE =
+            androidx.datastore.preferences.core.stringPreferencesKey("phase_mode")
+
+        /** Phase-mode enum values stored as strings in DataStore. Kept as
+         *  string-typed constants rather than a Kotlin enum because
+         *  DataStore preferences only support primitive types directly,
+         *  and a string key is the cleanest way to round-trip without an
+         *  extra serialization layer. */
+        const val PHASE_MODE_PURE_IIR = "PURE_IIR"
+        const val PHASE_MODE_MIN_FIR = "MIN_FIR"
+        const val PHASE_MODE_LINEAR_FIR = "LINEAR_FIR"
         private val KEY_CANON_BROWSE_EXCLUDED =
             androidx.datastore.preferences.core.stringPreferencesKey("canon_browse_excluded_feeds")
         private val KEY_CANON_AUTOPLAY =

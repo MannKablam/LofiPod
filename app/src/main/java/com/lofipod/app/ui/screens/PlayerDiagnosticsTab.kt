@@ -689,7 +689,7 @@ private data class LiveDiagnosticSnap(
     val maxProcessingNs: Long,
     val bufferSamples: Int,
     val passthrough: Boolean,
-    val phaseModeLinear: Boolean,
+    val phaseMode: com.lofipod.app.audio.PhaseMode,
     val masterEnabled: Boolean,
 ) {
     companion object {
@@ -711,10 +711,9 @@ private data class LiveDiagnosticSnap(
                 maxProcessingNs = bts.maxProcessingNs,
                 bufferSamples = bts.sampleCount,
                 passthrough = AudioChainTelemetry.passthrough,
-                // EqAudioProcessor doesn't expose phaseModeLinear as a
-                // read-only property currently; surface via the same
-                // settings path the rehydrate uses (volatile read).
-                phaseModeLinear = PlaybackService.sharedEq.isPhaseModeLinear(),
+                // v0.9.3: PhaseMode enum replaces the Boolean. Pure IIR /
+                // Min-Phase FIR / Linear-Phase FIR.
+                phaseMode = PlaybackService.sharedEq.currentPhaseMode(),
                 masterEnabled = AudioChainTelemetry.enabled,
             )
         }
@@ -736,7 +735,11 @@ private fun formatLiveBlock(
     errorVerbose: String?,
 ): String = buildString {
     append("  audio_enhancement = ${snap.masterEnabled}\n")
-    append("  phase_mode        = ${if (snap.phaseModeLinear) "Linear (4096-tap FIR)" else "Minimum (biquad)"}\n")
+    append("  phase_mode        = ${when (snap.phaseMode) {
+        com.lofipod.app.audio.PhaseMode.PURE_IIR -> "Pure IIR (biquad cascade)"
+        com.lofipod.app.audio.PhaseMode.MIN_FIR -> "Min-Phase FIR (UPC + cepstrum kernel)"
+        com.lofipod.app.audio.PhaseMode.LINEAR_FIR -> "Linear-Phase FIR (UPC + symmetric kernel)"
+    }}\n")
     append("  speed             = ${"%.2fx".format(snap.playbackSpeed)}\n")
     append("  passthrough       = ${snap.passthrough}\n")
     append("  audio_thread      = tid=${snap.audioThreadId} name=${snap.audioThreadName} priority=${snap.audioThreadPriority}\n")
