@@ -7,12 +7,17 @@ plugins {
 
 android {
     namespace = "com.lofipod.app"
-    compileSdk = 34
+    // 34 → 35 (v0.9.4). Required by Media3 1.5.0+. Bumping compileSdk
+    // alone (not targetSdk) is a no-op for installed-app runtime behavior —
+    // it only lets us link against newer SDK symbols. targetSdk stays at 34
+    // so we haven't opted into Android 15 runtime behaviors (separate
+    // decision, separate risk; bump deliberately when ready to vet).
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.lofipod.app"
         minSdk = 28          // Android 9+; GrapheneOS targets recent versions
-        targetSdk = 34
+        targetSdk = 34       // Android 14 runtime behavior; see compileSdk note above
         // Release builds inject these from the tag-driven workflow. Local
         // builds and pushes-to-branch use the literals here. Versioning
         // discipline: bump these in the gradle file when tagging stops being
@@ -113,15 +118,13 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // --- Media3 (ExoPlayer) ---
-    // 1.4.1 → 1.5.1 (v0.9.1). Brief #8 (_LOFIPOD_V1_BRIEF.md §E6): the
-    // 1.5.0 release picks up the MP3 VBRI table-of-contents fix (#1904)
-    // that was a direct candidate for "downloaded MP3 stops short before
-    // the actual end" symptoms, plus audio-output retry improvements in
-    // DefaultAudioSink. R8 stays OFF — the silent-output regression from
-    // v0.3.0 is a Media3-internal reflection issue, not our code. Our
-    // EqRenderersFactory uses only public APIs (DefaultAudioSink.Builder,
-    // DefaultAudioProcessorChain, DefaultAudioTrackBufferSizeProvider.Builder)
-    // so the upgrade should be a drop-in.
+    // 1.4.1 → 1.5.1 (v0.9.1) and held through v0.9.4. The 1.5.0 release
+    // picks up the MP3 VBRI table-of-contents fix (#1904) plus
+    // DefaultAudioSink output-retry improvements that 1.4.x lacked.
+    // 1.5.x REQUIRES compileSdk 35 (and therefore AGP 8.7+) — bumped in
+    // v0.9.4 alongside this dep. R8 stays OFF — the silent-output
+    // regression from v0.3.0 is a Media3-internal reflection issue, not
+    // our code. Our EqRenderersFactory uses only public APIs.
     val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")

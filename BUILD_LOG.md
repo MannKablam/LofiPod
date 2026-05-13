@@ -2,6 +2,43 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.4 — Toolchain bump for Media3 1.5.x compileSdk 35 requirement (2026-05-13)
+
+Build fix tag. v0.9.3 (and v0.9.1, v0.9.2 since they inherited the bump)
+failed CI `checkReleaseAarMetadata` because Media3 1.5.1 (introduced in
+v0.9.1) requires `compileSdk 35` to consume — and the project was on
+compileSdk 34 with AGP 8.5.2 (which can't go higher than 34). v0.9.0 was
+green because Media3 was still 1.4.1 there. v0.9.3 inherited the broken
+state; the v0.9.3 features themselves are fine.
+
+Path chosen: bump the toolchain (not revert Media3). The 1.5.x VBRI and
+audio-sink retry fixes are worth keeping; the toolchain bump is also
+overdue regardless.
+
+**Coordinated bumps:**
+
+- Gradle wrapper 8.7 → 8.10.2 (AGP 8.7 minimum is Gradle 8.9; pick 8.10.2
+  for stability)
+- AGP 8.5.2 → 8.7.3 (first AGP line that supports compileSdk 35)
+- compileSdk 34 → 35 (required by Media3 1.5.x)
+
+**Held unchanged (deliberately):**
+
+- targetSdk stays at 34. Bumping compileSdk lets us link against
+  Android 15 SDK symbols; bumping targetSdk would also opt into
+  Android 15 runtime behavior changes (notification permission tighter
+  enforcement, partial photo picker default, etc.). That's a separate
+  decision with its own risk surface — left for a later deliberate
+  bump.
+- Kotlin 2.0.20, KSP 2.0.20-1.0.25, Compose plugin 2.0.20 — all
+  compatible with AGP 8.7.x.
+- Compose BOM 2024.09.02 — compatible with compileSdk 35. Could be
+  bumped for hygiene; no force-bump signal yet.
+- R8 stays OFF.
+
+If the build now compiles cleanly, the v0.9.3 features (UPC + 3-mode
+phase lineup + Min-Phase FIR) are downstream and untouched here.
+
 ## v0.9.3 — UPC convolution + 3-mode phase lineup (2026-05-13)
 
 Fourth tag of the audio rebuild roadmap. Combines the brief's planned
