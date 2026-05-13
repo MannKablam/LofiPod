@@ -168,12 +168,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (phaseMode == newMode) return
         phaseMode = newMode
         // Re-synthesize the FIR kernel for the new mode (no-op when
-        // PURE_IIR ← MIN_FIR ← LINEAR_FIR transitions share UPC; setMode
-        // re-runs the synthesis path appropriate to the new mode).
+        // PURE_IIR — FirEq idles).
         firEq.setMode(
             when (newMode) {
                 PhaseMode.LINEAR_FIR -> FirEq.Mode.LINEAR
                 PhaseMode.MIN_FIR -> FirEq.Mode.MIN_PHASE
+                PhaseMode.MIXED -> FirEq.Mode.MIXED
                 PhaseMode.PURE_IIR -> firEq.mode  // unchanged, FIR idles
             },
             bands,
@@ -332,6 +332,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
             when (phaseMode) {
                 PhaseMode.LINEAR_FIR -> FirEq.Mode.LINEAR
                 PhaseMode.MIN_FIR -> FirEq.Mode.MIN_PHASE
+                PhaseMode.MIXED -> FirEq.Mode.MIXED
                 PhaseMode.PURE_IIR -> FirEq.Mode.LINEAR  // FirEq idle in PURE_IIR; mode picked for first toggle
             },
             bands,

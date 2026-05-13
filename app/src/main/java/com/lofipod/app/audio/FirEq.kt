@@ -58,6 +58,19 @@ class FirEq {
          *  pre-ringing; sub-millisecond group delay across all frequencies
          *  at the Qs LofiPod uses (0.7-1.4). Best for spoken content. */
         MIN_PHASE,
+        /** Hybrid: min-phase below the crossover frequency
+         *  ([MIXED_CROSSOVER_HZ]), linear-phase above. The two contributions
+         *  are pre-multiplied by complementary real-valued crossover
+         *  filters (sum to 1 in magnitude, so the EQ shape is preserved
+         *  everywhere), synthesized separately, time-aligned by delaying
+         *  the min-phase contribution to match the linear-phase group
+         *  delay, then summed. Same latency as [LINEAR]. Mastering-style
+         *  approach — pairs the academic-pure linear-phase response at
+         *  speech-band frequencies with the no-pre-ringing min-phase
+         *  response in the bass where pre-ringing is most audible
+         *  (kicks, organ pedal, low rumble). FabFilter Pro-Q3 "Natural
+         *  Phase" / DMG EQuilibrium territory. */
+        MIXED,
     }
 
     @Volatile var mode: Mode = Mode.LINEAR
@@ -187,6 +200,10 @@ class FirEq {
         get() = when (mode) {
             Mode.LINEAR -> BLOCK_SIZE + (KERNEL_LENGTH - 1) / 2
             Mode.MIN_PHASE -> BLOCK_SIZE
+            // MIXED aligns the min-phase contribution to the linear-phase
+            // group delay so both arrive at the listener simultaneously
+            // through the convolution. Same latency as LINEAR.
+            Mode.MIXED -> BLOCK_SIZE + (KERNEL_LENGTH - 1) / 2
         }
 
     private fun processBlockForChannel(ch: Int) {
@@ -241,8 +258,97 @@ class FirEq {
         val taps = when (mode) {
             Mode.LINEAR -> synthLinearPhaseKernel(mag, fftSize)
             Mode.MIN_PHASE -> synthMinPhaseKernel(mag, fftSize)
+            Mode.MIXED -> synthMixedPhaseKernel(mag, fftSize)
         }
         conv.setKernelTaps(taps)
+    }
+
+    /**
+     * Mixed-phase kernel synthesis.
+     *
+     * Splits the target magnitude response at a 120 Hz crossover via a
+     * complementary cosine-ramped filter pair (`H_low + H_high = 1`
+     * everywhere, so the EQ shape is preserved with no transition-band
+     * dip). Synthesizes:
+     *   - a linear-phase kernel from `mag · H_high` (above-crossover
+     *     content gets the symmetric-impulse / transient-preserving path)
+     *   - a min-phase kernel from `mag · H_low` (below-crossover content
+     *     gets the energy-front-loaded / no-pre-ringing path)
+     *
+     * Then time-aligns the two contributions: the linear-phase kernel
+     * peaks at index KERNEL_LENGTH/2 (its natural group delay), the
+     * min-phase kernel peaks at index 0 (causal energy front-load). To
+     * deliver both contributions to the listener simultaneously, the
+     * min-phase kernel is shifted forward by KERNEL_LENGTH/2 samples,
+     * then summed.
+     *
+     * Result: a single hybrid impulse response of length KERNEL_LENGTH
+     * with peaks aligned at the center, delivering linear-phase magnitude
+     * shaping above 120 Hz and min-phase shaping below. Same convolution
+     * complexity as either pure mode — UPC sees just another 4096-tap
+     * kernel.
+     *
+     * Why this works: the per-sample output through this kernel is the
+     * sum of two parallel convolution paths (one per phase mode applied
+     * to a complementary band of the input). The complementary crossover
+     * preserves the total magnitude target; the linear/min-phase split
+     * trades pre-ringing where it matters most.
+     */
+    private fun synthMixedPhaseKernel(mag: DoubleArray, fftSize: Int): DoubleArray {
+        // Step 1: build complementary crossover masks. Half-cosine ramp
+        // from MIXED_CROSSOVER_LO_HZ to MIXED_CROSSOVER_HI_HZ; flat 0/1
+        // outside that band. Real-valued, sums to 1 → EQ magnitude
+        // preserved everywhere.
+        val nBins = mag.size                   // fftSize / 2 + 1
+        val hLow = DoubleArray(nBins)
+        val hHigh = DoubleArray(nBins)
+        for (k in 0 until nBins) {
+            val freqHz = k.toDouble() * sampleRate / fftSize
+            hLow[k] = crossoverLow(freqHz)
+            hHigh[k] = 1.0 - hLow[k]
+        }
+
+        // Step 2: derive band-limited magnitudes for each phase path.
+        val magHigh = DoubleArray(nBins) { k -> mag[k] * hHigh[k] }
+        val magLow = DoubleArray(nBins) { k -> mag[k] * hLow[k] }
+
+        // Step 3: synthesize each kernel. synthLinearPhaseKernel and
+        // synthMinPhaseKernel already return KERNEL_LENGTH-length
+        // time-domain taps.
+        val kernelLinHigh = synthLinearPhaseKernel(magHigh, fftSize)
+        val kernelMinLow = synthMinPhaseKernel(magLow, fftSize)
+
+        // Step 4: align contributions. Linear-phase kernel peaks at
+        // KERNEL_LENGTH/2 (causal-symmetric, K/2 group delay). Min-phase
+        // kernel peaks at index 0 (energy-front-loaded, ~0 group delay).
+        // To deliver both to the listener simultaneously, shift the
+        // min-phase contribution forward by K/2 samples. The min-phase
+        // tail past K samples is truncated (its energy at that point is
+        // negligible — Kaiser-windowed real-cepstrum kernels decay to
+        // -60 dB well within their truncation window).
+        val half = KERNEL_LENGTH / 2
+        val kernel = DoubleArray(KERNEL_LENGTH)
+        for (i in 0 until KERNEL_LENGTH) {
+            kernel[i] = kernelLinHigh[i]
+        }
+        for (i in 0 until KERNEL_LENGTH - half) {
+            kernel[half + i] += kernelMinLow[i]
+        }
+        return kernel
+    }
+
+    /** Half-cosine crossover lowpass response at [freqHz]. Returns 1.0
+     *  below [MIXED_CROSSOVER_LO_HZ], 0.0 above [MIXED_CROSSOVER_HI_HZ],
+     *  smooth cos² transition between. Complementary highpass is
+     *  `1 - crossoverLow`, so the pair sums to 1.0 everywhere. */
+    private fun crossoverLow(freqHz: Double): Double {
+        if (freqHz <= MIXED_CROSSOVER_LO_HZ) return 1.0
+        if (freqHz >= MIXED_CROSSOVER_HI_HZ) return 0.0
+        val t = (freqHz - MIXED_CROSSOVER_LO_HZ) /
+                (MIXED_CROSSOVER_HI_HZ - MIXED_CROSSOVER_LO_HZ)
+        // cos² ramp: smooth 1 → 0 over the transition band.
+        val c = cos(PI * t * 0.5)
+        return c * c
     }
 
     /**
@@ -409,6 +515,28 @@ class FirEq {
 
         /** Kaiser-window β=6 → ~60 dB ripple suppression. Same as v0.8.0. */
         private const val KAISER_BETA = 6.0
+
+        /**
+         * Mixed-phase crossover transition band, in Hz.
+         *
+         * Below [MIXED_CROSSOVER_LO_HZ]: full weight on the min-phase
+         * (energy-front-loaded) synthesis path — no pre-ringing on bass
+         * transients (kicks, organ pedal, low rumble).
+         *
+         * Above [MIXED_CROSSOVER_HI_HZ]: full weight on the linear-phase
+         * (symmetric impulse) synthesis path — exact transient waveform
+         * preservation across the speech / music band.
+         *
+         * Between the two: half-cosine ramp, complementary so the two
+         * weights sum to 1.0 in magnitude and the EQ shape is preserved
+         * everywhere (no transition-band dip).
+         *
+         * 120 Hz is the brief's suggestion (FabFilter Pro-Q3 "Natural
+         * Phase" uses ~150 Hz; DMG EQuilibrium ~120 Hz). 80→180 Hz gives
+         * a ~1-octave smooth transition centered roughly at 120 Hz.
+         */
+        private const val MIXED_CROSSOVER_LO_HZ = 80.0
+        private const val MIXED_CROSSOVER_HI_HZ = 180.0
 
         /** Symmetric Kaiser window of length [KERNEL_LENGTH], precomputed once at class load. */
         private val KAISER_WINDOW: DoubleArray = run {

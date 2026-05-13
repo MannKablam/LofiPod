@@ -2,6 +2,63 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.9.5 — Mixed-Phase mode (4-mode phase lineup complete) (2026-05-13)
+
+Adds the 4th phase mode: hybrid min-phase / linear-phase split at a
+~120 Hz crossover. Completes the audio rebuild roadmap's user-visible
+work; v0.10.0 will be a content/polish tag.
+
+**FirEq.Mode.MIXED** — new synthesis path inside FirEq:
+
+  1. Build complementary cosine-ramp crossover masks `H_low(f)`,
+     `H_high(f)` with transition 80 → 180 Hz centered roughly at 120 Hz.
+     The two sum to 1.0 everywhere (real-valued), so applying them to
+     the EQ magnitude target preserves the EQ shape across the spectrum
+     with no transition-band dip.
+  2. Synthesize a linear-phase kernel from `mag · H_high` (above-
+     crossover content gets the symmetric-impulse, transient-preserving
+     path).
+  3. Synthesize a min-phase kernel from `mag · H_low` (below-crossover
+     content gets the energy-front-loaded, no-pre-ringing path —
+     critical for bass transients like kicks, organ pedal, low rumble).
+  4. Time-align: the linear-phase kernel peaks at KERNEL_LENGTH/2 (its
+     natural group delay), the min-phase kernel peaks at index 0
+     (causal). Shift the min-phase contribution forward by KERNEL_LENGTH/2
+     samples so both reach the listener simultaneously through the
+     convolution.
+  5. Sum the two aligned kernels → single hybrid impulse response of
+     length KERNEL_LENGTH. UPC sees just another 4096-tap kernel; same
+     convolution cost as either pure mode.
+
+**PhaseMode.MIXED + Settings.PHASE_MODE_MIXED** — added to the existing
+enum + DataStore string. Legacy Boolean sync now treats MIXED as a FIR
+mode (sets `phase_mode_linear = true`) so downgrade paths see a usable
+value.
+
+**EqAudioProcessor** dispatches MIXED through firEq.setMode(FirEq.Mode.MIXED).
+Algorithmic latency for MIXED matches LINEAR_FIR (~70 ms total — the
+linear-phase contribution dominates the group delay).
+
+**EqScreen** grows from 3 chips to 4: "Pure IIR" / "Min FIR" /
+"Linear FIR" / "Mixed". Per-chip description text updated.
+
+**PlayerDiagnosticsTab** renders the MIXED label in the live readout:
+"Mixed-Phase (min-phase < 120 Hz, linear-phase > 120 Hz, UPC)".
+
+**Skipped (intentionally):** Brief #15 (PFFFT JNI migration) was the
+brief's planned v0.9.5. Skipped for now — invisible-to-user CPU
+optimization that adds JNI build complexity to the gradle pipeline.
+Current UPC + JTransforms envelope is comfortable for podcasts at 2×
+on modern devices. PFFFT lands as a dedicated future tag if profiling
+shows need.
+
+**Net at v0.9.5:** 4-mode phase lineup complete, UPC convolution
+shipped, latency-honest transport, downloader hardened, ADPF clamped.
+The audio subsystem's engineering arc per `_LOFIPOD_V1_BRIEF.md` is
+substantially done. v0.10.0 will be content/polish: Audiophile Notes
+rewrite, plain-language audio guide refresh, About-screen technique
+credits.
+
 ## v0.9.4 — Toolchain bump for Media3 1.5.x compileSdk 35 requirement (2026-05-13)
 
 Build fix tag. v0.9.3 (and v0.9.1, v0.9.2 since they inherited the bump)

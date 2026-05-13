@@ -24,22 +24,29 @@ import com.lofipod.app.data.Settings
  *   in exchange for preserving the input signal's transient waveform
  *   shape exactly. The academically-pure option.
  *
+ * - [MIXED] (v0.9.5) — hybrid: min-phase below ~120 Hz, linear-phase
+ *   above, complementary cosine-ramp crossover. Pairs the no-pre-ringing
+ *   bass response with transient-preserving mids/highs. Same ~70 ms
+ *   latency as LINEAR_FIR. Mastering-EQ flex; niche but the audience
+ *   that cares will recognize FabFilter Pro-Q3 "Natural Phase" /
+ *   DMG EQuilibrium territory.
+ *
  * The DataStore serializes this as a string ([Settings.phaseMode]) so a
- * future fourth mode (e.g. Mixed-Phase planned for v0.10.0) can extend
- * without a DataStore migration.
+ * future fifth mode can extend without a DataStore migration.
  */
 enum class PhaseMode(val storageKey: String) {
     PURE_IIR(Settings.PHASE_MODE_PURE_IIR),
     MIN_FIR(Settings.PHASE_MODE_MIN_FIR),
-    LINEAR_FIR(Settings.PHASE_MODE_LINEAR_FIR);
+    LINEAR_FIR(Settings.PHASE_MODE_LINEAR_FIR),
+    MIXED(Settings.PHASE_MODE_MIXED);
 
     companion object {
         /** Resolve a [PhaseMode] from its DataStore storage key. Unknown
-         *  values (forward-compat with v0.10.0 modes not yet defined here)
-         *  fall back to [PURE_IIR] — the safe default. */
+         *  values fall back to [PURE_IIR] — the safe default. */
         fun fromStorageKey(value: String?): PhaseMode = when (value) {
             Settings.PHASE_MODE_MIN_FIR -> MIN_FIR
             Settings.PHASE_MODE_LINEAR_FIR -> LINEAR_FIR
+            Settings.PHASE_MODE_MIXED -> MIXED
             else -> PURE_IIR
         }
     }

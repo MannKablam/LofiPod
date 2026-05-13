@@ -354,15 +354,17 @@ fun EqScreen(
             }
             Spacer(Modifier.height(16.dp))
 
-            // ---- Phase mode (v0.9.3 three-mode lineup) ----
+            // ---- Phase mode (v0.9.5 four-mode lineup) ----
             // PURE_IIR: 10-band biquad cascade, ~6 ms total chain latency.
             // MIN_FIR: UPC + real-cepstrum kernel, ~29 ms, no pre-ringing.
             // LINEAR_FIR: UPC + symmetric kernel, ~70 ms, transient-exact.
+            // MIXED: hybrid (min-phase < 120 Hz, linear-phase > 120 Hz),
+            //   ~70 ms latency, mastering-style flex.
             //
-            // The two FIR modes share the UPC convolution engine; only the
-            // kernel synthesis differs. Mid-playback switches have a brief
-            // audible artifact (full chain reset). Acceptable for a manual-
-            // mode-switch affordance.
+            // The three FIR modes share the UPC convolution engine; only
+            // the kernel synthesis differs. Mid-playback switches have a
+            // brief audible artifact (full chain reset). Acceptable for a
+            // manual-mode-switch affordance.
             Text("Phase mode", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(2.dp))
             Text(
@@ -378,6 +380,10 @@ fun EqScreen(
                         "Linear-Phase FIR: symmetric 4096-tap kernel via partitioned " +
                             "convolution. Preserves transient waveform shape exactly. " +
                             "Audible pre-ringing on sharp transients; higher latency."
+                    com.lofipod.app.audio.PhaseMode.MIXED ->
+                        "Mixed: min-phase below 120 Hz (no bass pre-ringing) + linear-" +
+                            "phase above (transient-exact mids/highs), complementary " +
+                            "crossover. Mastering-style hybrid; same latency as Linear."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -421,6 +427,19 @@ fun EqScreen(
                         }
                     },
                     label = { Text("Linear FIR") }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.MIXED,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseMode(Settings.PHASE_MODE_MIXED)
+                            }
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.MIXED)
+                        }
+                    },
+                    label = { Text("Mixed") }
                 )
             }
             Spacer(Modifier.height(20.dp))

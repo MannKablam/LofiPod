@@ -277,9 +277,9 @@ class Settings(private val context: Context) {
             prefs[KEY_PHASE_MODE] = value
             // Keep the legacy Boolean in sync so external readers (any
             // hypothetical telemetry, downgrade path) still see a usable
-            // value. true ↔ any FIR mode; false ↔ pure IIR.
-            prefs[KEY_PHASE_MODE_LINEAR] =
-                value == PHASE_MODE_LINEAR_FIR || value == PHASE_MODE_MIN_FIR
+            // value. true ↔ any FIR mode (MIN_FIR, LINEAR_FIR, MIXED);
+            // false ↔ pure IIR.
+            prefs[KEY_PHASE_MODE_LINEAR] = value != PHASE_MODE_PURE_IIR
         }
     }
 
@@ -457,6 +457,7 @@ class Settings(private val context: Context) {
         const val PHASE_MODE_PURE_IIR = "PURE_IIR"
         const val PHASE_MODE_MIN_FIR = "MIN_FIR"
         const val PHASE_MODE_LINEAR_FIR = "LINEAR_FIR"
+        const val PHASE_MODE_MIXED = "MIXED"
         private val KEY_CANON_BROWSE_EXCLUDED =
             androidx.datastore.preferences.core.stringPreferencesKey("canon_browse_excluded_feeds")
         private val KEY_CANON_AUTOPLAY =

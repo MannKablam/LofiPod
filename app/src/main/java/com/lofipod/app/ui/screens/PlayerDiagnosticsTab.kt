@@ -739,6 +739,7 @@ private fun formatLiveBlock(
         com.lofipod.app.audio.PhaseMode.PURE_IIR -> "Pure IIR (biquad cascade)"
         com.lofipod.app.audio.PhaseMode.MIN_FIR -> "Min-Phase FIR (UPC + cepstrum kernel)"
         com.lofipod.app.audio.PhaseMode.LINEAR_FIR -> "Linear-Phase FIR (UPC + symmetric kernel)"
+        com.lofipod.app.audio.PhaseMode.MIXED -> "Mixed-Phase (min-phase < 120 Hz, linear-phase > 120 Hz, UPC)"
     }}\n")
     append("  speed             = ${"%.2fx".format(snap.playbackSpeed)}\n")
     append("  passthrough       = ${snap.passthrough}\n")
