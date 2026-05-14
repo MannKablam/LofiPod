@@ -51,6 +51,20 @@ class LofiPodApp : Application() {
             autoDownloadDao = db.autoDownloadDao(),
         )
     }
+
+    /**
+     * Audio-file-size prober for episodes whose RSS feed reports
+     * `length="0"` (Megaphone, some Castos shows). Uses HTTP HEAD with
+     * Range fallback to learn the real size, caches results on disk so
+     * subsequent launches render without re-probing. See
+     * [com.lofipod.app.data.EpisodeSizeProber] for the strategy.
+     */
+    val episodeSizes: com.lofipod.app.data.EpisodeSizeProber by lazy {
+        com.lofipod.app.data.EpisodeSizeProber(
+            context = this,
+            httpClient = downloads.httpClient,
+        )
+    }
     lateinit var kabodLoader: KabodAssetLoader
         private set
     lateinit var transcripts: TranscriptRepository

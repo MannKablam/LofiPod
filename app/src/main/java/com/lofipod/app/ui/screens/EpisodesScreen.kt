@@ -676,7 +676,22 @@ private fun EpisodeRow(
             // cost?" and "how much disk?"). Pinned to the bottom-right
             // corner of the card so it reads as a passive "vital stat"
             // rather than competing with the action buttons above.
-            ep.audioByteSize?.let { bytes ->
+            //
+            // v0.10.8+: when the RSS feed doesn't populate `length`
+            // (Megaphone-hosted shows like The Pour Over, some Castos
+            // shows, etc.), kick off an HTTP HEAD/Range probe to the
+            // audio URL and pick up the size once it lands. Results
+            // cache to disk so future launches render instantly.
+            val app = LocalContext.current.applicationContext as LofiPodApp
+            val probedSizes by app.episodeSizes.sizes.collectAsState()
+            val probedSize = probedSizes[ep.audioUrl]
+            val resolvedSize = ep.audioByteSize ?: probedSize
+            LaunchedEffect(ep.audioUrl, ep.audioByteSize) {
+                if (ep.audioByteSize == null) {
+                    app.episodeSizes.probe(ep.audioUrl)
+                }
+            }
+            resolvedSize?.let { bytes ->
                 Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),

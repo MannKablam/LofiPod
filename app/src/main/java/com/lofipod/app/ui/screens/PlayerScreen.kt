@@ -146,6 +146,10 @@ fun PlayerScreen(
     // episode_state -> repo cache -> Episode. Refreshed when [displayedGuid]
     // changes (track transition / live-vs-preview swap).
     var episodeSizeBytes by remember { mutableStateOf<Long?>(null) }
+    // v0.10.8+: track the audio URL alongside the RSS-supplied size, so
+    // when the feed reports `length="0"` (Megaphone-hosted shows) we can
+    // kick off the size prober and pick up the actual size once it lands.
+    var episodeAudioUrl by remember { mutableStateOf<String?>(null) }
 
     // Resolve preview data once per [previewGuid]. Loaded async because we
     // hit the DB; stays null until ready (we render a brief loading state
@@ -169,16 +173,37 @@ fun PlayerScreen(
     // looked up via episode_state -> repo cache to find the parsed Episode
     // (single DB read + one in-memory list scan, runs off the IO dispatcher).
     LaunchedEffect(displayedGuid, isPreview, previewData) {
-        episodeSizeBytes = when {
-            displayedGuid == null -> null
-            isPreview -> previewData?.episode?.audioByteSize
+        when {
+            displayedGuid == null -> {
+                episodeSizeBytes = null
+                episodeAudioUrl = null
+            }
+            isPreview -> {
+                episodeSizeBytes = previewData?.episode?.audioByteSize
+                episodeAudioUrl = previewData?.episode?.audioUrl
+            }
             else -> withContext(Dispatchers.IO) {
                 val state = app.db.episodeStateDao().get(displayedGuid)
                 val pod = state?.let { app.repo.cached(it.feedUrl) }
-                pod?.episodes?.find { it.guid == displayedGuid }?.audioByteSize
+                val ep = pod?.episodes?.find { it.guid == displayedGuid }
+                episodeSizeBytes = ep?.audioByteSize
+                episodeAudioUrl = ep?.audioUrl
             }
         }
     }
+    // Kick off a size probe when the RSS feed didn't supply a length.
+    // Idempotent — re-firing for the same URL is a no-op inside the prober.
+    LaunchedEffect(episodeAudioUrl, episodeSizeBytes) {
+        if (episodeSizeBytes == null) {
+            episodeAudioUrl?.let { app.episodeSizes.probe(it) }
+        }
+    }
+    // Observe the prober's size cache. resolvedSizeBytes is the RSS value
+    // when present, else whatever the probe came back with (which may be
+    // null while still in-flight or if the host didn't return a size).
+    val probedSizes by app.episodeSizes.sizes.collectAsState()
+    val resolvedSizeBytes = episodeSizeBytes
+        ?: episodeAudioUrl?.let { probedSizes[it] }
 
     // Live favorite tier for whichever episode is being displayed (live or
     // preview). Observed so the top-bar heart stays in sync if the user
@@ -558,7 +583,7 @@ fun PlayerScreen(
                 // enclosure file so one number covers both questions
                 // ("how much data?" / "how much disk?"). Hidden when the
                 // feed didn't publish an enclosure length.
-                episodeSizeBytes?.let { bytes ->
+                resolvedSizeBytes?.let { bytes ->
                     Spacer(Modifier.height(2.dp))
                     Row(modifier = Modifier.fillMaxWidth()) {
                         Spacer(Modifier.weight(1f))

@@ -2,6 +2,56 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.8 — HTTP HEAD/Range probe for missing episode sizes (2026-05-13)
+
+v0.10.7 fixed the "<1mb" display bug by hiding the size when the RSS
+feed didn't supply one. v0.10.8 goes further: it actually probes the
+audio URL to learn the real size when the RSS doesn't have it. Most
+podcast apps don't bother; LofiPod doing this well is a small but real
+differentiator.
+
+**Strategy (cheap and reliable):**
+
+  1. **HTTP HEAD** request to the audio URL → Content-Length header.
+     ~500 bytes per probe.
+  2. **HTTP GET with `Range: bytes=0-0`** as fallback when HEAD doesn't
+     return Content-Length (some CDNs strip it on HEAD, some return 405
+     to HEAD entirely). The `Content-Range: bytes 0-0/<total>` response
+     header contains the size. ~1 KB per probe; works on essentially
+     every audio CDN because Range requests are universal for
+     resumable downloads.
+
+**New file:** `EpisodeSizeProber.kt` (~180 LOC). OkHttp-backed
+HEAD/Range prober. Caches results in an in-memory
+`StateFlow<Map<String, Long?>>` (Long? value distinguishes
+"probed and got size" from "probed but no size — don't retry").
+Persists to `filesDir/episode_size_cache.json` so subsequent launches
+render instantly from the cache. Concurrency-capped at 4 parallel
+probes (Semaphore) so a fast scroll doesn't trigger hundreds of
+simultaneous HTTP requests.
+
+**Lazy + on-demand:** the prober is called from `LaunchedEffect` in
+`EpisodeRow` and `PlayerScreen` only when a row composes AND the
+RSS-supplied size is null. Idempotent — re-rendering the same row is a
+no-op (the prober's in-session dedup `Set<String>` of attempted URLs
+short-circuits). As probes complete, the StateFlow emits and visible
+rows recompose with the resolved size.
+
+**Bandwidth cost:** roughly 1 MB across an entire podcast library
+(~1000 episodes × ~1 KB per probe), once. Then the JSON cache covers
+it forever.
+
+**Wired in:** `LofiPodApp.episodeSizes` (lazy singleton),
+`EpisodesScreen.EpisodeRow` (per-row probe + display merge),
+`PlayerScreen` (player-screen size readout). Both display sites read
+`resolvedSize = ep.audioByteSize ?: probedSizes[ep.audioUrl]` —
+RSS-supplied value wins when present, prober result is the fallback.
+
+**For The Pour Over specifically** (the canonical Megaphone-hosted
+"all length=0" offender): episodes will now show real sizes
+(typically 15-30 MB for a 12-minute episode at 256 kbps) once the
+prober has had a moment to run after the user opens the episode list.
+
 ## v0.10.7 — Hide misleading "<1mb" badge for podcasts that emit `length="0"` (2026-05-13)
 
 User-reported bug: every episode in The Pour Over (and Simple Farmhouse
