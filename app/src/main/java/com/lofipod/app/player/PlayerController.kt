@@ -1530,7 +1530,7 @@ class PlayerController(private val context: Context) {
      *     the 1.5-3s of pre-switch PCM in the AudioTrack continues to play
      *     through the old mode's settings, and FIR modes can show audible
      *     contamination from the prior mode's chain state.
-     *   - The optional plunger button in the player screen (v0.10.1+) — a
+     *   - The optional flush-valve button in the player screen (v0.10.1+) — a
      *     manual user-triggered flush for cases where the chain seems off
      *     and a forced reset is the fastest fix.
      *

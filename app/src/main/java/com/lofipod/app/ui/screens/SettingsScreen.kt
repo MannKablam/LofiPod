@@ -206,11 +206,11 @@ fun SettingsScreen(
             // the mini-player visible at the bottom for transport while
             // you read.
             DiagnosticsTabToggleRow()
-            // Manual flush plunger in Player. Off by default; on for users
-            // who want a one-tap audio reset (clears the AudioTrack buffer
-            // and re-seeks). Useful for diagnosing audio-chain state issues
-            // or when something sounds contaminated and you want a clean
-            // restart without disrupting position much (~50 ms rewind).
+            // Manual flush-valve button in Player. Off by default; on for
+            // users who want a one-tap audio reset (clears the AudioTrack
+            // buffer and re-seeks). Useful for diagnosing audio-chain state
+            // issues or when something sounds contaminated and you want a
+            // clean restart without disrupting position much (~50 ms rewind).
             FlushButtonToggleRow()
             // App-wide bug telemetry — feed failures, download failures,
             // scripture-tag skips, etc. Distinct from Audio diagnostics
@@ -352,7 +352,7 @@ private fun DiagnosticsTabToggleRow() {
 }
 
 /**
- * Toggle for the manual flush plunger icon shown in the player. Lives next
+ * Toggle for the manual flush-valve icon shown in the player. Lives next
  * to DiagnosticsTabToggleRow because both are "Player UI affordance" flags
  * with similar plumbing.
  */
@@ -378,7 +378,7 @@ private fun FlushButtonToggleRow() {
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
-                "Adds a plunger icon to the right of the speed chip. Tapping it forces an AudioTrack flush + brief re-seek (~50 ms), clearing any pre-flush PCM in the buffer. Useful when something sounds off and a clean restart is the fastest fix.",
+                "Adds a flush-valve icon to the right of the speed chip. Tapping it forces an AudioTrack flush + brief re-seek (~50 ms), clearing any pre-flush PCM in the buffer. Useful when something sounds off and a clean restart is the fastest fix.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

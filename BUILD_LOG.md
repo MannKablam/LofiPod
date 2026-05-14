@@ -2,6 +2,32 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.10 — Manual-flush icon redesigned (flush valve, not plunger) (2026-05-13)
+
+User feedback: the Material Symbols `valve` icon we shipped in v0.10.2
+visually reads as a plunger (industrial valve with wheel handle on a
+stem). They wanted a flush-valve mechanism — the actual button you
+press on a toilet tank to release water.
+
+Material Symbols doesn't have a literal "flush_valve" icon, so this
+is a custom vector drawable: `res/drawable/flush_valve_24.xml`
+depicting a modern dual-flush button (two stacked rounded ovals —
+larger top button for full flush, smaller bottom button for half
+flush). Hand-drawn in this project to match Material Symbols' viewport
+(960x960) + filled-outline style so it visually belongs next to the
+bundled Material Symbols icons.
+
+PlayerScreen swapped from `R.drawable.valve_24` to
+`R.drawable.flush_valve_24`. Settings → About copy updated:
+"Adds a flush-valve icon to the right of the speed chip..." (was
+"plunger icon"). Comments in PlayerController.kt, PlayerScreen.kt,
+SettingsScreen.kt, and Settings.kt updated similarly.
+
+`valve_24.xml` deleted (no longer referenced anywhere). The
+icon-philosophy convention in `ICON_PHILOSOPHY.md` still holds — for
+icons that DON'T exist in Material Symbols (like flush_valve here),
+custom vectors are fine as long as they match the visual style.
+
 ## v0.10.9 — Stale-while-revalidate catalog UX + home-icon nav (2026-05-13)
 
 Two user-reported polish items:

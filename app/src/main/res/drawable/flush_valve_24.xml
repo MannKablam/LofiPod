@@ -1,0 +1,43 @@
+<!--
+  Custom "flush valve" icon, outlined style, 24dp.
+  Depicts a modern dual-flush button (two stacked rounded buttons on
+  a tank lid — the larger top button = full flush, the smaller bottom
+  button = half flush). Built to match the visual weight + viewport
+  of Material Symbols icons (960x960, ~80-unit stroke equivalent via
+  filled-rectangle technique).
+
+  Designed for LofiPod v0.10.10 — replaces the Material Symbols `valve`
+  icon used in v0.10.2-v0.10.9 (which the user found visually too
+  plunger-like for the audio-flush action). No third-party source —
+  hand-drawn for this project, matches the style of bundled Material
+  Symbols icons (same viewport, same fillColor convention, no tint
+  attribute so Compose's LocalContentColor applies).
+
+  License: same as the rest of LofiPod (project license).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <!--
+      Top button (larger oval): full-flush button. ~440 wide x 200 tall,
+      centered horizontally, sits in the upper third of the canvas.
+      Built as a rounded rectangle outline by drawing the outer path
+      then subtracting an inner path via evenodd fill rule.
+    -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M260,200 L700,200 Q780,200 780,280 L780,400 Q780,480 700,480 L260,480 Q180,480 180,400 L180,280 Q180,200 260,200 Z
+            M280,280 L680,280 Q700,280 700,300 L700,380 Q700,400 680,400 L280,400 Q260,400 260,380 L260,300 Q260,280 280,280 Z" />
+    <!--
+      Bottom button (smaller oval): half-flush button. ~360 wide x 160
+      tall, centered, in the lower third.
+    -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M320,560 L640,560 Q720,560 720,640 L720,720 Q720,800 640,800 L320,800 Q240,800 240,720 L240,640 Q240,560 320,560 Z
+            M340,640 L620,640 Q640,640 640,660 L640,700 Q640,720 620,720 L340,720 Q320,720 320,700 L320,660 Q320,640 340,640 Z" />
+</vector>

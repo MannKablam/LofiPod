@@ -142,9 +142,10 @@ class Settings(private val context: Context) {
     }
 
     /**
-     * Show a "plunger" icon in the player screen for manual AudioTrack
-     * flush (v0.10.1+). Same vertical row as the speed chip, justified
-     * right (speed stays centered). Pressing the plunger triggers
+     * Show a flush-valve icon in the player screen for manual AudioTrack
+     * flush (v0.10.1+, redesigned in v0.10.10). Same vertical row as the
+     * speed chip, justified right (speed stays centered). Pressing the
+     * icon triggers
      * [PlayerController.flushAudio]. Off by default — niche debugging
      * affordance.
      */

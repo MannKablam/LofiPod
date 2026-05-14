@@ -276,7 +276,7 @@ fun PlayerScreen(
         com.lofipod.app.data.Settings(app).showDiagnosticsTabInPlayer
     }.collectAsState(initial = false)
 
-    // Manual flush button (plunger icon). v0.10.1+; off by default. When
+    // Manual flush button (flush-valve icon). v0.10.1+; off by default. When
     // enabled, sits to the right of the Speed chip with the chip itself
     // staying horizontally centered.
     val showFlushButton by remember(app) {
@@ -748,7 +748,7 @@ fun PlayerScreen(
                 // is the equivalent affordance for preview mode.
                 //
                 // The Box keeps SpeedChip centered horizontally; the
-                // optional flush plunger icon (v0.10.1+) sits aligned to
+                // optional flush-valve icon (v0.10.1+) sits aligned to
                 // CenterEnd without disturbing the chip's center position.
                 if (!isPreview) {
                     Spacer(Modifier.height(8.dp))
@@ -766,7 +766,7 @@ fun PlayerScreen(
                                 modifier = Modifier.align(Alignment.CenterEnd),
                             ) {
                                 Icon(
-                                    painter = painterResource(id = R.drawable.valve_24),
+                                    painter = painterResource(id = R.drawable.flush_valve_24),
                                     contentDescription = "Flush audio buffer",
                                 )
                             }
