@@ -489,16 +489,55 @@ private fun linearToDb(v: Double): String =
 private fun formatChainSpec(s: TelemetrySnapshot): String {
     if (s.sampleRate == 0) return "  (chain not yet configured)"
     val laMs = s.lookAheadSamples2x.toDouble() / max(1, 2 * s.sampleRate) * 1000.0
+    val phaseMode = com.lofipod.app.player.PlaybackService.sharedEq.currentPhaseMode()
+    val firUs = com.lofipod.app.player.PlaybackService.sharedEq.getChainLatencyUs()
     return buildString {
         append("  input            = ${s.sampleRate} Hz / ${s.channelCount} ch / ${s.encoding}\n")
+        append("  phase_mode       = ${phaseModeLabel(phaseMode)}\n")
+        append(formatPhaseModeBlock(phaseMode))
         append("  fir_taps         = ${s.firTaps} per stage (up + down)\n")
         append("  la_window_2x     = ${s.lookAheadSamples2x} samples (~${"%.2f".format(laMs)} ms)\n")
         append("  threshold        = ${"%.1f".format(s.thresholdDbfs)} dBFS\n")
-        append("  total_latency    = ${s.totalLatencyFrames1x} frames @1x (~${"%.2f".format(s.totalLatencyMs)} ms)\n")
+        append("  chain_latency    = ~${"%.2f".format(firUs / 1000.0)} ms total (live, mode-aware)\n")
+        append("  postEQ_latency   = ${s.totalLatencyFrames1x} frames @1x (~${"%.2f".format(s.totalLatencyMs)} ms)\n")
         append("  dc_blocker       = ${if (s.dcBlockerEnabled) "on" else "off"}\n")
         append("  master_enabled   = ${s.enabled}")
     }
 }
+
+private fun phaseModeLabel(m: com.lofipod.app.audio.PhaseMode): String = when (m) {
+    com.lofipod.app.audio.PhaseMode.PURE_IIR -> "Pure IIR (10-band biquad cascade)"
+    com.lofipod.app.audio.PhaseMode.MIN_FIR -> "Min-Phase FIR (UPC + real-cepstrum kernel)"
+    com.lofipod.app.audio.PhaseMode.LINEAR_FIR -> "Linear-Phase FIR (UPC + symmetric kernel)"
+    com.lofipod.app.audio.PhaseMode.MIXED -> "Mixed-Phase (min < 120 Hz, linear > 120 Hz, UPC)"
+}
+
+/** Per-mode chain spec block. Pure IIR is brief (the rest of the chain
+ *  spec already covers its main details); the three FIR modes get the
+ *  full UPC + kernel-synth detail line so users can see what's running. */
+private fun formatPhaseModeBlock(m: com.lofipod.app.audio.PhaseMode): String =
+    when (m) {
+        com.lofipod.app.audio.PhaseMode.PURE_IIR -> ""  // nothing extra
+        com.lofipod.app.audio.PhaseMode.MIN_FIR -> buildString {
+            append("  kernel           = 4096 taps, real-cepstrum-derived (causal, min-phase)\n")
+            append("  convolution      = UPC, 4 partitions x 1024 samples, FFT_SIZE=2048\n")
+            append("  fft_lib          = PFFFT (arm64 NEON SIMD, single precision)\n")
+            append("  pre_ringing      = none\n")
+        }
+        com.lofipod.app.audio.PhaseMode.LINEAR_FIR -> buildString {
+            append("  kernel           = 4096 taps, symmetric (zero-phase, Kaiser-windowed)\n")
+            append("  convolution      = UPC, 4 partitions x 1024 samples, FFT_SIZE=2048\n")
+            append("  fft_lib          = PFFFT (arm64 NEON SIMD, single precision)\n")
+            append("  pre_ringing      = yes (symmetric, ~46 ms group delay)\n")
+        }
+        com.lofipod.app.audio.PhaseMode.MIXED -> buildString {
+            append("  kernel           = 4096 taps, hybrid (min-phase low + linear high)\n")
+            append("  crossover        = 80-180 Hz cosine ramp (complementary, sum-to-1)\n")
+            append("  convolution      = UPC, 4 partitions x 1024 samples, FFT_SIZE=2048\n")
+            append("  fft_lib          = PFFFT (arm64 NEON SIMD, single precision)\n")
+            append("  pre_ringing      = bass band only\n")
+        }
+    }
 
 private fun formatLive(s: TelemetrySnapshot): String = buildString {
     append("  in_peak          = ${linearToDb(s.inputPeak)}\n")

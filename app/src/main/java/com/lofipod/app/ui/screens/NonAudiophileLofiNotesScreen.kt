@@ -71,7 +71,7 @@ fun NonAudiophileLofiNotesScreen(
                     Section("What each band actually controls", BAND_BY_BAND)
                     Section("Q (the width of each knob's reach)", Q_FACTOR)
                     SectionDivider()
-                    Section("Phase modes (Minimum vs Linear)", PHASE_MODES)
+                    Section("Phase modes (Pure IIR / Min FIR / Linear FIR / Mixed)", PHASE_MODES)
                     SectionDivider()
                     Section("DC blocker", DC_BLOCKER)
                     SectionDivider()
@@ -418,30 +418,51 @@ listeners never need to touch it.
 """
 
 private const val PHASE_MODES = """
-LofiPod's EQ can run in either of two modes. Most listeners should leave
-this on Minimum (the default).
+LofiPod's EQ can run in any of four modes. Most listeners should leave
+this on Pure IIR (the default) — the other three are for people who want
+to A/B different ways of doing the same EQ shape.
 
-Minimum phase — the default
-The "normal" way EQ has worked for decades, in both analog and digital
-gear. Slightly different parts of the audio reach your ears at slightly
-different times (we're talking sub-millisecond differences), but the ear
+All four modes produce the same OUTPUT TONE — the band sliders you set
+dial the same magnitude curve regardless of mode. They differ only in
+HOW the EQ delays sound (which is usually inaudible) and how much the
+phone has to work (which is also usually invisible).
+
+Pure IIR — the default
+The "normal" way EQ has worked for decades, in both analog gear and
+digital. Slightly different parts of the sound reach your ears at
+slightly different times (sub-millisecond differences), but the ear
 can't perceive that. Adds about 6 milliseconds of total latency.
-Inaudible.
+Fastest slider response, lowest CPU. Inaudible everywhere it matters.
 
-Linear phase — opt-in
-A more mathematically pure way to do the same EQ shape. Every frequency
-gets delayed by exactly the same amount (around 46 milliseconds total),
-which preserves the original timing relationships in the audio. The
-practical benefit is subtle — you might notice it on percussive content
-with sharp transients (snares, claps) where a linear-phase EQ keeps the
-attack feeling cleaner. For voice and most podcasts, the difference is
-inaudible. Costs a few times more CPU and adds the longer latency, both
-of which are still totally fine on modern phones.
+Min FIR — surgical, no pre-ringing
+Same EQ tone, but the math underneath is rebuilt so all the filter's
+"energy" arrives right when the sound it's shaping does — no ringing
+BEFORE a sharp consonant or transient. Best mode for sermons or lectures
+with hissy sibilance, because cutting sibilance with this mode doesn't
+smear the consonants around it. Adds about 29 milliseconds of total
+latency.
 
-Why the option exists at all: some audiophiles specifically want to
-verify the timing structure of a recording without an EQ smearing it.
-Linear phase is the right tool for that. If you're not sure whether you
-need it, you don't.
+Linear FIR — academically pure
+Same EQ tone again, but now every frequency is delayed by exactly the
+same amount across the entire spectrum. Preserves the "timing
+relationships" between low and high sounds perfectly. The tradeoff: a
+linear-phase EQ creates a faint pre-echo (a brief "tinkle" right before
+each sharp transient). For voice that's almost never audible; for
+percussive material with very sharp snares or claps you can sometimes
+hear it. Adds about 70 milliseconds of total latency. The right tool
+for audiophile A/B comparisons; the wrong tool if you find pre-ringing
+distracting.
+
+Mixed — the mastering-EQ flex
+Hybrid: uses Min-FIR (no pre-ringing) below about 120 Hz and Linear-FIR
+(time-perfect) above. The reasoning: pre-ringing is most audible in the
+bass (where each cycle is long), and time-alignment matters most in the
+mids and highs where consonants and transients live. So this mode picks
+both wins. Same ~70 ms latency as Linear FIR. Niche but distinctive.
+
+If you're not sure which to pick — Pure IIR is genuinely the best
+default. The differences between the four modes are subtle even on
+careful headphone listening; podcast playback doesn't reveal them.
 """
 
 private const val DC_BLOCKER = """

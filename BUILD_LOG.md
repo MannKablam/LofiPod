@@ -2,6 +2,57 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.0 — Audio rebuild endpoint: content + diagnostics polish (2026-05-13)
+
+Content/polish tag closing out the audio rebuild arc that started at
+v0.9.0. No engineering changes — just documentation of what shipped.
+
+**Audiophile Notes page** (Settings → Notes for audiophiles): full
+content rewrite. New sections:
+  - Signal chain diagram now shows the four-way EQ-stage dispatch (Pure
+    IIR / Min FIR / Linear FIR / Mixed).
+  - Float64 / Float32 boundaries — explains where the audio thread runs
+    in single precision (the FIR convolution via PFFFT) and where it
+    stays in double (everything else).
+  - Phase modes (four-way lineup) — full descriptive section for each
+    mode + "when to use each."
+  - UPC: uniform partitioned convolution — algorithm description, Wefers
+    + Gardner refs, why it's cheaper than monolithic OLA.
+  - Min-phase kernel via real cepstrum — Mian & Nainer 1982 /
+    Oppenheim-Schafer §10.5 derivation, step-by-step recipe.
+  - Cross-fade on band changes — describes both biquad parallel-path
+    and FIR dual-kernel crossfade (v0.9.8).
+  - Latency-compensated transport — pro-DAW-style position reporting.
+  - Zero-allocation audio-thread discipline — DoubleRing fix, why
+    autoboxing on the audio thread is dangerous, the v0.9.0 sweep.
+  - Updated CPU footprint section with PFFFT NEON timings + ADPF.
+  - Updated licenses + attribution with PFFFT BSD-3 + Wefers/Mian-Nainer
+    algorithmic credits.
+
+**Plain-language Lofi Notes page** (Settings → Audio guide): phase
+modes section rewritten for the 4-mode lineup. Friendly tone, no jargon.
+"If you're not sure which to pick — Pure IIR is genuinely the best
+default."
+
+**Audio Diagnostics chain spec** (Settings → Audio diagnostics): new
+per-mode block under the chain spec section. Surfaces the active
+phase mode + (for FIR modes) kernel length, kernel synthesis method,
+UPC partition count, FFT library (PFFFT arm64 NEON SIMD), and
+pre-ringing characteristic. The "Mode chip" tooltip style the brief
+described (long-press for tooltip) is deferred — these diagnostics
+lines serve the same purpose with less UI complexity. Audio chain
+latency line is also now live + mode-aware (reads
+EqAudioProcessor.getChainLatencyUs() instead of the post-EQ-only
+totalLatencyFrames1x baseline that was here pre-v0.10.0).
+
+**What v0.10.0 does NOT bring:** no engineering changes. The audio
+chain itself is unchanged from v0.9.8. This tag is purely the
+documentation + telemetry surface that completes the rebuild arc.
+
+**v1.0.0 status:** still reserved. The audio rebuild from v0.9.0 →
+v0.10.0 is the engineering arc. v1.0.0 is the user-triggered
+public-release push when the app is judged suitable for general use.
+
 ## v0.9.8 — Band-change crossfade in UpcConvolver (2026-05-13)
 
 Brief #10 lands: zipper-free EQ slider drags in FIR modes. Adds a
