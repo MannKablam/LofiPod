@@ -60,6 +60,21 @@ class PlaybackService : MediaSessionService() {
      */
     private var playbackWakeLock: PowerManager.WakeLock? = null
 
+    /**
+     * Ring buffer of wake-lock acquire timestamps. Used to detect rapid
+     * oscillation — when the player flips between isPlaying=true and false
+     * faster than once every 5 seconds, the wake lock is acquired/released
+     * on the same cadence. That cadence is a strong signal for DSP-side
+     * stalls (BUFFERING↔READY oscillation under thermal / clock pressure)
+     * because the user's intent (playWhenReady) hasn't changed but the
+     * actual isPlaying flag is bouncing. Surfaced as a single
+     * AppDiagnostics event per minute so we have a back-end-readable
+     * record of the oscillation pattern alongside the stall watchdog's
+     * arm-C trigger.
+     */
+    private val recentAcquireTimestamps = ArrayDeque<Long>()
+    private var lastOscillationLogAtMs: Long = 0L
+
     companion object {
         // Shared EQ instance — UI can grab it via app-level holder
         val sharedEq = EqAudioProcessor()
@@ -87,6 +102,24 @@ class PlaybackService : MediaSessionService() {
         /** Intent action used by the media-session tap target to ask MainActivity
          *  to navigate straight to the Player screen instead of resuming on Catalog. */
         const val ACTION_OPEN_PLAYER = "com.lofipod.app.OPEN_PLAYER"
+
+        /** Window over which we count wake-lock acquires for oscillation
+         *  detection. 30 s aligns with the sticky stall-watchdog arm so
+         *  the two signals corroborate cleanly in the diagnostics log. */
+        private const val WAKE_LOCK_OSCILLATION_WINDOW_MS = 30_000L
+
+        /** Acquire-count within the window that's considered "thrashing."
+         *  5 acquires/30 s = an isPlaying flip every ~6 s, which is right
+         *  in the band of the user-reported 3-5 s playback loops. Normal
+         *  playback has 1 acquire per actual user play action — well
+         *  under threshold even across short pause-and-resume sessions. */
+        private const val WAKE_LOCK_OSCILLATION_THRESHOLD = 5
+
+        /** Minimum gap between oscillation log entries. Prevents a
+         *  sustained underrun from flooding the diagnostics ring with one
+         *  entry per acquire. Same magnitude as the stall-snackbar
+         *  throttle in PlayerController. */
+        private const val WAKE_LOCK_OSCILLATION_COOLDOWN_MS = 60_000L
     }
 
     override fun onCreate() {
@@ -357,9 +390,39 @@ class PlaybackService : MediaSessionService() {
         try {
             if (!wl.isHeld) wl.acquire()
             wakeLockHeld = wl.isHeld
+            recordAcquireForOscillationDetection()
         } catch (t: Throwable) {
             Log.w("LofiPodPlayback", "WakeLock acquire failed: ${t.message}")
             wakeLockHeld = false
+        }
+    }
+
+    /**
+     * Push the current wall-clock onto [recentAcquireTimestamps], trim
+     * anything outside the oscillation window, and if the resulting
+     * acquire-count breaches the threshold AND we haven't logged within
+     * the last cooldown, drop a single diagnostics breadcrumb. Throttled
+     * so a chronic stall doesn't paper the diagnostics ring with one
+     * entry per second.
+     */
+    private fun recordAcquireForOscillationDetection() {
+        val now = System.currentTimeMillis()
+        recentAcquireTimestamps.addLast(now)
+        while (recentAcquireTimestamps.isNotEmpty() &&
+            now - recentAcquireTimestamps.first() > WAKE_LOCK_OSCILLATION_WINDOW_MS
+        ) {
+            recentAcquireTimestamps.removeFirst()
+        }
+        if (recentAcquireTimestamps.size >= WAKE_LOCK_OSCILLATION_THRESHOLD &&
+            now - lastOscillationLogAtMs >= WAKE_LOCK_OSCILLATION_COOLDOWN_MS
+        ) {
+            lastOscillationLogAtMs = now
+            com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                "wake_lock_oscillation",
+                "${recentAcquireTimestamps.size} acquires in " +
+                    "${WAKE_LOCK_OSCILLATION_WINDOW_MS / 1000}s window — " +
+                    "isPlaying is flip-flopping, likely DSP underrun / network rebuffer cycle",
+            )
         }
     }
 

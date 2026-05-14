@@ -163,6 +163,30 @@ class PlayerController(private val context: Context) {
      *  cycling-stall doesn't spam the user with a snackbar every recovery. */
     private var lastStallMessageAtMs: Long = 0L
 
+    /**
+     * Arm C — sticky oscillation detector. Ring buffer of
+     * (wallclockMs, currentPositionMs) sampled every [STALL_POLL_INTERVAL_MS]
+     * while `playWhenReady=true`, REGARDLESS of `isPlaying` or playback
+     * state. Both arms A and B reset their baselines on isPlaying / state
+     * transitions, so a player that oscillates between BUFFERING and READY
+     * every 3-5 seconds (the screen-off-autoplay DSP-underrun pattern
+     * reported across multiple versions) trips neither arm even though the
+     * user hears 3-5 seconds of repeating audio for minutes on end.
+     *
+     * Arm C survives those transitions because the ring buffer keeps
+     * accumulating samples — only [stopStallWatchdog] / [pause] clear it.
+     * On each tick, after at least [STALL_STICKY_MIN_SAMPLES] seconds of
+     * samples, compare actual position advance over the window to the
+     * speed-adjusted wall-clock advance. If the actual is less than
+     * [STALL_STICKY_MIN_ADVANCE_RATIO] of expected, the player is
+     * effectively stuck and we trigger the same recovery as arms A and B.
+     */
+    private val playbackSamples = ArrayDeque<Pair<Long, Long>>()
+    /** Wall-clock of the most recent sticky-stall trigger. Used to throttle
+     *  so we don't re-fire on every poll while the ring buffer is still
+     *  catching up post-recovery. */
+    private var lastStickyStallAtMs: Long = 0L
+
     /** Guard against re-triggering the same handoff if the user transitions
      *  through the swap state (e.g., a brief race between byId emission and
      *  the new MediaItem propagating). Cleared when the current episode
@@ -277,6 +301,7 @@ class PlayerController(private val context: Context) {
     private fun restoreLastEpisodeIfNeeded() {
         val c = controller ?: return
         if (c.currentMediaItem != null) return
+        val app = context.applicationContext as LofiPodApp
         scope.launch {
             val state = withContext(Dispatchers.IO) { dao.mostRecentlyPlayed() }
                 ?: return@launch
@@ -304,15 +329,32 @@ class PlayerController(private val context: Context) {
             } else {
                 state.positionMs
             }
-            val art = ep.episodeArtworkUrl
+            // Artwork fallback for the cold-start resume. Cache-stored
+            // episode_state.artworkUrl was set at first play time and may
+            // already be ep.episodeArtworkUrl ?: podcastArt — but if that
+            // first play happened before the podcast had a channel image,
+            // or if the row is from a feed whose art has since been
+            // refreshed, the stored value can be stale or null. Refresh
+            // against the live podcast cache (cheap — in-memory lookup,
+            // already hydrated by repo.hydrateFromDisk on startup).
+            val livePod = app.repo.cached(state.feedUrl)
+            val livePodArt = livePod?.artworkUrl
+            val liveEpArt = livePod?.episodes?.find { it.guid == state.guid }?.episodeArtworkUrl
+            val art = liveEpArt ?: livePodArt ?: state.artworkUrl
             val item = MediaItem.Builder()
                 .setMediaId(ep.guid)
                 .setUri(ep.audioUrl)
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(ep.title)
-                        .setArtist("")
+                        .setArtist(livePod?.title ?: "")
                         .setArtworkUri(art?.let { android.net.Uri.parse(it) })
+                        // Carry feedUrl through MediaMetadata extras so
+                        // pushState can populate PlayerState.currentFeedUrl
+                        // without a DB lookup on every recomposition.
+                        .setExtras(android.os.Bundle().apply {
+                            putString(EXTRA_FEED_URL, ep.feedUrl)
+                        })
                         .build()
                 )
                 .build()
@@ -553,6 +595,13 @@ class PlayerController(private val context: Context) {
         // (set/cleared on its own timer), not by Media3's player state.
         // Without preservation a routine onIsPlayingChanged after a stall
         // recovery would silently flip isStalled back to its default.
+        val item = c.currentMediaItem
+        // Pull feedUrl from the MediaMetadata extras bundle written by
+        // playEpisode + restoreLastEpisodeIfNeeded. Null when the MediaItem
+        // predates the extras-write (legacy session restored against an
+        // older binary) — caller handles the null gracefully.
+        val feedUrl = item?.mediaMetadata?.extras?.getString(EXTRA_FEED_URL)
+        val scheme = item?.localConfiguration?.uri?.scheme?.lowercase()
         _state.update { prev ->
             PlayerState(
                 isPlaying = c.isPlaying,
@@ -566,7 +615,9 @@ class PlayerController(private val context: Context) {
                 currentTitle = c.mediaMetadata.title?.toString(),
                 currentArtist = c.mediaMetadata.artist?.toString(),
                 currentArtworkUri = c.mediaMetadata.artworkUri?.toString(),
-                currentEpisodeGuid = c.currentMediaItem?.mediaId,
+                currentEpisodeGuid = item?.mediaId,
+                currentFeedUrl = feedUrl,
+                currentMediaScheme = scheme,
                 speed = c.playbackParameters.speed
             )
         }
@@ -620,6 +671,16 @@ class PlayerController(private val context: Context) {
         // sessions where connect() doesn't re-fire.
         sweepExpiredAutoDownloads()
 
+        // Diagnostics breadcrumb. Logged BEFORE the suspending scope below so
+        // even if the IO work stalls (e.g., DB busy on a slow device) the
+        // event is already in the ring buffer. Outgoing guid is captured
+        // synchronously on the main thread for the same reason.
+        val outgoingForLog = c.currentMediaItem?.mediaId
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "track_change",
+            "from=${outgoingForLog ?: "(none)"} to=${ep.guid} " +
+                "auto=$wasAutoplay feed=${ep.feedUrl}",
+        )
         scope.launch {
             // 1. Outgoing item: persist position + (optionally) record session_end checkpoint.
             val outgoingId = c.currentMediaItem?.mediaId
@@ -706,6 +767,14 @@ class PlayerController(private val context: Context) {
                         .setTitle(ep.title)
                         .setArtist(podcastTitle)
                         .setArtworkUri(art?.let { android.net.Uri.parse(it) })
+                        // Carry feedUrl + scheme through extras so pushState
+                        // can populate PlayerState without a per-recomposition
+                        // DB lookup. Used by MainActivity's feed-aware back-
+                        // from-Player nav (v0.10.12+) and by the diagnostics
+                        // surface to render "playing local vs remote."
+                        .setExtras(android.os.Bundle().apply {
+                            putString(EXTRA_FEED_URL, ep.feedUrl)
+                        })
                         .build()
                 )
                 .build()
@@ -793,7 +862,28 @@ class PlayerController(private val context: Context) {
                         )
                     )
                 }
-                app.downloadsApi.start(ep)
+                // Screen-off + autoplay: defer the actual download. Firing
+                // start() inline opens a second HTTP socket to the same CDN
+                // while the player's streaming socket is still ramping up,
+                // which on a downclocked CPU (screen off → kernel reduces
+                // clocks aggressively) combines with DSP under-budget to
+                // produce the 3-5s BUFFERING↔READY oscillation users have
+                // reported across multiple versions. The auto_download row
+                // is still upserted above, so fireDeferredAutoDownload picks
+                // it up at the next track change or natural end — by which
+                // point the user is usually awake / the device is interactive
+                // again. Manual user-tap plays (wasAutoplay=false) keep the
+                // inline start regardless of screen state.
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                val interactive = pm?.isInteractive != false
+                if (wasAutoplay && !interactive) {
+                    com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                        "auto_download_deferred",
+                        "guid=${ep.guid} reason=screen_off+autoplay (will fire on next track change / screen wake)",
+                    )
+                } else {
+                    app.downloadsApi.start(ep)
+                }
             } else {
                 // Existing download: only renew the auto clock if it WAS
                 // already auto. A manually-downloaded episode (no
@@ -1109,18 +1199,29 @@ class PlayerController(private val context: Context) {
         lastForwardProgressPosMs = controller?.currentPosition ?: 0L
         lastForwardProgressAtMs = System.currentTimeMillis()
         bufferingStartedAtMs = 0L
+        playbackSamples.clear()
+        lastStickyStallAtMs = 0L
         stallWatchdogJob = scope.launch {
             while (isActive) {
                 delay(STALL_POLL_INTERVAL_MS)
                 val c = controller ?: continue
                 if (!c.playWhenReady) {
                     // User paused. Reset both timers so a long pause doesn't
-                    // pre-trip either watchdog arm on resume.
+                    // pre-trip either watchdog arm on resume. Also drop the
+                    // sticky ring buffer — a paused gap shouldn't count
+                    // toward the oscillation window.
                     bufferingStartedAtMs = 0L
                     lastForwardProgressAtMs = System.currentTimeMillis()
+                    playbackSamples.clear()
                     continue
                 }
                 val now = System.currentTimeMillis()
+
+                // Arm C — sticky oscillation detector. Runs UNCONDITIONALLY
+                // (regardless of isPlaying / playbackState) so a BUFFERING↔
+                // READY flip-flop still accumulates samples. See the field-
+                // level docstring on [playbackSamples] for the why.
+                stickyOscillationCheck(c, now)
 
                 // Arm B — chronic STATE_BUFFERING with playWhenReady=true.
                 // Distinct from arm A: when the AudioTrack underruns badly
@@ -1164,6 +1265,64 @@ class PlayerController(private val context: Context) {
                     lastForwardProgressAtMs = now
                 }
             }
+        }
+    }
+
+    /**
+     * Sticky oscillation check (arm C). Maintains a ring buffer of
+     * (wallclockMs, positionMs) samples over the last
+     * [STALL_STICKY_WINDOW_MS] window. When the ring is full enough,
+     * compares actual position advance to speed-adjusted wall-clock advance.
+     * Trips when the ratio falls below [STALL_STICKY_MIN_ADVANCE_RATIO].
+     *
+     * Key invariant vs arms A/B: this method does NOT reset its state on
+     * isPlaying / playbackState transitions, so a 30-second window of
+     * BUFFERING↔READY oscillation that advances only 5 seconds of audio
+     * still trips (5/30 × 1.0× = 16.7% advance, below the 30% threshold).
+     */
+    private fun stickyOscillationCheck(c: MediaController, now: Long) {
+        val pos = c.currentPosition
+        // Guard against the position-rewinding case (seek backwards) — drop
+        // the buffer and re-arm so the next window evaluates the fresh
+        // playback span instead of carrying a discontinuity.
+        if (playbackSamples.isNotEmpty() && pos < playbackSamples.last().second - 1_000) {
+            playbackSamples.clear()
+        }
+        playbackSamples.addLast(now to pos)
+        // Trim old samples (older than window). Capped at a defensive
+        // ceiling so the deque never balloons if the loop runs longer than
+        // expected.
+        while (playbackSamples.isNotEmpty() &&
+            now - playbackSamples.first().first > STALL_STICKY_WINDOW_MS
+        ) {
+            playbackSamples.removeFirst()
+        }
+        // Need a full window of samples before evaluating — otherwise a
+        // legitimate slow seek + buffer at the start of playback would
+        // trip on a 3-sample window.
+        if (playbackSamples.size < STALL_STICKY_MIN_SAMPLES) return
+        // Throttle: don't re-fire if we already triggered within the last
+        // window. Recovery seek itself takes a moment to settle.
+        if (now - lastStickyStallAtMs < STALL_STICKY_WINDOW_MS) return
+
+        val (firstAt, firstPos) = playbackSamples.first()
+        val wallWindowMs = now - firstAt
+        val posAdvanceMs = pos - firstPos
+        val speed = c.playbackParameters.speed
+        val expectedAdvanceMs = (wallWindowMs.toDouble() * speed).toLong()
+        if (expectedAdvanceMs <= 0L) return
+        val ratio = posAdvanceMs.toDouble() / expectedAdvanceMs
+        if (ratio < STALL_STICKY_MIN_ADVANCE_RATIO) {
+            lastStickyStallAtMs = now
+            val pct = (ratio * 100.0).coerceAtLeast(0.0).toInt()
+            triggerStallRecovery(
+                c,
+                now,
+                "sticky_${pct}pct_over_${wallWindowMs / 1000}s",
+            )
+            // Drop the buffer so the next evaluation starts fresh against
+            // post-recovery samples.
+            playbackSamples.clear()
         }
     }
 
@@ -1245,24 +1404,100 @@ class PlayerController(private val context: Context) {
         app.downloadsApi.byId.collect { map ->
             val c = controller ?: return@collect
             val currentGuid = c.currentMediaItem?.mediaId ?: return@collect
-            // Reset the per-guid handoff guard if the episode changed —
-            // a new episode might also need a handoff later.
-            if (handoffTriggeredForGuid != null && handoffTriggeredForGuid != currentGuid) {
-                handoffTriggeredForGuid = null
-            }
-            if (handoffTriggeredForGuid == currentGuid) return@collect
-            val download = map[currentGuid] ?: return@collect
-            if (download.state != com.lofipod.app.data.LofiDownload.State.COMPLETED) return@collect
-            // Already playing from disk?
             val currentUri = c.currentMediaItem?.localConfiguration?.uri ?: return@collect
             val scheme = currentUri.scheme?.lowercase()
-            if (scheme == "file") return@collect
+            val download = map[currentGuid]
+
+            // Reset the per-guid handoff guard if the episode changed OR if
+            // our guid's download is no longer in the map (= it was removed,
+            // either via the manual delete-download tap or the auto-archive
+            // sweep). The guid-change check stays so a stale guard from a
+            // prior episode doesn't block a fresh handoff on the new one.
+            if (handoffTriggeredForGuid != null &&
+                (handoffTriggeredForGuid != currentGuid || download == null)
+            ) {
+                handoffTriggeredForGuid = null
+            }
+
+            // Reverse handoff: we're playing from a file:// URI for an
+            // episode whose download just disappeared (state map no longer
+            // has the entry, OR the entry transitioned out of COMPLETED).
+            // Without this branch, the player keeps a MediaItem pointing
+            // at a now-deleted file and the next read or seek explodes
+            // with ERROR_CODE_IO_FILE_NOT_FOUND. Re-build the MediaItem
+            // against the persisted HTTP audioUrl, preserve position +
+            // playWhenReady, and let OkHttpDataSource take over.
+            //
+            // Conditions:
+            //   - We're currently on a file:// MediaItem (= we previously
+            //     handed off to disk, or the user tapped Play on an
+            //     already-downloaded episode).
+            //   - The download record is absent OR not COMPLETED — either
+            //     means the on-disk file is no longer trustworthy.
+            //   - We have a persisted episode_state row so we can
+            //     reconstruct the HTTP URL.
+            if (scheme == "file") {
+                val gone = download == null ||
+                    download.state != com.lofipod.app.data.LofiDownload.State.COMPLETED
+                if (gone) {
+                    val ep = withContext(Dispatchers.IO) { episodeFromState(currentGuid) }
+                    if (ep != null && ep.audioUrl.startsWith("http", ignoreCase = true)) {
+                        triggerReverseDownloadHandoff(c, currentGuid, ep.audioUrl)
+                    }
+                }
+                return@collect
+            }
+
+            // Forward handoff (existing behavior): we're streaming over HTTP
+            // and the download just completed. Swap to the local file so the
+            // remainder of playback reads from disk.
+            if (handoffTriggeredForGuid == currentGuid) return@collect
+            if (download == null) return@collect
+            if (download.state != com.lofipod.app.data.LofiDownload.State.COMPLETED) return@collect
             // Get the local file (race-safe via the suspend completedFile).
             val localFile = app.downloadsApi.completedFile(currentGuid) ?: return@collect
 
             handoffTriggeredForGuid = currentGuid
             triggerDownloadHandoff(c, currentGuid, localFile)
         }
+    }
+
+    /**
+     * Symmetric to [triggerDownloadHandoff] — swaps the live MediaItem from
+     * a `file://` URI back to the original `http(s)://` URL when the
+     * underlying download disappears mid-playback (manual delete or auto-
+     * archive sweep). Preserves position + playWhenReady so the user
+     * doesn't notice anything beyond the snackbar telling them what
+     * happened. Clears [handoffTriggeredForGuid] so a future re-download
+     * of the same episode can hand off forward again.
+     */
+    private fun triggerReverseDownloadHandoff(
+        c: MediaController,
+        guid: String,
+        httpUrl: String,
+    ) {
+        val savedPosMs = c.currentPosition
+        val wasPlaying = c.playWhenReady
+        // Reuse existing metadata (title / artist / artwork / extras) so
+        // the swap doesn't blink the UI. Extras carry feedUrl so back-nav
+        // stays correct across the swap.
+        val metadata = c.mediaMetadata
+        val newItem = MediaItem.Builder()
+            .setMediaId(guid)
+            .setUri(httpUrl)
+            .setMediaMetadata(metadata)
+            .build()
+        _transientMessages.tryEmit("Download removed — resuming from stream.")
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "handoff_reverse",
+            "guid=$guid at ${savedPosMs / 1000}s (file removed mid-playback)",
+        )
+        c.setMediaItem(newItem, savedPosMs)
+        c.prepare()
+        if (wasPlaying) c.play()
+        // Clear the forward-handoff guard so if the user re-downloads the
+        // same episode without changing tracks, the forward swap re-arms.
+        handoffTriggeredForGuid = null
     }
 
     private suspend fun triggerDownloadHandoff(
@@ -1293,6 +1528,10 @@ class PlayerController(private val context: Context) {
             }
         }
         _transientMessages.tryEmit("Playback branched to downloaded file.")
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "handoff_forward",
+            "guid=$guid at ${savedPosMs / 1000}s (download completed mid-stream)",
+        )
 
         // Swap. setMediaItem(item, position) bundles a seek so the player
         // prepares the new source AT savedPosMs rather than 0; saves a
@@ -1824,6 +2063,13 @@ class PlayerController(private val context: Context) {
     }
 
     companion object {
+        /** Key under which [playEpisode] / [restoreLastEpisodeIfNeeded] stash
+         *  the current episode's feed URL inside the MediaMetadata extras
+         *  bundle, so [pushState] can surface it on [PlayerState.currentFeedUrl]
+         *  for feed-aware back-nav in MainActivity. Read-only from outside;
+         *  the controller owns both the write and the read. */
+        const val EXTRA_FEED_URL = "feed_url"
+
         const val SESSION_GAP_MS = 30L * 60 * 1000        // 30 min
         const val CHECKPOINT_CAP = 200
         /**
@@ -1890,6 +2136,27 @@ class PlayerController(private val context: Context) {
          *  of the audio likely missed during the stall. */
         private const val STALL_RECOVERY_REWIND_MS = 100L
 
+        /** Sticky oscillation window (arm C). 30 seconds is long enough
+         *  that a couple of BUFFERING↔READY cycles aggregate into a clear
+         *  signal but short enough that the user doesn't sit through more
+         *  than half a minute of borked playback before recovery fires. */
+        private const val STALL_STICKY_WINDOW_MS = 30_000L
+
+        /** Minimum samples in the ring before arm C is allowed to evaluate.
+         *  At one sample per [STALL_POLL_INTERVAL_MS] this is ~20 seconds
+         *  of accumulated history — enough that initial-buffer / first-
+         *  seek windows don't false-positive on slow start. */
+        private const val STALL_STICKY_MIN_SAMPLES = 20
+
+        /** Below this ratio of (actual advance / expected advance @ speed),
+         *  arm C considers the player stuck. 0.30 = "advanced less than
+         *  30% of what playback at the configured speed should have
+         *  produced over the window." Picked so steady normal playback
+         *  (ratio ~1.0) and even legitimate single-buffer hiccups (~0.85)
+         *  stay clear, while the user-reported 3-5s repeat patterns
+         *  (ratio typically 0.10-0.20) trip clearly. */
+        private const val STALL_STICKY_MIN_ADVANCE_RATIO = 0.30
+
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.
         private const val STEP = 1024L
@@ -1951,6 +2218,26 @@ data class PlayerState(
     val currentArtist: String? = null,
     val currentArtworkUri: String? = null,
     val currentEpisodeGuid: String? = null,
+    /**
+     * Feed URL of the currently-loaded episode, when known. Used by the
+     * UI's back-from-Player handler to route the user to the matching
+     * EpisodesScreen rather than wherever the back stack happens to point
+     * (which can be stale across autoplay-across-feed transitions or
+     * mini-player-entry-from-catalog sessions). Sourced from the
+     * MediaMetadata `extras` bundle written by [playEpisode] /
+     * [restoreLastEpisodeIfNeeded] under the key "feed_url"; null when no
+     * episode is loaded or when the MediaItem predates this metadata-write
+     * (legacy session restoring against an older binary).
+     */
+    val currentFeedUrl: String? = null,
+    /**
+     * URI scheme of the currently-loaded MediaItem ("file" for offline,
+     * "http"/"https" for streaming, null when nothing is loaded). Lets the
+     * diagnostics surface "are we playing local or remote?" at a glance
+     * and lets the UI distinguish handoff-pending from handoff-complete
+     * without having to pull the URI out of the controller every render.
+     */
+    val currentMediaScheme: String? = null,
     val speed: Float = 1f
 )
 

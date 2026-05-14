@@ -207,6 +207,44 @@ private fun navigateToPlayerCleanly(nav: NavController) {
 }
 
 /**
+ * Feed-aware back from the Player route. Resolves the currently-loaded
+ * episode's feedUrl (carried on [com.lofipod.app.player.PlayerState.currentFeedUrl]
+ * via the MediaMetadata extras written by [com.lofipod.app.player.PlayerController.playEpisode]),
+ * pops everything back to Catalog, and pushes the matching `episodes/{feed}`
+ * destination. Result: the user always lands on the episodes screen of the
+ * episode they're hearing, regardless of how the back stack drifted across
+ * autoplay-across-feeds or mini-player-from-Catalog entries.
+ *
+ * Falls back to plain [smartBack] when feedUrl isn't known yet (cold-start
+ * window before MediaController syncs, or a legacy MediaItem that predates
+ * the EXTRA_FEED_URL write).
+ *
+ * Records a diagnostics breadcrumb so back-end triage can see when the
+ * fallback fires vs. when the feed-aware path runs.
+ */
+private fun feedAwareBackFromPlayer(nav: NavController, currentFeedUrl: String?) {
+    if (currentFeedUrl == null) {
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "back_nav_fallback",
+            "from=player feed=(unknown) — using smartBack (legacy MediaItem or pre-sync state)",
+        )
+        smartBack(nav, "player")
+        return
+    }
+    com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+        "back_nav_feed_aware",
+        "from=player feed=$currentFeedUrl (popping to catalog + navigating to episodes)",
+    )
+    // Pop everything back to catalog (inclusive=false so catalog itself
+    // survives), then push episodes/{feed} fresh. End-state stack:
+    // [catalog, episodes/{currentFeed}]. Back from there lands on
+    // catalog as it should.
+    nav.popBackStack("catalog", inclusive = false)
+    val encoded = URLEncoder.encode(currentFeedUrl, "UTF-8")
+    nav.navigate("episodes/$encoded")
+}
+
+/**
  * Single back-handler used by every screen + the system back gesture so the
  * stack walks the right way regardless of the historical navigation order.
  *
@@ -366,7 +404,14 @@ private fun AppNav(
             composable("player") {
                 PlayerScreen(
                     controller = controller,
-                    onBack = { smartBack(nav, "player") },
+                    onBack = {
+                        // Feed-aware: walks to episodes/{currentFeed}
+                        // rather than wherever the back stack happens
+                        // to point. See [feedAwareBackFromPlayer] for
+                        // the rationale (autoplay-across-feed and
+                        // mini-player-from-Catalog cases).
+                        feedAwareBackFromPlayer(nav, playerState.currentFeedUrl)
+                    },
                     onOpenEq = { nav.navigate("eq") },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
@@ -696,6 +741,20 @@ private fun playEntity(
     controller: PlayerController,
     e: com.lofipod.app.data.db.EpisodeStateEntity
 ) {
+    // Artwork fallback chain (full): per-episode → podcast → first
+    // episode with art. EpisodeStateEntity.artworkUrl was set at first
+    // play time and may be stale (e.g., feed's channel image landed AFTER
+    // first play). Refresh against the live podcast cache before handing
+    // to playEpisode so the MediaMetadata gets the best available art.
+    // Cheap — in-memory lookup, already hydrated on startup.
+    val app = com.lofipod.app.LofiPodApp.instance
+    val livePod = app.repo.cached(e.feedUrl)
+    val liveEp = livePod?.episodes?.find { it.guid == e.guid }
+    val liveEpArt = liveEp?.episodeArtworkUrl
+    val livePodArt = livePod?.artworkUrl
+    val resolvedEpArt = liveEpArt ?: e.artworkUrl
+    val resolvedPodArt = livePodArt ?: liveEpArt ?: e.artworkUrl
+
     val ep = com.lofipod.app.data.model.Episode(
         guid = e.guid,
         feedUrl = e.feedUrl,
@@ -705,7 +764,11 @@ private fun playEntity(
         audioUrl = e.audioUrl,
         audioMimeType = null,
         durationSeconds = null,
-        episodeArtworkUrl = e.artworkUrl
+        episodeArtworkUrl = resolvedEpArt,
     )
-    controller.playEpisode(ep, podcastTitle = "", podcastArt = e.artworkUrl)
+    controller.playEpisode(
+        ep,
+        podcastTitle = livePod?.title ?: "",
+        podcastArt = resolvedPodArt,
+    )
 }

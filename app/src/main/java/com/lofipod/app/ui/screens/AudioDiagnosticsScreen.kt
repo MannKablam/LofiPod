@@ -101,6 +101,12 @@ fun AudioDiagnosticsScreen(
             it.category == AppDiagnostics.Category.OTHER && it.identifier == "renderer_stall"
         }
     }
+    // Playback breadcrumbs (track changes, download handoffs in either
+    // direction, auto-download deferrals, wake-lock oscillation, feed-
+    // aware back-nav). Newest first.
+    val playbackEvents = remember(appEvents) {
+        appEvents.filter { it.category == AppDiagnostics.Category.PLAYBACK }
+    }
     val eq = PlaybackService.sharedEq
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     val gainDb = remember(playerState, tick) { eq.currentGainDb() }
@@ -221,6 +227,18 @@ fun AudioDiagnosticsScreen(
                     }
 
                     Spacer(Modifier.height(12.dp))
+                    SectionLabel("Playback events (newest first)")
+                    if (playbackEvents.isEmpty()) {
+                        Text(
+                            "  (no playback events yet)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(formatPlaybackEvents(playbackEvents), style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
                     SectionLabel("Startup")
                     if (startupPhases.isEmpty()) {
                         Text(
@@ -248,6 +266,7 @@ fun AudioDiagnosticsScreen(
                         errorVerbose = errorVerbose,
                         events = events,
                         stallEvents = stallEvents,
+                        playbackEvents = playbackEvents,
                         startupPhases = startupPhases,
                     )
                     copyToClipboard(ctx, text)
@@ -387,6 +406,20 @@ private val HELP_TEXT: String = """
       eos_drain       end-of-stream drain ran (with frame count).
       dc_blocker      DC blocker toggled.
       format_change   sample rate or channel count changed mid-session.
+
+    Stall watchdog — three independent arms (A/B/C) detect renderer underruns:
+      no_progress_Ns           Arm A: PLAYING but currentPosition hasn't advanced for N seconds.
+      buffering_Ns             Arm B: chronic STATE_BUFFERING with playWhenReady=true for N seconds.
+      sticky_Npct_over_Ms      Arm C: over the last M seconds, actual position advance was N% of what speed-adjusted wall-clock would predict. Survives BUFFERING<->READY oscillation that resets arms A and B.
+
+    Playback events — back-end-readable breadcrumbs separate from the audio chain log. Read newest first.
+      track_change             Episode swap. Includes from-guid, to-guid, autoplay flag, target feed URL.
+      handoff_forward          Streaming -> downloaded file swap fired (download completed mid-playback).
+      handoff_reverse          Downloaded file -> streaming swap fired (download removed mid-playback).
+      auto_download_deferred   Auto-download skipped inline because screen-off + autoplay; will fire at next track change or wake.
+      wake_lock_oscillation    Wake-lock acquired N times in 30s — isPlaying flip-flopping, corroborates arm C.
+      back_nav_feed_aware      Back-from-Player routed to episodes/{currentFeed}.
+      back_nav_fallback        Back-from-Player feedUrl unknown — used plain smartBack.
 
     Actions:
       Copy to clipboard       dumps every section above as plain text.
@@ -707,6 +740,27 @@ private fun formatStallEvents(events: List<AppDiagnostics.Entry>): String {
     }
 }
 
+/**
+ * Same shape as [formatStallEvents]/[formatEvents], but renders the
+ * PLAYBACK breadcrumb events (track changes, handoffs, oscillation,
+ * deferred downloads, feed-aware back-nav). [identifier] is included
+ * so a back-end reader can grep for specific event kinds.
+ */
+private fun formatPlaybackEvents(events: List<AppDiagnostics.Entry>): String {
+    val now = System.currentTimeMillis()
+    return events.joinToString("\n") { e ->
+        val agoSec = (now - e.timestampMs) / 1000.0
+        val ago = when {
+            agoSec < 1.0 -> "<1s"
+            agoSec < 60.0 -> "${"%.0f".format(agoSec)}s"
+            agoSec < 3600.0 -> "${"%.0f".format(agoSec / 60.0)}m"
+            else -> "${"%.0f".format(agoSec / 3600.0)}h"
+        }
+        val padded = ago.padStart(5)
+        "  $padded ago  ${e.identifier}: ${e.detail}"
+    }
+}
+
 private fun formatPlayerLine(p: com.lofipod.app.player.PlayerState): String {
     val playState = when {
         p.errorMessage != null -> "ERROR"
@@ -731,6 +785,7 @@ private fun buildClipboardDump(
     errorVerbose: String?,
     events: List<AudioChainTelemetry.Event>,
     stallEvents: List<AppDiagnostics.Entry>,
+    playbackEvents: List<AppDiagnostics.Entry>,
     startupPhases: List<StartupTimings.Phase>,
 ): String = buildString {
     appendLine("LofiPod audio diagnostics")
@@ -770,6 +825,10 @@ private fun buildClipboardDump(
     appendLine("[Stall watchdog]")
     if (stallEvents.isEmpty()) appendLine("  (no stalls)")
     else appendLine(formatStallEvents(stallEvents))
+    appendLine()
+    appendLine("[Playback events]")
+    if (playbackEvents.isEmpty()) appendLine("  (no playback events)")
+    else appendLine(formatPlaybackEvents(playbackEvents))
     appendLine()
     appendLine("[Startup]")
     if (startupPhases.isEmpty()) appendLine("  (no phases recorded)")

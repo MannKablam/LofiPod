@@ -2,6 +2,147 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.12 — Playback hardening pass (2026-05-14)
+
+Five long-standing playback issues addressed in one pass, with diagnostics
+wiring so the next regression report has hard data instead of "it loops."
+Untagged so each fix can be verified together on device before the next
+release tag.
+
+### 1. Reverse download handoff (file removed → stream)
+
+`PlayerController.observeDownloadCompletion` had only the forward direction
+(stream → downloaded file when a download completes mid-playback). The
+inverse — removing a download while the player is reading from `file://`
+— left a dangling MediaItem pointing at a now-deleted file; the next
+seek/read produced `ERROR_CODE_IO_FILE_NOT_FOUND` and the user lost
+playback.
+
+Added `triggerReverseDownloadHandoff(c, guid, httpUrl)`: when the byId
+collect sees the current episode's entry vanish (or transition out of
+COMPLETED) while we're on a `file://` MediaItem, reconstruct the HTTP URL
+from `episode_state`, build a new MediaItem with the original metadata
+(title/artist/artwork/extras preserved), `setMediaItem(item, savedPos);
+prepare(); play()` if we were playing. Snackbar: "Download removed —
+resuming from stream."
+
+Also clears `handoffTriggeredForGuid` on remove so a future re-download
+of the same episode re-arms the forward handoff. Both handoff directions
+now log to AppDiagnostics under `handoff_forward` / `handoff_reverse`.
+
+### 2. Feed-aware back from Player
+
+`MainActivity` previously walked the back stack from Player using a
+`naturalParent` inferred at entry time. Two failure modes:
+  - Mini-player / "Now Playing" / system notification entry to Player from
+    Catalog produces stack `[catalog, player]`. Back lands on Catalog.
+  - Queue / autoplay-in-feed advance across feeds: stack still says
+    `[catalog, episodes/{feedA}, player]` but the playing episode is now
+    from feedB. Back lands on feedA — wrong feed.
+
+Fix: PlayerController now carries the current episode's `feedUrl` through
+`MediaMetadata.extras` (key `EXTRA_FEED_URL`), `pushState` surfaces it on
+`PlayerState.currentFeedUrl`, and the Player route's `onBack` calls a new
+`feedAwareBackFromPlayer(nav, currentFeedUrl)` which pops back to Catalog
+and pushes `episodes/{currentFeed}`. Result: back from Player always
+lands on the episodes screen of whatever's currently playing, regardless
+of how the user got to Player.
+
+The preview route (`player/preview/{guid}`) keeps its existing smartBack
+— its back stack is always correct because it's only entered by tapping
+an episode title in EpisodesScreen.
+
+Falls back to plain smartBack when `currentFeedUrl` is null (legacy
+MediaItem from a session restored against an older binary). Logged as
+`back_nav_fallback` vs. `back_nav_feed_aware` in AppDiagnostics.
+
+### 3. Sticky stall watchdog (arm C — oscillation-proof)
+
+The screen-off-autoplay 3-5s playback loop reported by the user is the
+DSP chain underrunning under thermal/clock pressure, with ExoPlayer
+oscillating between BUFFERING and READY every few seconds. Neither
+existing watchdog arm caught it:
+  - Arm A resets `lastForwardProgressAtMs` every time `onIsPlayingChanged`
+    flips back to true → never crosses the 6s threshold.
+  - Arm B resets `bufferingStartedAtMs = 0` the moment state leaves
+    BUFFERING → never crosses the 8s threshold within a single window.
+
+Result: stalls log was empty even while playback was visibly stuck.
+
+Added arm C: ring buffer of `(wallclockMs, currentPositionMs)` sampled
+every poll tick (1s) while `playWhenReady=true`, REGARDLESS of isPlaying
+or playbackState. After 20s of accumulated samples, compares actual
+position advance to speed-adjusted wall-clock advance over the last 30s
+window. Trips when ratio < 30%. Survives BUFFERING↔READY oscillation
+because the ring is only cleared on `pause` / watchdog stop / seek-
+backward (discontinuity guard).
+
+Trigger uses the same `triggerStallRecovery` as arms A and B (seek back
+100ms force-flush + snackbar + diagnostics breadcrumb under
+`renderer_stall` with kind `sticky_Npct_over_Ms`).
+
+### 4. Wake-lock oscillation detector
+
+When the DSP chain underruns at 3-5s cadence, `isPlaying` flip-flops and
+the wake lock acquires/releases on the same cadence. Added a corroborating
+signal in `PlaybackService.acquirePlaybackWakeLock`: ring of recent
+acquire timestamps, trimmed to a 30s window. When ≥5 acquires accumulate
+within the window, drop a `wake_lock_oscillation` AppDiagnostics entry
+(throttled to 1/min). Pairs with arm C — when both fire in the same
+window, the user has clear evidence of underrun thrashing.
+
+### 5. Deferred auto-download on screen-off autoplay
+
+`playEpisode` was firing `app.downloadsApi.start(ep)` inline on every
+play, including autoplay-induced ones. With the screen off the kernel
+downclocks aggressively; opening a second HTTP socket to the same CDN
+while the streaming socket is still ramping compounded with DSP under-
+budget to produce the loop.
+
+Fix: when `wasAutoplay=true` AND `PowerManager.isInteractive == false`,
+upsert the `auto_download` row (so `fireDeferredAutoDownload` picks it
+up at the next track change / wake) but SKIP the inline `start()` call.
+Manual user-tap plays and autoplay with the screen on keep the inline
+start. Logged as `auto_download_deferred` in AppDiagnostics.
+
+### 6. Artwork fallback chain hardened
+
+Two call sites collapsed the fallback chain into a single stored value:
+  - `restoreLastEpisodeIfNeeded` only read `state.artworkUrl` (set at
+    first play time; can be null or stale).
+  - `playEntity` (MyLists promoted-play) only read
+    `EpisodeStateEntity.artworkUrl`.
+
+Both now refresh against `app.repo.cached(feedUrl)` — the in-memory
+podcast cache hydrated on startup — and resolve as
+`liveEpArt ?: livePodArt ?: storedArt` (or `livePodArt ?: liveEpArt ?:
+storedArt` for podcastArt), restoring the full episode↔podcast fallback
+in both directions.
+
+### Diagnostics surface
+
+New `AppDiagnostics.Category.PLAYBACK` with `recordPlayback(identifier,
+detail)`. AudioDiagnosticsScreen renders a new "Playback events" section
+(also included in the clipboard dump) showing newest-first breadcrumbs:
+
+  - `track_change` — episode swap with from/to guids, autoplay flag, feed.
+  - `handoff_forward` / `handoff_reverse` — download swap direction.
+  - `auto_download_deferred` — screen-off+autoplay skip.
+  - `wake_lock_oscillation` — N acquires in 30s.
+  - `back_nav_feed_aware` / `back_nav_fallback` — back-from-Player target.
+
+HELP_TEXT updated with one-line definitions for every new event kind +
+the three stall-watchdog arm signatures (`no_progress_Ns`, `buffering_Ns`,
+`sticky_Npct_over_Ms`).
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/diagnostics/AppDiagnostics.kt`
+  - `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+  - `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+  - `app/src/main/java/com/lofipod/app/ui/MainActivity.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/AudioDiagnosticsScreen.kt`
+
 ## v0.10.11 — Revert v0.10.10's icon swap; keep wording fix (2026-05-13)
 
 I misread the user's v0.10.10 request. They were pointing out that the

@@ -40,6 +40,16 @@ object AppDiagnostics {
         FEED_RESCUE("Feed rescued"),
         DOWNLOAD_FAILURE("Download failure"),
         SCRIPTURE_TAG_SKIP("Scripture tag skipped"),
+        /**
+         * High-signal playback transitions that aren't errors but matter for
+         * back-end triage: track changes (manual vs autoplay), download
+         * handoffs in either direction, deferred auto-downloads, wake-lock
+         * oscillation, feed-aware back-nav targets, etc. Kept separate from
+         * OTHER so the diagnostics screen can render a dedicated "what
+         * happened during playback" timeline without having to fish events
+         * out of a generic bucket.
+         */
+        PLAYBACK("Playback event"),
         OTHER("Other"),
     }
 
@@ -94,6 +104,16 @@ object AppDiagnostics {
     /** Generic catch-all for events that don't fit the named categories. */
     fun recordOther(identifier: String, detail: String) {
         record(Category.OTHER, identifier, detail)
+    }
+
+    /**
+     * High-signal playback transition. [identifier] is a short stable key
+     * (e.g. "track_change", "handoff_forward", "wake_lock_oscillation");
+     * [detail] is the human-readable per-event payload. Surfaced on the
+     * Audio Diagnostics screen under a "Playback events" section.
+     */
+    fun recordPlayback(identifier: String, detail: String) {
+        record(Category.PLAYBACK, identifier, detail)
     }
 
     /** UI-side reset. */
