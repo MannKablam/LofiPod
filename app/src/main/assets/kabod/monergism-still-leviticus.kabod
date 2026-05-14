@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:kabod="https://lofipod.app/ns/kabod/1">
+  <channel>
+    <title>Expositions on Leviticus</title>
+    <link>https://www.monergism.com/legacy/mt/mp3/expositions-leviticus-22-part-mp3-series-william-still</link>
+    <description>William Still's verse-by-verse exposition of Leviticus, preached at Gilcomston South Church of Scotland, Aberdeen. Audio courtesy of Tapes from Scotland; hosted by Monergism.</description>
+    <language>en-US</language>
+    <itunes:author>William Still</itunes:author>
+    <kabod:packId>monergism-still-leviticus</kabod:packId>
+    <kabod:archived>true</kabod:archived>
+    <kabod:speaker>William Still</kabod:speaker>
+    <kabod:bookOfBible>Leviticus</kabod:bookOfBible>
+    <kabod:sourceSite>https://www.monergism.com/legacy/mt/mp3/expositions-leviticus-22-part-mp3-series-william-still</kabod:sourceSite>
+    <kabod:seriesStart>1965-01-01</kabod:seriesStart>
+    <kabod:seriesEnd>1997-12-31</kabod:seriesEnd>
+    <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
+    <kabod:packVersion>1</kabod:packVersion>
+    <kabod:packRevisionDate>2026-05-14</kabod:packRevisionDate>
+    <kabod:church>Gilcomston South Church of Scotland</kabod:church>
+    <kabod:churchLocation>Aberdeen, Scotland</kabod:churchLocation>
+    <kabod:partTotal>23</kabod:partTotal>
+    <kabod:advertisedTotal>22</kabod:advertisedTotal>
+    <kabod:audioHost>tapesfromscotland.org</kabod:audioHost>
+    <kabod:contentNotes>Source page advertises 22 parts; the actual sermon list contains 23 entries (covers Leviticus 1–27). Original preaching dates are not catalogued by the source — pubDate is set to the start of Still's Aberdeen ministry as a placeholder; ordering follows the source's canonical sequence.</kabod:contentNotes>
+    <item>
+      <title>Leviticus 1 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1046</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1046.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>1</kabod:partNumber>
+      <kabod:scripture>Leviticus 1</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="1" endV="17"/>
+    </item>
+    <item>
+      <title>Leviticus 2 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1047</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1047.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>2</kabod:partNumber>
+      <kabod:scripture>Leviticus 2</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="2" startV="1" endCh="2" endV="16"/>
+    </item>
+    <item>
+      <title>Leviticus 3 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1048</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1048.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>3</kabod:partNumber>
+      <kabod:scripture>Leviticus 3</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="3" startV="1" endCh="3" endV="17"/>
+    </item>
+    <item>
+      <title>Leviticus 4 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1049</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1049.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>4</kabod:partNumber>
+      <kabod:scripture>Leviticus 4</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="4" startV="1" endCh="4" endV="35"/>
+    </item>
+    <item>
+      <title>Leviticus 5–7 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1050</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1050.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>5</kabod:partNumber>
+      <kabod:scripture>Leviticus 5–7</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="5" startV="1" endCh="7" endV="38"/>
+    </item>
+    <item>
+      <title>Leviticus 8 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1051</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1051.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>6</kabod:partNumber>
+      <kabod:scripture>Leviticus 8</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="8" startV="1" endCh="8" endV="36"/>
+    </item>
+    <item>
+      <title>Leviticus 9 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1052</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1052.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>7</kabod:partNumber>
+      <kabod:scripture>Leviticus 9</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="9" startV="1" endCh="9" endV="24"/>
+    </item>
+    <item>
+      <title>Leviticus 10 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1053</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1053.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>8</kabod:partNumber>
+      <kabod:scripture>Leviticus 10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="10" startV="1" endCh="10" endV="20"/>
+    </item>
+    <item>
+      <title>Leviticus 11 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1054</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1054.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>9</kabod:partNumber>
+      <kabod:scripture>Leviticus 11</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="11" startV="1" endCh="11" endV="47"/>
+    </item>
+    <item>
+      <title>Leviticus 12 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1055</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1055.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>10</kabod:partNumber>
+      <kabod:scripture>Leviticus 12</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="12" startV="1" endCh="12" endV="8"/>
+    </item>
+    <item>
+      <title>Leviticus 13 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1056</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1056.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>11</kabod:partNumber>
+      <kabod:scripture>Leviticus 13</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="13" startV="1" endCh="13" endV="59"/>
+    </item>
+    <item>
+      <title>Leviticus 14 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1057</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1057.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>12</kabod:partNumber>
+      <kabod:scripture>Leviticus 14</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="14" startV="1" endCh="14" endV="57"/>
+    </item>
+    <item>
+      <title>Leviticus 15 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1058</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1058.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>13</kabod:partNumber>
+      <kabod:scripture>Leviticus 15</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="15" startV="1" endCh="15" endV="33"/>
+    </item>
+    <item>
+      <title>Leviticus 16 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1059</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1059.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>14</kabod:partNumber>
+      <kabod:scripture>Leviticus 16</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+    </item>
+    <item>
+      <title>Leviticus 17 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1060</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1060.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>15</kabod:partNumber>
+      <kabod:scripture>Leviticus 17</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="17" startV="1" endCh="17" endV="16"/>
+    </item>
+    <item>
+      <title>Leviticus 18–19 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1061</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1061.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>16</kabod:partNumber>
+      <kabod:scripture>Leviticus 18–19</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="18" startV="1" endCh="19" endV="37"/>
+    </item>
+    <item>
+      <title>Leviticus 20 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1062</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1062.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>17</kabod:partNumber>
+      <kabod:scripture>Leviticus 20</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="20" startV="1" endCh="20" endV="27"/>
+    </item>
+    <item>
+      <title>Leviticus 21–22 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1063</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1063.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>18</kabod:partNumber>
+      <kabod:scripture>Leviticus 21–22</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="21" startV="1" endCh="22" endV="33"/>
+    </item>
+    <item>
+      <title>Leviticus 23 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1064</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1064.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>19</kabod:partNumber>
+      <kabod:scripture>Leviticus 23</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="23" endV="44"/>
+    </item>
+    <item>
+      <title>Leviticus 24 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1065</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1065.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>20</kabod:partNumber>
+      <kabod:scripture>Leviticus 24</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="24" startV="1" endCh="24" endV="23"/>
+    </item>
+    <item>
+      <title>Leviticus 25 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1066</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1066.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>21</kabod:partNumber>
+      <kabod:scripture>Leviticus 25</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+    </item>
+    <item>
+      <title>Leviticus 26 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1067</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1067.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>22</kabod:partNumber>
+      <kabod:scripture>Leviticus 26</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="26" startV="1" endCh="26" endV="46"/>
+    </item>
+    <item>
+      <title>Leviticus 27 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-lev-1068</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio1/1068.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>23</kabod:partNumber>
+      <kabod:scripture>Leviticus 27</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="27" startV="1" endCh="27" endV="34"/>
+    </item>
+  </channel>
+</rss>

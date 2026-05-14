@@ -2,6 +2,165 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## Content — Kabod packs: 6 new packs + Romans v2 + schema v2 (2026-05-14)
+
+Content drop, no code-path changes beyond a 6-line additive list extension
+in `Sources.kt`. Catalog grows from 1 bundled Kabod Pack to 7.
+
+### New packs (six pastors × three Old-Testament books)
+
+  - `monergism-still-leviticus` — William Still, *Expositions on Leviticus*,
+    Gilcomston South Church of Scotland (Aberdeen). 23 expositions covering
+    Leviticus 1–27. Audio courtesy of Tapes from Scotland; Monergism index.
+  - `monergism-still-hosea` — William Still, *Exposition of Hosea*, same
+    pulpit. 11 expositions covering Hosea 1–14.
+  - `sermonaudio-chanski-leviticus` — Mark Chanski, *Leviticus Series*,
+    Harbor Reformed Baptist Church (Holland, MI). 37 verse-by-verse sermons,
+    Aug 1994 – Dec 1995. Per-sermon scripture refs mapped from the
+    chronological cadence (the SermonAudio catalog doesn't annotate
+    individual passages); two banner entries dropped, "Laws Concerning
+    Birth"/"Laws Concerning Leprosy" picked up under chronological numbering
+    rather than the title's mis-leading `#1` suffix.
+  - `sermonaudio-allen-ezekiel` — Joe W. Allen Jr., *Ezekiel*, Grace Family
+    Fellowship Reformed Baptist (Russell Springs, KY). 43 English sermons,
+    May 2020 – May 2021, covering Ezekiel 1–48. The source page advertises
+    77; that count includes 33 ASL duplicates, filtered out via
+    `language=eng` in the enclosure URL. The 43-vs-77 audit signal is
+    captured in `<kabod:partTotal>` / `<kabod:advertisedTotal>` per the v2
+    schema below.
+  - `twojourneys-davis-leviticus` — Andy Davis, *Leviticus: God's Demand for
+    Holiness in a Sin Defiled World*, First Baptist Church (Durham, NC).
+    Single-session whole-book class rather than a verse-by-verse series;
+    bundled as a one-item Kabod Pack so the catalog UI carries the same
+    metadata richness as multi-part packs.
+  - `citieschurch-parnell-leviticus` — Jonathan Parnell + 4 guests
+    (Joe Rigney, Mike Schumann, David Mathis, Kenneth Ortiz), *Leviticus
+    (Fall 2022)*, Cities Church (St. Paul, MN). 8 sermons across the whole
+    book, 2 Oct – 20 Nov 2022. Per-item `<kabod:speaker>` overrides flag
+    each guest preacher.
+
+All six wired into `Sources.KABOD_PACKS` (additive list extension; no
+behaviour change). `KabodAssetLoader.installBundled()` picks them up at
+next launch (idempotent on `packId`).
+
+### Romans pack v1 → v2
+
+`desiringgod-piper-romans.kabod` shipped at 223 sermons in v1, but the
+canonical desiringgod.org series page lists 225. The two missing:
+
+  - **Does James Contradict Paul?** (1999-08-08, James 2:14–26) — preached
+    inside the Romans series as an excursus on faith vs. works; the source
+    page indexes it under Romans even though its primary text is James.
+    Inserted at chronological position #45.
+  - **Treasuring Christ Together: The Vision and Its Cost** (2004-12-05,
+    Romans 15:14–21) — Bethlehem's multi-site / church-plant vision-cast,
+    preached from Romans 15. Inserted at chronological position #178.
+
+After insertion, all `partNumber`s renumbered 1..225 in document order.
+Pack-level `<kabod:packVersion>` bumped to 2; `<kabod:contentNotes>`
+records the v1→v2 delta inline.
+
+### Kabod schema v2 (additive, parser-safe)
+
+The KabodPackParser uses `else -> XmlUtils.skip(parser)` for unknown
+namespace elements (KabodPackParser.kt:97, 206), so additive `kabod:` tags
+are silently ignored by the current parser and safe to author today.
+
+New channel-level fields, all under the same `https://lofipod.app/ns/kabod/1`
+namespace (no breaking bump to `/2`):
+
+  - `<kabod:packSchemaVersion>` — `"2"` once any v2 field is present.
+  - `<kabod:packVersion>` / `<kabod:packRevisionDate>` — content revision +
+    last-edit date so backups can detect drift.
+  - `<kabod:church>` / `<kabod:churchLocation>` — where the series was
+    preached. Surfaces context the bare `<itunes:author>` line can't.
+  - `<kabod:partTotal>` / `<kabod:advertisedTotal>` — the audit pair. A
+    mismatch records that the source claims more (or fewer) entries than
+    the pack actually bundles. This is exactly the signal that would have
+    flagged Romans v1's 223-vs-225 gap from the start.
+  - `<kabod:audioHost>` — primary audio CDN/host (informational; helps
+    users plan offline downloads on metered networks).
+  - `<kabod:contentNotes>` — free-form maintenance notes (v1/v2 history,
+    why counts diverge, dating placeholders, etc.).
+
+The parser doesn't read these *yet* — they're authoring-time documentation
++ a forward-compatible foundation. A future parser pass could surface the
+v2 fields (e.g. show `<kabod:church>` as a subtitle in the catalog, or
+warn when `partTotal != advertisedTotal`) without any pack edits.
+
+`KABOD_SCHEMA.md` (gitignored, on-disk reference) updated to document the
+v2 fields, the namespace-vs-application versioning split, and an
+authoring checklist.
+
+### Why `partTotal` matters
+
+Single-source fact: a series is verse-by-verse complete iff every chapter
+of its bookOfBible has at least one item whose `<kabod:scriptureRef>`
+covers it. With `<kabod:partTotal>` and `<kabod:advertisedTotal>` both
+present, an offline auditor can cross-reference the actual `<item>` count
+against the source's claim and flag drift before users notice. The Romans
+223-vs-225 gap survived a previous build pass; the v2 audit pair is the
+fence to keep it from happening again.
+
+### Files touched
+
+  - `app/src/main/assets/kabod/desiringgod-piper-romans.kabod` (v1 → v2,
+    +2 sermons, partNumber renumbered 1..225)
+  - `app/src/main/assets/kabod/monergism-still-leviticus.kabod` (new)
+  - `app/src/main/assets/kabod/monergism-still-hosea.kabod` (new)
+  - `app/src/main/assets/kabod/sermonaudio-chanski-leviticus.kabod` (new)
+  - `app/src/main/assets/kabod/sermonaudio-allen-ezekiel.kabod` (new)
+  - `app/src/main/assets/kabod/twojourneys-davis-leviticus.kabod` (new)
+  - `app/src/main/assets/kabod/citieschurch-parnell-leviticus.kabod` (new)
+  - `app/src/main/java/com/lofipod/app/data/Sources.kt` (+6 SourceEntry
+    rows in KABOD_PACKS — purely additive list extension)
+  - `KABOD_SCHEMA.md` (gitignored; v2 fields + versioning policy + author
+    checklist)
+  - `tools/_kabod-gen/generate_packs.py` (gitignored; one-off generator
+    script that produced the pack outputs from cached source-site HTML)
+
+## v0.10.17 — Kabod chip: real Stam font (Culmus Stam Ashkenaz CLM) (2026-05-14)
+
+User feedback on v0.10.16: the hand-drawn Compose Canvas glyph looked
+amateurish. Fair call — a single-purpose geometric reconstruction of
+four letters can't match a font designed by a sofer. Swapping in a
+real Stam font.
+
+### Vendored Stam Ashkenaz CLM from Culmus
+
+`app/src/main/res/font/stam_ashkenaz_clm.ttf` — pulled from Culmus
+0.133 (https://culmus.sourceforge.io/), unmodified, ~15 KB. Designed
+by Yoram Gnat 2007–2010.
+
+License: GNU GPL v2 with the standard font embedding exception that
+explicitly permits embedding unmodified fonts in any document/app
+without GPL contamination. See `STAM_LICENSE.md` in the repo root for
+the full attribution + license text.
+
+The font ships authentic tagin (תגין) — the three-pronged kether
+crowns on the canonical "shatnez gatz" letters (שעטנז גץ), plus the
+identifying thorns / kotzin on dalet, bet, etc. Exactly the
+sofer-quill aesthetic the Kabod Pack chip was trying to reach.
+
+### Code changes
+
+`CatalogScreen.kt`:
+  - Added `stamHebrewFamily = FontFamily(Font(R.font.stam_ashkenaz_clm))`
+    at module scope so the FontFamily is constructed once.
+  - The kabod chip's `Text("כבוד")` now passes `fontFamily =
+    stamHebrewFamily` and bumps `fontSize` from 14 → 16 sp to give the
+    detail in the Stam letterforms room to read.
+  - Removed v0.10.16's `KabodStamGlyph` composable + `drawKaf` /
+    `drawBet` / `drawVav` / `drawDalet` / `drawTagin` helpers and
+    their `Color` / `Path` / `Stroke*` / `DrawScope` / `Canvas`
+    imports. ~200 lines net deletion despite gaining the font.
+
+### Files touched
+
+  - `app/src/main/res/font/stam_ashkenaz_clm.ttf` (new — vendored font)
+  - `STAM_LICENSE.md` (new — attribution at repo root)
+  - `app/src/main/java/com/lofipod/app/ui/screens/CatalogScreen.kt`
+
 ## v0.10.16 — Kabod chip: hand-drawn Stam glyph with tagin (2026-05-14)
 
 The Kabod Pack badge previously rendered the Hebrew word כבוד via the

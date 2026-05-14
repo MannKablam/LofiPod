@@ -42,6 +42,32 @@ object Sources {
             feedUrl = "kabod://desiringgod-piper-romans",
             displayName = null  // pack file's own title wins
         ),
+        // Verse-by-verse Old-Testament expositions, ordered Pentateuch → Prophets,
+        // multi-preacher within each book.
+        SourceEntry(
+            feedUrl = "kabod://monergism-still-leviticus",
+            displayName = null
+        ),
+        SourceEntry(
+            feedUrl = "kabod://sermonaudio-chanski-leviticus",
+            displayName = null
+        ),
+        SourceEntry(
+            feedUrl = "kabod://citieschurch-parnell-leviticus",
+            displayName = null
+        ),
+        SourceEntry(
+            feedUrl = "kabod://twojourneys-davis-leviticus",
+            displayName = null
+        ),
+        SourceEntry(
+            feedUrl = "kabod://sermonaudio-allen-ezekiel",
+            displayName = null
+        ),
+        SourceEntry(
+            feedUrl = "kabod://monergism-still-hosea",
+            displayName = null
+        ),
     )
 
     /**

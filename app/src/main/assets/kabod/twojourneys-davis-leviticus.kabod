@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:kabod="https://lofipod.app/ns/kabod/1">
+  <channel>
+    <title>Leviticus: God's Demand for Holiness in a Sin Defiled World</title>
+    <link>https://twojourneys.org/sermon/leviticus-gods-demand-for-holiness-in-a-sin-defiled-world/</link>
+    <description>Pastor Andy Davis's single-session survey class on the book of Leviticus, exploring the theme of holiness and how Levitical worship points to Christ. Delivered as part of First Baptist Church Durham's biblical-overview class series.</description>
+    <language>en-US</language>
+    <itunes:author>Andy Davis</itunes:author>
+    <kabod:packId>twojourneys-davis-leviticus</kabod:packId>
+    <kabod:archived>true</kabod:archived>
+    <kabod:speaker>Andy Davis</kabod:speaker>
+    <kabod:bookOfBible>Leviticus</kabod:bookOfBible>
+    <kabod:sourceSite>https://twojourneys.org/sermon/leviticus-gods-demand-for-holiness-in-a-sin-defiled-world/</kabod:sourceSite>
+    <kabod:seriesStart>2023-09-24</kabod:seriesStart>
+    <kabod:seriesEnd>2023-09-24</kabod:seriesEnd>
+    <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
+    <kabod:packVersion>1</kabod:packVersion>
+    <kabod:packRevisionDate>2026-05-14</kabod:packRevisionDate>
+    <kabod:church>First Baptist Church</kabod:church>
+    <kabod:churchLocation>Durham, North Carolina, USA</kabod:churchLocation>
+    <kabod:partTotal>1</kabod:partTotal>
+    <kabod:advertisedTotal>1</kabod:advertisedTotal>
+    <kabod:audioHost>twojourneys.org</kabod:audioHost>
+    <kabod:contentNotes>Single-session whole-book class rather than a verse-by-verse series. Bundled as a one-item Kabod pack so the catalog UI carries the same metadata richness as multi-part packs.</kabod:contentNotes>
+    <item>
+      <title>Leviticus: God's Demand for Holiness in a Sin Defiled World</title>
+      <pubDate>Sun, 24 Sep 2023 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">twojourneys-davis-leviticus-class-2023-09-24</guid>
+      <enclosure url="https://twojourneys.org/wp-content/uploads/ekklesia360/0e16598503_1695845650_20230924leviticus-godsdemandforholinessinasindefiledworld.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>1</kabod:partNumber>
+      <kabod:scripture>Leviticus</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="27" endV="34"/>
+      <kabod:transcriptUrl>https://twojourneys.org/sermon/leviticus-gods-demand-for-holiness-in-a-sin-defiled-world/</kabod:transcriptUrl>
+    </item>
+  </channel>
+</rss>

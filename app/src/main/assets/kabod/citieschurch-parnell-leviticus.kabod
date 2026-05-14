@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:kabod="https://lofipod.app/ns/kabod/1">
+  <channel>
+    <title>Leviticus (Fall 2022)</title>
+    <link>https://www.citieschurch.com/sermons/tag/Leviticus</link>
+    <description>Cities Church's eight-week sermon series through Leviticus, taught by lead pastor Jonathan Parnell with guest preachers Joe Rigney, Mike Schumann, David Mathis, and Kenneth Ortiz.</description>
+    <language>en-US</language>
+    <itunes:author>Jonathan Parnell</itunes:author>
+    <kabod:packId>citieschurch-parnell-leviticus</kabod:packId>
+    <kabod:archived>true</kabod:archived>
+    <kabod:speaker>Jonathan Parnell</kabod:speaker>
+    <kabod:bookOfBible>Leviticus</kabod:bookOfBible>
+    <kabod:sourceSite>https://www.citieschurch.com/sermons/tag/Leviticus</kabod:sourceSite>
+    <kabod:seriesStart>2022-10-02</kabod:seriesStart>
+    <kabod:seriesEnd>2022-11-20</kabod:seriesEnd>
+    <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
+    <kabod:packVersion>1</kabod:packVersion>
+    <kabod:packRevisionDate>2026-05-14</kabod:packRevisionDate>
+    <kabod:church>Cities Church</kabod:church>
+    <kabod:churchLocation>St. Paul, Minnesota, USA</kabod:churchLocation>
+    <kabod:partTotal>8</kabod:partTotal>
+    <kabod:advertisedTotal>8</kabod:advertisedTotal>
+    <kabod:audioHost>static1.squarespace.com</kabod:audioHost>
+    <kabod:contentNotes>Multi-preacher series; the channel-level &lt;kabod:speaker&gt; is set to Jonathan Parnell as the lead pastor and series owner, but each item's individual preacher is captured by its &lt;kabod:speaker&gt; override where it differs.</kabod:contentNotes>
+    <item>
+      <title>Welcome to Leviticus</title>
+      <pubDate>Sun, 02 Oct 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-welcome-to-leviticus</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/633a6297361c14509ae86908/1665371624092/Livestream+for+10_02_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>1</kabod:partNumber>
+      <kabod:speaker>Jonathan Parnell</kabod:speaker>
+      <kabod:scripture>Leviticus 1</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="1" endV="17"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/welcome-to-leviticus</kabod:transcriptUrl>
+    </item>
+    <item>
+      <title>Drawing Near to the Living and Holy God</title>
+      <pubDate>Sun, 09 Oct 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-drawing-near-to-the-living-and-holy-god</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/63438e558790aa28ef90cd45/1665982321960/Livestream+for+10_09_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>2</kabod:partNumber>
+      <kabod:speaker>Joe Rigney</kabod:speaker>
+      <kabod:scripture>Leviticus 1–7</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="7" endV="38"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/drawing-near-to-the-living-and-holy-god</kabod:transcriptUrl>
+    </item>
+    <item>
+      <title>The LORD Made a Way for You</title>
+      <pubDate>Sun, 16 Oct 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-the-lord-made-a-way-for-you</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/634ce04269320d5265104c89/1666549270949/10_16_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>3</kabod:partNumber>
+      <kabod:speaker>Mike Schumann</kabod:speaker>
+      <kabod:scripture>Leviticus 8–10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="8" startV="1" endCh="10" endV="20"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/the-lord-made-a-way-for-you</kabod:transcriptUrl>
+    </item>
+    <item>
+      <title>Moving Closer</title>
+      <pubDate>Sun, 23 Oct 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-moving-closer</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/6355a42bd70fae272ae430bb/1667156679528/Livestream+for+10_23_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>4</kabod:partNumber>
+      <kabod:speaker>Jonathan Parnell</kabod:speaker>
+      <kabod:scripture>Leviticus 11–15</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="11" startV="1" endCh="15" endV="33"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/moving-closer</kabod:transcriptUrl>
+    </item>
+    <item>
+      <title>The Day of Atonement</title>
+      <pubDate>Sun, 30 Oct 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-the-day-of-atonement</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/635ecca37272f54fa9217d10/1667773228871/10_30_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>5</kabod:partNumber>
+      <kabod:speaker>Jonathan Parnell</kabod:speaker>
+      <kabod:scripture>Leviticus 16</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/the-day-of-atonement</kabod:transcriptUrl>
+    </item>
+    <item>
+      <title>Love and the Body</title>
+      <pubDate>Sun, 06 Nov 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-love-and-the-body</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/636834746103817c3b2d7c08/1668401684278/11_06_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>6</kabod:partNumber>
+      <kabod:speaker>Jonathan Parnell</kabod:speaker>
+      <kabod:scripture>Leviticus 17–20</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="17" startV="1" endCh="20" endV="27"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/love-and-the-body</kabod:transcriptUrl>
+    </item>
+    <item>
+      <title>God Made Known, Christ Kept Secret</title>
+      <pubDate>Sun, 13 Nov 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-god-made-known-christ-kept-secret</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/6371cabd55d889557eda7799/1668979965221/Livestream+for+11_13_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>7</kabod:partNumber>
+      <kabod:speaker>David Mathis</kabod:speaker>
+      <kabod:scripture>Leviticus 21–22</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="21" startV="1" endCh="22" endV="33"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/god-made-known-christ-kept-secret</kabod:transcriptUrl>
+    </item>
+    <item>
+      <title>Remember God, He Dwells With You</title>
+      <pubDate>Sun, 20 Nov 2022 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">citieschurch-leviticus-remember-god-he-dwells-with-you</guid>
+      <enclosure url="https://static1.squarespace.com/static/54716637e4b0631f31bb85fb/t/637a9dc4b627bc101240a394/1669612182026/Livestream+for+11_20_22+Sermon+Audio.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>8</kabod:partNumber>
+      <kabod:speaker>Kenneth Ortiz</kabod:speaker>
+      <kabod:scripture>Leviticus 23–27</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="27" endV="34"/>
+      <kabod:transcriptUrl>https://www.citieschurch.com/sermons/remember-god-he-dwells-with-you</kabod:transcriptUrl>
+    </item>
+  </channel>
+</rss>
