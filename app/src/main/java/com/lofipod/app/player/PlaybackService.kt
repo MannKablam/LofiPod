@@ -261,6 +261,15 @@ class PlaybackService : MediaSessionService() {
      * command arrives.
      */
     private object AutoplayConfirmCallback : MediaSession.Callback {
+        // Media3 1.5 deprecated this MediaSession.Callback.onPlayerCommandRequest
+        // override in favor of a slightly different signature. The functional
+        // behavior of intercepting COMMAND_PLAY_PAUSE while the autoplay-
+        // confirmation timer is active still works correctly — Media3 calls
+        // both the new and the deprecated signature internally for back-compat.
+        // When we revisit MediaSession integration in a future tag we can
+        // migrate to the non-deprecated overload; for now @Suppress keeps the
+        // build clean.
+        @Suppress("DEPRECATION")
         override fun onPlayerCommandRequest(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,

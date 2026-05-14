@@ -2,6 +2,40 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.6 — Address compile warnings (2026-05-13)
+
+Clean-up tag. v0.10.5 built green with four non-blocking warnings;
+this addresses all four. No functional changes.
+
+1. **`kotlinOptions { jvmTarget = "17" }` → `kotlin { compilerOptions
+   { ... } }`.** The `kotlinOptions` DSL inside `android { }` is
+   deprecated as of the Kotlin Gradle plugin 2.0.x. Migrated to the
+   top-level `kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17)
+   } }` block (placed between `android { }` and `dependencies { }` in
+   `app/build.gradle.kts`). Per https://kotl.in/u1r8ln.
+
+2. **`Divider()` → `HorizontalDivider()`** at `NotesScreen.kt:102`.
+   Material3 renamed `Divider` to `HorizontalDivider`; the old name is
+   a deprecated alias. Mechanical replacement.
+
+3. **`window.statusBarColor` / `window.navigationBarColor`** in
+   `Theme.kt`. Deprecated in API 35+ in favor of edge-to-edge +
+   `WindowInsetsControllerCompat`. LofiPod's `targetSdk` is still 34
+   (we deliberately stayed at 34 in v0.9.4 — bumping targetSdk would
+   opt into Android 15 runtime behavior changes that need their own
+   audit). On targetSdk 34 the deprecated setters still apply colors
+   correctly. Wrapped in `@Suppress("DEPRECATION")` with a comment
+   pointing at the proper edge-to-edge migration for when targetSdk
+   eventually bumps to 35.
+
+4. **`MediaSession.Callback.onPlayerCommandRequest`** override in
+   `PlaybackService.kt`. Media3 1.5 deprecated this signature. The
+   functional behavior (intercepting `COMMAND_PLAY_PAUSE` during the
+   autoplay-confirmation timer) is still called correctly by Media3's
+   internal dispatch. Wrapped in `@Suppress("DEPRECATION")` with a
+   comment pointing at the eventual migration to the non-deprecated
+   overload.
+
 ## v0.10.5 — v0.10.4 build fixes + PFFFT NEON SIMD enabled (2026-05-13)
 
 CI failure on v0.10.4 surfaced four build errors + an unrelated SIMD

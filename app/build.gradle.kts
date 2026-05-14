@@ -120,9 +120,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         compose = true
     }
@@ -130,6 +127,15 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+// v0.10.6: migrated from the deprecated `kotlinOptions { jvmTarget = "17" }`
+// block inside `android { ... }` to the new Kotlin 2.x compilerOptions DSL
+// at the top level. See https://kotl.in/u1r8ln for the migration rationale.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 

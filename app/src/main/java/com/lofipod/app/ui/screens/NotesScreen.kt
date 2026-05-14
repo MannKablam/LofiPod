@@ -99,7 +99,7 @@ fun NotesScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-            Divider()
+            HorizontalDivider()
 
             if (entries.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
