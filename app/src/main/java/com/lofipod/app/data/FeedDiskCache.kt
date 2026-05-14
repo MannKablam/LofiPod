@@ -151,7 +151,14 @@ class FeedDiskCache(context: Context) {
             audioMimeType = o.optStringOrNull("audioMimeType"),
             durationSeconds = if (o.has("durationSeconds")) o.getLong("durationSeconds") else null,
             episodeArtworkUrl = o.optStringOrNull("episodeArtworkUrl"),
-            audioByteSize = if (o.has("audioByteSize")) o.getLong("audioByteSize") else null,
+            // 0 here means "host emitted length=\"0\" in RSS, which we
+            // pre-filter to null at parse time as of v0.10.7 — but older
+            // cached feeds might still contain 0 from before that fix.
+            // takeIf { > 0 } makes the cache reader self-healing so users
+            // don't have to force-refresh every podcast post-upgrade.
+            audioByteSize = if (o.has("audioByteSize")) {
+                o.getLong("audioByteSize").takeIf { it > 0L }
+            } else null,
         )
 
         /** org.json's optString returns "" for missing keys; for our

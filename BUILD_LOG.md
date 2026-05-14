@@ -2,6 +2,42 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.7 — Hide misleading "<1mb" badge for podcasts that emit `length="0"` (2026-05-13)
+
+User-reported bug: every episode in The Pour Over (and Simple Farmhouse
+Life) was displaying `<1mb` in the episode-row size badge. Investigation
+showed that some podcast hosting platforms emit
+`<enclosure ... length="0" type="audio/mpeg"/>` for all episodes,
+either because they can't pre-compute size before CDN redirects or
+because their RSS generator doesn't bother filling it in.
+
+Megaphone's feed for The Pour Over is the canonical offender; checked
+directly via the live RSS XML:
+```
+<enclosure url="..." length="0" type="audio/mpeg"/>
+```
+for every `<item>` in the feed. Castos does it correctly for most
+shows but presumably has shows like Simple Farmhouse Life with
+similar gaps.
+
+Our `RssParser.kt` was reading `"0".toLongOrNull()` → `0L` →
+`audioByteSize = 0L`. The `EpisodeRow`'s display block then ran the
+size through `formatMb(0L)` which returned `"<1mb"` (per the
+`bytes / 1_048_576L == 0` branch). Result: every episode showed
+"<1mb" as if it were a tiny clip.
+
+**Fix:** `RssParser.kt` now treats `length="0"` (and any non-positive
+value) as missing data, returning `null` for `audioByteSize`. The
+`EpisodeRow`'s display block already uses `ep.audioByteSize?.let { ... }`,
+so a null value hides the size badge entirely — cleaner than showing
+misleading data.
+
+**Self-healing cache:** `FeedDiskCache.kt` (which deserializes cached
+feeds from disk) also applies the `takeIf { it > 0L }` filter, so
+existing users with cached feeds containing `audioByteSize = 0` will
+have those values silently treated as null on the next launch. No
+force-refresh needed.
+
 ## v0.10.6 — Address compile warnings (2026-05-13)
 
 Clean-up tag. v0.10.5 built green with four non-blocking warnings;
