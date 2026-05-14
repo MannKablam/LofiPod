@@ -5,20 +5,19 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.data.LofiDownload
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.ui.theme.ThemedArtwork
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.model.Episode
@@ -163,7 +162,7 @@ fun EpisodesScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -175,7 +174,7 @@ fun EpisodesScreen(
                     // podcast plays at a non-default speed.
                     IconButton(onClick = { speedDialogOpen = true }) {
                         Icon(
-                            Icons.Filled.Speed,
+                            painterResource(R.drawable.speed_24),
                             contentDescription = currentDefaultSpeed?.let {
                                 "Default speed for this podcast: ${"%.2fx".format(it)}"
                             } ?: "Default speed for this podcast (no override)",
@@ -189,7 +188,7 @@ fun EpisodesScreen(
                     // closed-archive boxes so the active state reads at a glance.
                     IconButton(onClick = { showArchived = !showArchived }) {
                         Icon(
-                            if (showArchived) Icons.Filled.Unarchive else Icons.Filled.Archive,
+                            if (showArchived) painterResource(R.drawable.unarchive_24) else painterResource(R.drawable.archive_24),
                             contentDescription = if (showArchived)
                                 "Hide archived ($archivedCount)"
                             else "Show archived ($archivedCount)",
@@ -500,7 +499,7 @@ private fun EpisodeRow(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (isCurrent) {
                             Icon(
-                                Icons.Filled.GraphicEq,
+                                painterResource(R.drawable.graphic_eq_24),
                                 contentDescription = "Now playing",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp)
@@ -508,7 +507,7 @@ private fun EpisodeRow(
                             Spacer(Modifier.width(4.dp))
                         } else if (isPlayed) {
                             Icon(
-                                Icons.Filled.CheckCircle,
+                                painterResource(R.drawable.check_circle_24),
                                 contentDescription = "Played",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     .copy(alpha = 0.7f),
@@ -550,7 +549,7 @@ private fun EpisodeRow(
                     )
                 }
                 Icon(
-                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    if (expanded) painterResource(R.drawable.expand_less_24) else painterResource(R.drawable.expand_more_24),
                     contentDescription = if (expanded) "Collapse" else "Expand",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp)
@@ -570,7 +569,7 @@ private fun EpisodeRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilledTonalButton(onClick = onPlay) {
                     Icon(
-                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        if (isPlaying) painterResource(R.drawable.pause_24) else painterResource(R.drawable.play_arrow_24),
                         contentDescription = null
                     )
                     Spacer(Modifier.width(4.dp))
@@ -585,7 +584,7 @@ private fun EpisodeRow(
                 DownloadButton(download = download, onClick = onToggleDownload)
                 IconButton(onClick = onToggleQueue) {
                     Icon(
-                        if (isQueued) Icons.Filled.PlaylistAddCheck else Icons.AutoMirrored.Filled.PlaylistAdd,
+                        if (isQueued) painterResource(R.drawable.playlist_add_check_24) else painterResource(R.drawable.playlist_add_24),
                         contentDescription = if (isQueued) "Remove from queue" else "Add to queue",
                         tint = if (isQueued) MaterialTheme.colorScheme.primary else LocalContentColor.current
                     )
@@ -597,8 +596,8 @@ private fun EpisodeRow(
                 // is empty AND the per-feed auto-advance toggle is on.
                 IconButton(onClick = onToggleAutoplayDirection) {
                     Icon(
-                        if (autoplayDirectionUp) Icons.Filled.ArrowUpward
-                        else Icons.Filled.ArrowDownward,
+                        if (autoplayDirectionUp) painterResource(R.drawable.arrow_upward_24)
+                        else painterResource(R.drawable.arrow_downward_24),
                         contentDescription = if (autoplayDirectionUp)
                             "Autoplay walks toward newer episodes (tap to flip)"
                         else "Autoplay walks toward older episodes (tap to flip)",
@@ -614,7 +613,7 @@ private fun EpisodeRow(
                     var moreOpen by remember { mutableStateOf(false) }
                     IconButton(onClick = { moreOpen = true }) {
                         Icon(
-                            Icons.Filled.MoreVert,
+                            painterResource(R.drawable.more_vert_24),
                             contentDescription = "More",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -631,8 +630,8 @@ private fun EpisodeRow(
                             },
                             leadingIcon = {
                                 Icon(
-                                    if (isArchived) Icons.Filled.Unarchive
-                                    else Icons.Filled.Archive,
+                                    if (isArchived) painterResource(R.drawable.unarchive_24)
+                                    else painterResource(R.drawable.archive_24),
                                     null,
                                     tint = if (isArchived) MaterialTheme.colorScheme.primary
                                     else LocalContentColor.current
@@ -645,7 +644,7 @@ private fun EpisodeRow(
                                 moreOpen = false
                                 onShare()
                             },
-                            leadingIcon = { Icon(Icons.Filled.Share, null) }
+                            leadingIcon = { Icon(painterResource(R.drawable.share_24), null) }
                         )
                         if (isPlayed) {
                             DropdownMenuItem(
@@ -654,7 +653,7 @@ private fun EpisodeRow(
                                     moreOpen = false
                                     onMarkUnplayed()
                                 },
-                                leadingIcon = { Icon(Icons.Filled.Replay, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.replay_24), null) }
                             )
                         } else {
                             DropdownMenuItem(
@@ -663,7 +662,7 @@ private fun EpisodeRow(
                                     moreOpen = false
                                     onMarkPlayed()
                                 },
-                                leadingIcon = { Icon(Icons.Filled.CheckCircle, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.check_circle_24), null) }
                             )
                         }
                     }
@@ -707,7 +706,7 @@ private fun ArchivedChip() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Filled.Archive,
+                painterResource(R.drawable.archive_24),
                 contentDescription = null,
                 modifier = Modifier.size(12.dp)
             )
@@ -735,7 +734,7 @@ private fun HeartTierButton(tier: Int, onCycle: () -> Unit) {
     IconButton(onClick = onCycle, modifier = Modifier.size(40.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                if (tier > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                if (tier > 0) painterResource(R.drawable.favorite_24) else painterResource(R.drawable.favorite_border_24),
                 contentDescription = when (tier) {
                     2 -> "Most-excellent"
                     1 -> "Excellent"
@@ -747,7 +746,7 @@ private fun HeartTierButton(tier: Int, onCycle: () -> Unit) {
             if (tier == 2) {
                 Spacer(Modifier.width(2.dp))
                 Icon(
-                    Icons.Filled.Favorite,
+                    painterResource(R.drawable.favorite_24),
                     contentDescription = null,
                     tint = tint,
                     modifier = Modifier.size(14.dp)

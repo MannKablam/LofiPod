@@ -6,10 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -27,7 +23,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.player.PlayerController
 
 /**
@@ -70,7 +68,7 @@ fun TranscriptScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp),
                         )
@@ -80,7 +78,7 @@ fun TranscriptScreen(
                     if (state.currentEpisodeGuid == guid) {
                         IconButton(onClick = { controller.togglePlay() }) {
                             Icon(
-                                if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                if (state.isPlaying) painterResource(R.drawable.pause_24) else painterResource(R.drawable.play_arrow_24),
                                 contentDescription = if (state.isPlaying) "Pause" else "Play",
                                 modifier = Modifier.size(28.dp),
                             )

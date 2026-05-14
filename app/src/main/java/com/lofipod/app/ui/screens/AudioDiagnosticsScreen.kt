@@ -11,18 +11,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.audio.AudioChainTelemetry
 import com.lofipod.app.audio.EqPresets
 import com.lofipod.app.diagnostics.AppDiagnostics
@@ -119,7 +117,7 @@ fun AudioDiagnosticsScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -319,7 +317,7 @@ private fun HelpCard(expanded: Boolean, onToggle: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 )
                 Icon(
-                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    if (expanded) painterResource(R.drawable.expand_less_24) else painterResource(R.drawable.expand_more_24),
                     contentDescription = if (expanded) "Collapse" else "Expand"
                 )
             }

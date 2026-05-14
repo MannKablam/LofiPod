@@ -14,10 +14,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,11 +24,13 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.LofiTheme
 import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
@@ -73,7 +71,7 @@ fun SettingsScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -756,7 +754,7 @@ private fun ShareApkRow() {
                 ctx.startActivity(Intent.createChooser(send, "Share LofiPod"))
             }
         ) {
-            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(painterResource(R.drawable.share_24), contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Share link")
         }
@@ -1178,7 +1176,7 @@ private fun ThemeRow(
         }
         if (selected) {
             Icon(
-                Icons.Filled.Check,
+                painterResource(R.drawable.check_24),
                 contentDescription = "Selected",
                 tint = MaterialTheme.colorScheme.primary
             )

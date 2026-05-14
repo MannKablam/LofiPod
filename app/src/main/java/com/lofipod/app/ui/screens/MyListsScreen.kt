@@ -9,14 +9,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,9 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.LofiDownload
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.db.QueueEntryEntity
@@ -86,7 +80,7 @@ fun MyListsScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -108,7 +102,7 @@ fun MyListsScreen(
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            Icons.Filled.Favorite,
+                            painterResource(R.drawable.favorite_24),
                             contentDescription = "Excellent",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp),
@@ -124,7 +118,7 @@ fun MyListsScreen(
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            Icons.Filled.Favorite,
+                            painterResource(R.drawable.favorite_24),
                             contentDescription = "Most-excellent",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp),
@@ -175,7 +169,7 @@ private fun PulsingGoldHeart(size: Dp) {
     val alpha = 0.55f + 0.45f * phase
     val scale = 0.92f + 0.12f * phase
     Icon(
-        Icons.Filled.Favorite,
+        painterResource(R.drawable.favorite_24),
         contentDescription = null,
         tint = MostExcellentGold,
         modifier = Modifier
@@ -294,7 +288,7 @@ private fun QueueRow(
                     enabled = !isFirst,
                     modifier = Modifier.size(36.dp)
                 ) {
-                    Icon(Icons.Filled.ArrowUpward, contentDescription = "Move up",
+                    Icon(painterResource(R.drawable.arrow_upward_24), contentDescription = "Move up",
                         modifier = Modifier.size(18.dp))
                 }
                 IconButton(
@@ -302,12 +296,12 @@ private fun QueueRow(
                     enabled = !isLast,
                     modifier = Modifier.size(36.dp)
                 ) {
-                    Icon(Icons.Filled.ArrowDownward, contentDescription = "Move down",
+                    Icon(painterResource(R.drawable.arrow_downward_24), contentDescription = "Move down",
                         modifier = Modifier.size(18.dp))
                 }
             }
             IconButton(onClick = onRemove) {
-                Icon(Icons.Filled.Close, contentDescription = "Remove from queue")
+                Icon(painterResource(R.drawable.close_24), contentDescription = "Remove from queue")
             }
         }
     }
@@ -373,7 +367,7 @@ private fun EpisodeStateRow(
                             PulsingGoldHeart(size = 16.dp)
                         } else {
                             Icon(
-                                Icons.Filled.Favorite,
+                                painterResource(R.drawable.favorite_24),
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp)
@@ -383,10 +377,10 @@ private fun EpisodeStateRow(
                 }
             }
             IconButton(onClick = onShare) {
-                Icon(Icons.Filled.Share, contentDescription = "Share")
+                Icon(painterResource(R.drawable.share_24), contentDescription = "Share")
             }
             IconButton(onClick = onPlay) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = "Play")
+                Icon(painterResource(R.drawable.play_arrow_24), contentDescription = "Play")
             }
         }
     }

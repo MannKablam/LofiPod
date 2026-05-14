@@ -7,19 +7,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.Backup
 import com.lofipod.app.data.Sources
 import com.lofipod.app.data.db.EpisodeStateEntity
@@ -113,7 +110,7 @@ fun MetricsScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -125,12 +122,12 @@ fun MetricsScreen(onBack: () -> Unit) {
                         // launcher fires from inside the dialog.
                         pendingExportUri = android.net.Uri.EMPTY
                     }) {
-                        Icon(Icons.Filled.FileDownload, contentDescription = "Export backup")
+                        Icon(painterResource(R.drawable.file_download_24), contentDescription = "Export backup")
                     }
                     IconButton(onClick = {
                         importLauncher.launch(arrayOf("application/json", "*/*"))
                     }) {
-                        Icon(Icons.Filled.FileUpload, contentDescription = "Import backup")
+                        Icon(painterResource(R.drawable.file_upload_24), contentDescription = "Import backup")
                     }
                 }
             )
@@ -273,7 +270,7 @@ private fun PodcastMetricsCard(row: PodcastMetrics) {
                         // (Most-excellent). Cheap visual distinction without
                         // dropping a second icon style on the screen.
                         Icon(
-                            Icons.Filled.Favorite,
+                            painterResource(R.drawable.favorite_24),
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(14.dp)
@@ -281,7 +278,7 @@ private fun PodcastMetricsCard(row: PodcastMetrics) {
                         if (ep.favoriteTier >= 2) {
                             Spacer(Modifier.width(2.dp))
                             Icon(
-                                Icons.Filled.Favorite,
+                                painterResource(R.drawable.favorite_24),
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp)

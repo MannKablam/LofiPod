@@ -11,23 +11,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.EditNote
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.HourglassEmpty
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
@@ -38,8 +21,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.PodcastRepository.FeedStatus
 import com.lofipod.app.data.Sources
 import com.lofipod.app.data.db.FeedVisitEntity
@@ -150,7 +135,7 @@ fun CatalogScreen(
                             // marker. Replaced MusicNote here as part of the
                             // Audio Fine-tuning ↔ Now Playing icon split.
                             Icon(
-                                Icons.Filled.GraphicEq,
+                                painterResource(R.drawable.graphic_eq_24),
                                 contentDescription = "Now playing",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(28.dp)
@@ -160,7 +145,7 @@ fun CatalogScreen(
                     }
                     IconButton(onClick = onOpenNotes) {
                         Icon(
-                            Icons.Filled.EditNote,
+                            painterResource(R.drawable.edit_note_24),
                             contentDescription = "Notes",
                             modifier = Modifier.size(28.dp)
                         )
@@ -168,7 +153,7 @@ fun CatalogScreen(
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
-                            Icons.AutoMirrored.Filled.FormatListBulleted,
+                            painterResource(R.drawable.format_list_bulleted_24),
                             contentDescription = "My lists",
                             modifier = Modifier.size(28.dp)
                         )
@@ -176,7 +161,7 @@ fun CatalogScreen(
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenSettings) {
                         Icon(
-                            Icons.Filled.Settings,
+                            painterResource(R.drawable.settings_24),
                             contentDescription = "Settings",
                             modifier = Modifier.size(28.dp)
                         )
@@ -189,7 +174,7 @@ fun CatalogScreen(
                             // onSurfaceVariant is the standard "secondary
                             // foreground" slot in every Material color scheme.
                             Icon(
-                                Icons.Filled.MoreVert,
+                                painterResource(R.drawable.more_vert_24),
                                 contentDescription = "More",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(28.dp)
@@ -202,32 +187,32 @@ fun CatalogScreen(
                             DropdownMenuItem(
                                 text = { Text("Search episodes") },
                                 onClick = { menuExpanded = false; onOpenSearch() },
-                                leadingIcon = { Icon(Icons.Filled.Search, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.search_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Bible index") },
                                 onClick = { menuExpanded = false; onOpenCanonBrowse() },
-                                leadingIcon = { Icon(Icons.Filled.MenuBook, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.menu_book_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Playback history") },
                                 onClick = { menuExpanded = false; onOpenHistory() },
-                                leadingIcon = { Icon(Icons.Filled.History, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.history_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Metrics") },
                                 onClick = { menuExpanded = false; onOpenMetrics() },
-                                leadingIcon = { Icon(Icons.Filled.BarChart, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.bar_chart_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Audio Fine-tuning") },
                                 onClick = { menuExpanded = false; onOpenEq() },
-                                leadingIcon = { Icon(Icons.Filled.Tune, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.tune_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Refresh feeds") },
                                 onClick = { menuExpanded = false; vm.refresh() },
-                                leadingIcon = { Icon(Icons.Filled.Refresh, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Import pack…") },
@@ -237,7 +222,7 @@ fun CatalogScreen(
                                     // file and validate on parse.
                                     packPicker.launch(arrayOf("*/*"))
                                 },
-                                leadingIcon = { Icon(Icons.Filled.FolderOpen, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.folder_open_24), null) }
                             )
                         }
                     }
@@ -424,17 +409,17 @@ private fun FeedProgressRow(fs: FeedLoadStatus) {
                     strokeWidth = 2.dp
                 )
                 FeedStatus.OK -> Icon(
-                    Icons.Filled.CheckCircle,
+                    painterResource(R.drawable.check_circle_24),
                     contentDescription = "Loaded",
                     tint = MaterialTheme.colorScheme.primary
                 )
                 FeedStatus.FAILED -> Icon(
-                    Icons.Filled.ErrorOutline,
+                    painterResource(R.drawable.error_outline_24),
                     contentDescription = "Failed",
                     tint = MaterialTheme.colorScheme.error
                 )
                 FeedStatus.TIMEOUT -> Icon(
-                    Icons.Filled.HourglassEmpty,
+                    painterResource(R.drawable.hourglass_empty_24),
                     contentDescription = "Timed out",
                     tint = MaterialTheme.colorScheme.error
                 )
@@ -616,7 +601,7 @@ private fun KabodPackRow(
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ) {
                         Icon(
-                            Icons.Filled.MenuBook,
+                            painterResource(R.drawable.menu_book_24),
                             contentDescription = null,
                             modifier = Modifier.padding(4.dp),
                         )
@@ -724,7 +709,7 @@ private fun GroupRow(
                 }
             }
             Icon(
-                Icons.Filled.ExpandMore,
+                painterResource(R.drawable.expand_more_24),
                 contentDescription = if (expanded) "Collapse" else "Expand",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier

@@ -141,7 +141,11 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    // material-icons-extended REMOVED in v0.10.4 — Google has deprecated
+    // this library (no longer publishing updates) in favor of Material
+    // Symbols. All ~50 icons in active use were migrated to Material
+    // Symbols vector drawables under app/src/main/res/drawable/, fetched
+    // via the design philosophy documented in ICON_PHILOSOPHY.md.
     implementation("androidx.navigation:navigation-compose:2.8.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")

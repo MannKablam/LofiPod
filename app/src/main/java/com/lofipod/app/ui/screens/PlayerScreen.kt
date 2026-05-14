@@ -7,9 +7,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -280,7 +277,7 @@ fun PlayerScreen(
                     when {
                         isPreview -> Text("Preview")
                         state.currentEpisodeGuid != null -> Icon(
-                            Icons.Filled.GraphicEq,
+                            painterResource(R.drawable.graphic_eq_24),
                             contentDescription = "Now playing",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(28.dp)
@@ -291,7 +288,7 @@ fun PlayerScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.KeyboardArrowDown,
+                            painterResource(R.drawable.keyboard_arrow_down_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -345,7 +342,7 @@ fun PlayerScreen(
                     }
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
-                            Icons.AutoMirrored.Filled.FormatListBulleted,
+                            painterResource(R.drawable.format_list_bulleted_24),
                             contentDescription = "My lists",
                             modifier = Modifier.size(28.dp)
                         )
@@ -357,7 +354,7 @@ fun PlayerScreen(
                         // in the top-bar title above + Catalog overflow).
                         // Keeps the two affordances visually separable.
                         Icon(
-                            Icons.Filled.Tune,
+                            painterResource(R.drawable.tune_24),
                             contentDescription = "Audio Fine-tuning",
                             modifier = Modifier.size(28.dp)
                         )
@@ -368,7 +365,7 @@ fun PlayerScreen(
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
-                                Icons.Filled.MoreVert,
+                                painterResource(R.drawable.more_vert_24),
                                 contentDescription = "More",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(28.dp)
@@ -381,7 +378,7 @@ fun PlayerScreen(
                             DropdownMenuItem(
                                 text = { Text("Playback history") },
                                 onClick = { menuExpanded = false; onOpenHistory() },
-                                leadingIcon = { Icon(Icons.Filled.History, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.history_24), null) }
                             )
                             // Share lives in the overflow (under "Playback
                             // history" per the player's existing ordering):
@@ -404,12 +401,12 @@ fun PlayerScreen(
                                         ctx.shareEnclosure(ep.audioUrl, ep.title)
                                     }
                                 },
-                                leadingIcon = { Icon(Icons.Filled.Share, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.share_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Settings") },
                                 onClick = { menuExpanded = false; onOpenSettings() },
-                                leadingIcon = { Icon(Icons.Filled.Settings, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.settings_24), null) }
                             )
                         }
                     }
@@ -583,7 +580,7 @@ fun PlayerScreen(
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
-                                Icons.Filled.Replay,
+                                painterResource(R.drawable.replay_24),
                                 contentDescription = "Back 15s",
                                 modifier = Modifier.size(56.dp)
                             )
@@ -627,8 +624,8 @@ fun PlayerScreen(
                                 Spacer(Modifier.size(48.dp))
                             } else {
                                 Icon(
-                                    if (state.isPlaying && !isPreview) Icons.Filled.Pause
-                                    else Icons.Filled.PlayArrow,
+                                    if (state.isPlaying && !isPreview) painterResource(R.drawable.pause_24)
+                                    else painterResource(R.drawable.play_arrow_24),
                                     contentDescription = if (isPreview) "Play" else "Play/Pause",
                                     modifier = Modifier.size(48.dp)
                                 )
@@ -664,7 +661,7 @@ fun PlayerScreen(
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
-                                Icons.Filled.Forward30,
+                                painterResource(R.drawable.forward_30_24),
                                 contentDescription = "Forward 30s",
                                 modifier = Modifier.size(56.dp)
                             )
@@ -694,7 +691,7 @@ fun PlayerScreen(
                         label = { Text("Failed: ${state.errorMessage} — tap to retry") },
                         leadingIcon = {
                             Icon(
-                                Icons.Filled.ErrorOutline,
+                                painterResource(R.drawable.error_outline_24),
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
                             )
@@ -763,7 +760,7 @@ private fun PlayerHeartIcon(tier: Int) {
                else LocalContentColor.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
-            if (tier > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+            if (tier > 0) painterResource(R.drawable.favorite_24) else painterResource(R.drawable.favorite_border_24),
             contentDescription = when (tier) {
                 2 -> "Most-excellent (tap to clear)"
                 1 -> "Excellent (tap to upgrade)"
@@ -775,7 +772,7 @@ private fun PlayerHeartIcon(tier: Int) {
         if (tier == 2) {
             Spacer(Modifier.width(2.dp))
             Icon(
-                Icons.Filled.Favorite,
+                painterResource(R.drawable.favorite_24),
                 contentDescription = null,
                 tint = tint,
                 modifier = Modifier.size(14.dp)
@@ -803,7 +800,7 @@ private fun SpeedChip(
             label = { Text("Speed: ${"%.2fx".format(speed)}") },
             leadingIcon = {
                 Icon(
-                    Icons.Filled.Speed,
+                    painterResource(R.drawable.speed_24),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp)
                 )
@@ -828,7 +825,7 @@ private fun SpeedChip(
                         open = false
                     },
                     leadingIcon = if (active) {
-                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                        { Icon(painterResource(R.drawable.check_24), contentDescription = null) }
                     } else null
                 )
             }
@@ -848,7 +845,7 @@ private fun ReturnChip(
         label = { Text(label) },
         leadingIcon = {
             Icon(
-                if (reached) Icons.Filled.Check else Icons.Filled.Undo,
+                if (reached) painterResource(R.drawable.check_24) else painterResource(R.drawable.undo_24),
                 contentDescription = null,
                 modifier = Modifier.size(18.dp)
             )
@@ -856,7 +853,7 @@ private fun ReturnChip(
         trailingIcon = {
             IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                 Icon(
-                    Icons.Filled.Close,
+                    painterResource(R.drawable.close_24),
                     contentDescription = "Dismiss",
                     modifier = Modifier.size(16.dp)
                 )
@@ -1029,7 +1026,7 @@ private fun NotesTab(
             // In preview the button is disabled — past notes still surface
             // below and remain tappable to jump-and-play.
             FilledTonalButton(onClick = ::openAdd, enabled = !isPreview) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(painterResource(R.drawable.add_24), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Add note")
             }

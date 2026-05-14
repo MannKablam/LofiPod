@@ -2,22 +2,17 @@
 
 LofiPod's design convention for icons, established v0.10.3 (2026-05-13).
 
-## The current state (mixed)
+## Current state (v0.10.4+: fully migrated)
 
-The app currently uses two icon sources:
+All icons in LofiPod ship as **Material Symbols vector drawables**
+vendored in `app/src/main/res/drawable/<snake_case_name>_24.xml`.
+The deprecated `androidx.compose.material:material-icons-extended`
+dependency has been removed from `app/build.gradle.kts`. ~51 vector
+drawables ship, only the ones we actually use.
 
-1. **`androidx.compose.material:material-icons-extended`** — the bulk of
-   existing UI icons (ArrowBack, Pause, PlayArrow, Speed, MoreVert,
-   etc.). Drawn from the **older Material Icons** set, which Google has
-   officially deprecated and stopped publishing updates to.
-2. **Vendored Material Symbols vector drawables in `res/drawable/`** —
-   currently just `valve_24.xml` (the manual flush plunger button).
-
-Why mixed: when LofiPod started, material-icons-extended was the
-standard. It's a deprecated dependency now, but migrating the
-~50 existing icon references in one push would be churn without user
-benefit. The agreed-on policy is: **don't bulk-migrate, but stop adding
-new icons under the old set.**
+Earlier state (v0.10.2 / v0.10.3, since-superseded): mixed mode where
+material-icons-extended powered the bulk of icons and `valve_24` was
+the first Material Symbol exception. v0.10.4 completed the migration.
 
 ## Convention for new icons (v0.10.3+)
 
@@ -92,12 +87,30 @@ The full license text is bundled at
 `app/src/main/assets/licenses/LICENSE-MATERIAL-SYMBOLS.txt` (v0.10.3+).
 The About section in Settings credits the source.
 
-## Eventual full migration
+## Migration history
 
-When R8 minification is eventually re-enabled (currently OFF since
-v0.3.0 due to silent-audio reflection issue with Media3 — a fix would
-require authoring proper keep-rules), the unused icons in
-material-icons-extended will be tree-shaken from the APK and the
-deprecated-dependency footprint will be minimal. At that point a full
-migration becomes lower priority. Until then: gradual transition,
-documented here.
+v0.10.4 (2026-05-13): the full migration. ~51 unique icons fetched from
+google/material-design-icons via PowerShell + Invoke-WebRequest into
+`res/drawable/<snake_case>_24.xml`. ~23 Kotlin files updated from
+`Icons.Filled.X` / `Icons.AutoMirrored.Filled.X` to
+`painterResource(R.drawable.x_24)`. `android:tint="?attr/colorControlNormal"`
+stripped from all drawables so Compose's `LocalContentColor` tint is
+the sole source. `android:autoMirrored="true"` ensured on the four
+RTL-aware drawables (arrow_back, format_list_bulleted, list,
+playlist_add).
+
+Special-cased icons:
+  - `Icons.Filled.Favorite` (filled solid heart) → `favorite_24.xml`,
+    sourced from `favorite_fill1_24px.xml` (filled variant of the
+    Material Symbols favorite icon).
+  - `Icons.Filled.FavoriteBorder` (outlined heart) →
+    `favorite_border_24.xml`, sourced from `favorite_24px.xml`
+    (default outlined variant).
+  - `Icons.Filled.ErrorOutline` → `error_outline_24.xml`, sourced
+    from Material Symbols `error_24px.xml` (outlined variant of the
+    error icon).
+
+APK size effect: the deprecated material-icons-extended library
+(~25 MB pre-R8) is gone. The 51 vector drawables ship as small XML
+resources (~100-300 bytes each, ~10 KB total). Net APK shrinkage
+is substantial; we no longer need R8 tree-shaking just for icons.

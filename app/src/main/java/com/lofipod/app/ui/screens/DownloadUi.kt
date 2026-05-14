@@ -1,15 +1,12 @@
 package com.lofipod.app.ui.screens
 
+import androidx.compose.ui.res.painterResource
+import com.lofipod.app.R
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.DownloadDone
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,7 +37,7 @@ fun DownloadButton(download: LofiDownload?, onClick: () -> Unit) {
     when (download?.state) {
         null -> {
             IconButton(onClick = onClick) {
-                Icon(Icons.Filled.Download, contentDescription = "Download")
+                Icon(painterResource(R.drawable.download_24), contentDescription = "Download")
             }
         }
         LofiDownload.State.QUEUED, LofiDownload.State.DOWNLOADING -> {
@@ -70,7 +67,7 @@ fun DownloadButton(download: LofiDownload?, onClick: () -> Unit) {
                             )
                         }
                         Icon(
-                            Icons.Filled.Close,
+                            painterResource(R.drawable.close_24),
                             contentDescription = "Cancel download",
                             modifier = Modifier.size(14.dp)
                         )
@@ -88,7 +85,7 @@ fun DownloadButton(download: LofiDownload?, onClick: () -> Unit) {
         LofiDownload.State.COMPLETED -> {
             IconButton(onClick = onClick) {
                 Icon(
-                    Icons.Filled.DownloadDone,
+                    painterResource(R.drawable.download_done_24),
                     contentDescription = "Delete download",
                     tint = MaterialTheme.colorScheme.primary
                 )
@@ -97,7 +94,7 @@ fun DownloadButton(download: LofiDownload?, onClick: () -> Unit) {
         LofiDownload.State.FAILED -> {
             IconButton(onClick = onClick) {
                 Icon(
-                    Icons.Filled.Refresh,
+                    painterResource(R.drawable.refresh_24),
                     contentDescription = "Retry download",
                     tint = MaterialTheme.colorScheme.error
                 )

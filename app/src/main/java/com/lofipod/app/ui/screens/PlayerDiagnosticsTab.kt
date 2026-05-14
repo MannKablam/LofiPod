@@ -13,13 +13,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
@@ -47,9 +40,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.audio.AudioChainTelemetry
 import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
@@ -576,7 +571,7 @@ private fun ActionsRow(
             label = { Text("Save as note") },
             leadingIcon = {
                 Icon(
-                    Icons.Filled.NoteAdd,
+                    painterResource(R.drawable.note_add_24),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )
@@ -587,7 +582,7 @@ private fun ActionsRow(
             label = { Text("Copy") },
             leadingIcon = {
                 Icon(
-                    Icons.Filled.ContentCopy,
+                    painterResource(R.drawable.content_copy_24),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )
@@ -599,7 +594,7 @@ private fun ActionsRow(
             label = { Text(if (isFullScreen) "Exit full-screen" else "Full-screen") },
             leadingIcon = {
                 Icon(
-                    if (isFullScreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+                    if (isFullScreen) painterResource(R.drawable.fullscreen_exit_24) else painterResource(R.drawable.fullscreen_24),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )

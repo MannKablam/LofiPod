@@ -10,9 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
 import com.lofipod.app.audio.EqPresets
@@ -40,6 +38,7 @@ import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import com.lofipod.app.audio.AudioChainTelemetry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -254,7 +253,7 @@ fun EqScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -263,7 +262,7 @@ fun EqScreen(
                 actions = {
                     IconButton(onClick = { refMenuExpanded = true }) {
                         Icon(
-                            Icons.Filled.MoreVert,
+                            painterResource(R.drawable.more_vert_24),
                             contentDescription = "Reference and diagnostics",
                             modifier = Modifier.size(28.dp),
                         )

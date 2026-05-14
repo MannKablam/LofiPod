@@ -23,11 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Forward30
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -620,7 +615,7 @@ private fun MiniPlayer(
             ) {
                 IconButton(onClick = { controller.seekBack() }) {
                     Icon(
-                        Icons.Filled.Replay,
+                        painterResource(R.drawable.replay_24),
                         contentDescription = "Back 15s",
                         modifier = Modifier.size(28.dp)
                     )
@@ -636,7 +631,7 @@ private fun MiniPlayer(
                             Spacer(Modifier.size(36.dp))
                         } else {
                             Icon(
-                                if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                if (state.isPlaying) painterResource(R.drawable.pause_24) else painterResource(R.drawable.play_arrow_24),
                                 contentDescription = "Play/Pause",
                                 modifier = Modifier.size(36.dp)
                             )
@@ -668,7 +663,7 @@ private fun MiniPlayer(
                 }
                 IconButton(onClick = { controller.seekForward() }) {
                     Icon(
-                        Icons.Filled.Forward30,
+                        painterResource(R.drawable.forward_30_24),
                         contentDescription = "Forward 30s",
                         modifier = Modifier.size(28.dp)
                     )

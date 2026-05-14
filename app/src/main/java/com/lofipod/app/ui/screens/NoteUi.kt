@@ -9,10 +9,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,6 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.lofipod.app.R
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -85,7 +83,7 @@ fun NoteCard(
                 )
                 IconButton(onClick = onJump, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.PlayCircle,
+                        painterResource(R.drawable.play_circle_24),
                         contentDescription = "Jump to position",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
@@ -93,14 +91,14 @@ fun NoteCard(
                 }
                 IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.Edit,
+                        painterResource(R.drawable.edit_24),
                         contentDescription = "Edit",
                         modifier = Modifier.size(20.dp)
                     )
                 }
                 IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.Delete,
+                        painterResource(R.drawable.delete_24),
                         contentDescription = "Delete",
                         modifier = Modifier.size(20.dp)
                     )

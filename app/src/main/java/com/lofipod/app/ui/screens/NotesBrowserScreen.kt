@@ -7,20 +7,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.player.PlayerController
 import kotlinx.coroutines.Dispatchers
@@ -150,7 +147,7 @@ fun NotesBrowserScreen(
                         if (searchMode) searchMode = false else onBack()
                     }) {
                         Icon(
-                            if (searchMode) Icons.Filled.ArrowBack else Icons.Filled.ArrowBack,
+                            if (searchMode) painterResource(R.drawable.arrow_back_24) else painterResource(R.drawable.arrow_back_24),
                             contentDescription = if (searchMode) "Exit search" else "Back"
                         )
                     }
@@ -159,12 +156,12 @@ fun NotesBrowserScreen(
                     if (searchMode) {
                         if (query.isNotEmpty()) {
                             IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Clear")
+                                Icon(painterResource(R.drawable.close_24), contentDescription = "Clear")
                             }
                         }
                     } else {
                         IconButton(onClick = { searchMode = true }) {
-                            Icon(Icons.Filled.Search, contentDescription = "Search notes")
+                            Icon(painterResource(R.drawable.search_24), contentDescription = "Search notes")
                         }
                     }
                 }
@@ -239,7 +236,7 @@ private fun BrowserNoteCard(
                 )
                 IconButton(onClick = onJump, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.PlayCircle,
+                        painterResource(R.drawable.play_circle_24),
                         contentDescription = "Jump to position",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)

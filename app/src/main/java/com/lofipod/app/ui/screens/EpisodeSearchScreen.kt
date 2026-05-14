@@ -7,16 +7,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -24,6 +20,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.model.Episode
 import com.lofipod.app.data.model.Podcast
 import com.lofipod.app.player.PlayerController
@@ -80,7 +77,7 @@ fun EpisodeSearchScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -99,11 +96,11 @@ fun EpisodeSearchScreen(
                 placeholder = {
                     Text("Search $totalEpisodeCount episode${if (totalEpisodeCount == 1) "" else "s"}…")
                 },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                leadingIcon = { Icon(painterResource(R.drawable.search_24), contentDescription = null) },
                 trailingIcon = if (query.isNotEmpty()) {
                     {
                         IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear")
+                            Icon(painterResource(R.drawable.close_24), contentDescription = "Clear")
                         }
                     }
                 } else null,
@@ -186,7 +183,7 @@ private fun ResultCard(
             }
             Spacer(Modifier.width(8.dp))
             Icon(
-                Icons.Filled.PlayCircle,
+                painterResource(R.drawable.play_circle_24),
                 contentDescription = "Play",
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(28.dp)

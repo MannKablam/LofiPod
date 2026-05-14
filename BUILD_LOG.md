@@ -2,6 +2,62 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.4 — Full icon migration to Material Symbols (2026-05-13)
+
+User-driven: after v0.10.3 documented the design philosophy for future
+icons, user asked "go ahead with the full icon swap." So we did.
+
+**Scope:** 51 unique icons across 23 .kt files migrated from
+`Icons.Filled.X` / `Icons.AutoMirrored.Filled.X` to
+`painterResource(R.drawable.<name>_24)`. The deprecated
+`androidx.compose.material:material-icons-extended` dependency removed
+from `app/build.gradle.kts`.
+
+**Execution path:**
+  1. Bulk-fetched 51 Material Symbols vector drawables via PowerShell
+     Invoke-WebRequest from
+     `https://raw.githubusercontent.com/google/material-design-icons/master/symbols/android/<icon>/materialsymbolsoutlined/<icon>_24px.xml`.
+     Saved under `app/src/main/res/drawable/<snake_case>_24.xml`.
+     Three special cases: `error_outline_24.xml` from
+     `error_24px.xml`, `favorite_border_24.xml` from
+     `favorite_24px.xml` (default outlined), `favorite_24.xml`
+     from `favorite_fill1_24px.xml` (filled variant).
+  2. Post-processed each drawable: stripped
+     `android:tint="?attr/colorControlNormal"` so Compose's
+     `LocalContentColor` tint is the sole source. Ensured
+     `android:autoMirrored="true"` on the four RTL-aware drawables
+     (arrow_back, format_list_bulleted, list, playlist_add).
+  3. Bulk PowerShell replace across all .kt files: longest-key-first
+     literal substitution from each `Icons.X.Y` to
+     `painterResource(R.drawable.snake_case_24)`. Resolved prefix
+     collisions (PlaylistAddCheck before PlaylistAdd, FavoriteBorder
+     before Favorite, etc.).
+  4. Imports cleanup: added
+     `import androidx.compose.ui.res.painterResource` and
+     `import com.lofipod.app.R` to all 23 affected files; removed
+     all `androidx.compose.material.icons.*` imports
+     (Icons base, filled.*, filled.Specific, automirrored.filled.X).
+  5. Removed `material-icons-extended` from
+     `app/build.gradle.kts`.
+
+**Verification:** Grep across all .kt files post-migration:
+  - 0 references to `Icons.`
+  - 0 references to `import androidx.compose.material.icons.`
+
+**Updated docs:**
+  - `ICON_PHILOSOPHY.md` reflects the completed migration + migration
+    history section documenting the special cases.
+
+**APK size impact:** material-icons-extended (the entire ~2000-icon
+set) was ~25 MB compiled into the APK because R8 is OFF. The 51 vector
+drawables we now ship are ~10 KB total. Net APK shrinkage in the
+several-megabyte range.
+
+**Licensing reminder:** Material Symbols are Apache-2.0 from Google.
+`LICENSE-MATERIAL-SYMBOLS.txt` already shipping in
+`app/src/main/assets/licenses/` (added v0.10.3). About-screen
+attribution credits "Material Symbols (Apache-2.0, Google)".
+
 ## v0.10.3 — Icon design philosophy + Material Symbols license attribution (2026-05-13)
 
 Documentation tag. No code-behavior changes.
