@@ -15,10 +15,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateEntity
@@ -723,7 +725,7 @@ fun PlayerScreen(
                                 modifier = Modifier.align(Alignment.CenterEnd),
                             ) {
                                 Icon(
-                                    Icons.Filled.Plumbing,
+                                    painter = painterResource(id = R.drawable.valve_24),
                                     contentDescription = "Flush audio buffer",
                                 )
                             }

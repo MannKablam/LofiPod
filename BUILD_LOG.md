@@ -2,6 +2,22 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.2 — Swap plunger icon to Material Symbols "valve" (2026-05-13)
+
+v0.10.1's manual flush button used `Icons.Filled.Plumbing` from
+material-icons-extended (visually a wrench, since "Valve" isn't in the
+older Material Icons set that Compose's extended library uses). Swapped
+to the Material Symbols valve glyph proper, bundled as a vector
+drawable at `res/drawable/valve_24.xml` (path data from Google's
+material-design-icons GitHub repo, Apache-2.0).
+
+PlayerScreen renders it via `painterResource(R.drawable.valve_24)`
+inside the existing Icon composable — Compose still applies its
+`LocalContentColor` tint over the white fill, so theme color follows
+automatically.
+
+No behavior change. Just visual.
+
 ## v0.10.1 — Min FIR Kaiser fix + auto-flush on mode switch + manual flush plunger (2026-05-13)
 
 Three fixes / features in response to first real-device testing of the
