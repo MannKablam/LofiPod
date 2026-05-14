@@ -2,6 +2,47 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.3 — Icon design philosophy + Material Symbols license attribution (2026-05-13)
+
+Documentation tag. No code-behavior changes.
+
+Background: while swapping the plunger icon to a Material Symbols
+valve glyph (v0.10.2), we surfaced that `material-icons-extended` is
+officially deprecated and no longer published in the latest Compose
+Material 3 release. A full migration of the ~50 existing icon
+references is high-churn and low-benefit (the existing icons render
+fine; the visual style difference is subtle). The pragmatic call: keep
+the existing icons on the deprecated library for now, establish the
+Material Symbols convention for all FUTURE icons, and document it.
+
+**New file: `ICON_PHILOSOPHY.md` at repo root.** Codifies:
+  - Source: Google's Material Symbols (Apache-2.0, fonts.google.com/icons
+    + google/material-design-icons on GitHub)
+  - Style: Outlined (matches valve_24)
+  - Form: Vector drawables in `res/drawable/<snake_case_name>_24.xml`
+  - Compose usage: `Icon(painter = painterResource(R.drawable.x_24),
+    contentDescription = "...")`
+  - When to add as Material Symbols (new icons, refreshes) vs not
+    (bulk-rewriting existing icons that work fine)
+  - Step-by-step fetch + integration recipe for adding a new icon
+  - Eventual full-migration path once R8 minification can be re-enabled
+
+**New file: `app/src/main/assets/licenses/LICENSE-MATERIAL-SYMBOLS.txt`.**
+Apache-2.0 text bundled in the APK. Settings → About attribution now
+mentions Material Symbols.
+
+**Profitability / licensing summary** (since this was the user's
+concern):
+  - Apache-2.0 is the most permissive viable license for an
+    icon set. Fully compatible with closed-source, commercial,
+    sideloaded, or any distribution model. Zero royalties. No
+    copyleft. Patent grant included. The only requirement is
+    attribution (NOTICE / LICENSE file inside the APK, which we
+    have).
+  - PFFFT (BSD-3-Clause) and JTransforms (BSD-2-Clause), used by the
+    audio chain, are equally permissive. LofiPod has zero licensing
+    or profitability constraints from its current dependencies.
+
 ## v0.10.2 — Swap plunger icon to Material Symbols "valve" (2026-05-13)
 
 v0.10.1's manual flush button used `Icons.Filled.Plumbing` from

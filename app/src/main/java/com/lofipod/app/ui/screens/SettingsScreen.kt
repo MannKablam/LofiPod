@@ -270,6 +270,7 @@ fun SettingsScreen(
                 "Open-source audio libraries: " +
                     "PFFFT (FFT + UPC inner loop, BSD-3-Clause, Julien Pommier / NCAR) — " +
                     "JTransforms (kernel-synth FFT, BSD-2-Clause, Piotr Wendykier). " +
+                    "Icons: Material Symbols (Apache-2.0, Google). " +
                     "Full license texts ship inside the APK under " +
                     "assets/licenses/.",
                 style = MaterialTheme.typography.bodySmall,
