@@ -371,6 +371,12 @@ private fun AppNav(
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
                     onOpenSettings = { nav.navigate("settings") },
+                    onOpenCatalog = {
+                        // One-tap pop-to-root from the Player's home icon
+                        // (v0.10.9+). Walks all the way back to "catalog"
+                        // without popping it.
+                        nav.popBackStack("catalog", inclusive = false)
+                    },
                     onOpenTranscript = { guid ->
                         val encoded = URLEncoder.encode(guid, "UTF-8")
                         nav.navigate("player/transcript/$encoded")
@@ -404,6 +410,9 @@ private fun AppNav(
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
                     onOpenSettings = { nav.navigate("settings") },
+                    onOpenCatalog = {
+                        nav.popBackStack("catalog", inclusive = false)
+                    },
                     previewGuid = guid,
                     onOpenTranscript = { g ->
                         val enc = URLEncoder.encode(g, "UTF-8")

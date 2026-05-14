@@ -2,6 +2,46 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.9 — Stale-while-revalidate catalog UX + home-icon nav (2026-05-13)
+
+Two user-reported polish items:
+
+**1. Catalog appeared to hang during feed refresh.**
+
+The Catalog's loading state was an all-or-nothing takeover: if `loading
+== true` (any feed still refreshing), the entire catalog body was hidden
+behind the FeedProgressList, even when cached entries were available
+from disk. On a fresh launch where the disk cache had ~13 of 14 feeds
+but one was slow, the user couldn't interact with any of the 13 ready
+podcasts until the laggard finished (or timed out at 60s).
+
+**Fix:** stale-while-revalidate UX. The catalog body now always renders
+cached entries immediately if any exist. During an in-flight refresh,
+a thin `LinearProgressIndicator` + `"Refreshing feeds X / N …"` banner
+appears above the LazyColumn. Full-screen `FeedProgressList` only fires
+on cold start when nothing is cached yet.
+
+Result: subsequent launches render catalog instantly; even partial
+disk-cache coverage gets the user to a usable list immediately.
+
+**2. No quick way to jump to Catalog from the Player.**
+
+Previously: tap back-chevron on Player → goes to Episodes → tap back
+again → Catalog. Two taps.
+
+**Fix:** new Home icon in the Player top-bar actions row (left of
+MyLists). One tap pops the back stack all the way to `"catalog"`
+without popping the catalog itself. Wired via
+`nav.popBackStack("catalog", inclusive = false)` from MainActivity.
+
+Icon: `res/drawable/home_24.xml` — Material Symbols `home`, fetched
+from google/material-design-icons. First addition to the drawable set
+since the v0.10.4 mass migration; follows the convention documented in
+`ICON_PHILOSOPHY.md`.
+
+The Player's actions row now has 5 IconButtons: Heart, Home, MyLists,
+EQ, Overflow. Fits on standard 360dp+ phone widths.
+
 ## v0.10.8 — HTTP HEAD/Range probe for missing episode sizes (2026-05-13)
 
 v0.10.7 fixed the "<1mb" display bug by hiding the size when the RSS

@@ -103,6 +103,13 @@ fun PlayerScreen(
     onOpenMyLists: () -> Unit,
     onOpenSettings: () -> Unit,
     /**
+     * One-tap jump to the catalog (root destination). Distinct from
+     * `onBack` which walks the back stack one step at a time via
+     * smartBack; this lets a user on Player → Episodes → Catalog get
+     * home in one tap instead of two. v0.10.9+.
+     */
+    onOpenCatalog: () -> Unit,
+    /**
      * When non-null AND it doesn't match the currently-playing episode, the
      * screen renders in "preview mode": all the same UI elements, but the
      * episode isn't playing. Hitting Play starts playback of the preview
@@ -365,6 +372,18 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
+                    // v0.10.9+: one-tap jump to Catalog. The chevron-down
+                    // back button next to the title walks the back stack
+                    // (Player → Episodes → Catalog = two taps); the home
+                    // icon collapses that to one.
+                    IconButton(onClick = onOpenCatalog) {
+                        Icon(
+                            painterResource(R.drawable.home_24),
+                            contentDescription = "Catalog",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
                             painterResource(R.drawable.format_list_bulleted_24),

@@ -236,8 +236,16 @@ fun CatalogScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
+            // v0.10.9+: stale-while-revalidate UX. The Catalog ALWAYS
+            // renders any cached podcasts immediately if we have them,
+            // even while a refresh is in flight. Loading state collapses
+            // to a thin progress banner at the top instead of a
+            // full-screen takeover that hides the cached list. Only the
+            // cold-start case (no cache, no podcasts loaded yet) shows
+            // the full FeedProgressList.
             when {
-                state.loading -> {
+                // Cold start with no cached data: full-screen loading.
+                state.loading && state.podcasts.isEmpty() -> {
                     if (state.feedProgress.isEmpty()) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator()
@@ -246,7 +254,7 @@ fun CatalogScreen(
                         FeedProgressList(state.feedProgress)
                     }
                 }
-                state.error != null -> {
+                state.error != null && state.podcasts.isEmpty() -> {
                     ErrorState(state.error!!) { vm.refresh() }
                 }
                 state.podcasts.isEmpty() -> {
@@ -263,10 +271,40 @@ fun CatalogScreen(
                         state.podcasts.associateBy { it.feedUrl }
                     }
                     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
-                    LazyColumn(
-                        contentPadding = PaddingValues(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    // Column-stack: optional refresh-banner above the
+                    // catalog list. Column avoids Box draw-order issues
+                    // (Box paints later children on top — scroll-up items
+                    // would cover an overlaid banner). With Column, the
+                    // banner is its own row above the LazyColumn; both
+                    // get their natural bounds with no overlap.
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (state.loading) {
+                            val doneCount = state.feedProgress.count {
+                                it.status != FeedStatus.LOADING
+                            }
+                            val totalCount = state.feedProgress.size
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth(),
+                                progress = {
+                                    if (totalCount == 0) 0f
+                                    else doneCount.toFloat() / totalCount
+                                },
+                            )
+                            if (totalCount > 0) {
+                                Text(
+                                    "Refreshing feeds $doneCount / $totalCount …",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        LazyColumn(
+                            contentPadding = PaddingValues(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                         // Kabod Packs render first — these are weighty, archived
                         // bodies of work (verse-by-verse expositions, etc.) given
                         // visual prominence by their distinguished card chrome.
@@ -360,6 +398,7 @@ fun CatalogScreen(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
