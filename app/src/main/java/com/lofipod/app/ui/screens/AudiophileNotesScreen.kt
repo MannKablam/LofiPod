@@ -24,7 +24,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.lofipod.app.R
 
 /**
  * Static reference page describing LofiPod's audio chain in enough detail that

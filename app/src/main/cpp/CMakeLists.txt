@@ -55,6 +55,24 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(pffft)
 
+# ---- Force NEON SIMD on the PFFFT target ----
+# marton78/pffft has auto-detection logic in cmake/target_optimizations.cmake
+# that checks `CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64"` to enable
+# NEON. On Android NDK builds the processor variable doesn't reliably match
+# (the v0.9.6/v0.9.7 build logs showed "building float with simd disabled!"
+# pragma firing for BOTH arm64-v8a and armeabi-v7a, with an additional
+# "unsupported CMAKE_SYSTEM_PROCESSOR 'armv7-a'" warning for the 32-bit
+# build). Result: PFFFT compiled in scalar mode, negating the whole point
+# of the NEON-SIMD speedup the JNI bridge was built for.
+#
+# Force-define PFFFT_ENABLE_NEON=1 on the PFFFT static library. This is
+# the same source-level macro marton78's auto-detection would set; we
+# just bypass the detection. Both Android ARM ABIs we target (arm64-v8a
+# and armeabi-v7a) support NEON on devices we care about.
+if (ANDROID_ABI STREQUAL "arm64-v8a" OR ANDROID_ABI STREQUAL "armeabi-v7a")
+    target_compile_definitions(PFFFT PRIVATE PFFFT_ENABLE_NEON=1)
+endif()
+
 # ---- Our JNI bridge ----
 add_library(lofipod_fft SHARED lofipod_fft.cpp)
 

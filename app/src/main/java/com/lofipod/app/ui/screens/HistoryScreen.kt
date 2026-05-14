@@ -325,6 +325,7 @@ private fun shortReasonLabel(reason: String): String = when (reason) {
     else -> reason
 }
 
+@Composable
 private fun reasonIcon(reason: String) = when (reason) {
     PlayerController.REASON_JUMP_FROM -> painterResource(R.drawable.undo_24)
     PlayerController.REASON_SESSION_END -> painterResource(R.drawable.stop_circle_24)

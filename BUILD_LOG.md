@@ -2,6 +2,63 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.5 — v0.10.4 build fixes + PFFFT NEON SIMD enabled (2026-05-13)
+
+CI failure on v0.10.4 surfaced four build errors + an unrelated SIMD
+issue I noticed in the same build log. This tag fixes all five.
+
+**v0.10.4 build errors (4):**
+
+1. `MainActivity.kt` — missing `painterResource` + `R` imports. My
+   PowerShell import-fix script's regex anchored on
+   `androidx.compose.ui.platform.LocalContext`, which MainActivity
+   doesn't import. The fallback (insert after package line) didn't fire
+   either. Manually added the two imports.
+
+2. `AudiophileNotesScreen.kt` — same root cause, manual fix.
+
+3. `NonAudiophileLofiNotesScreen.kt` — same root cause; without the
+   `import com.lofipod.app.R`, Kotlin's resolver saw two candidate
+   `R` classes (likely `android.R` and the implicit module R) and
+   reported "None of the following candidates is applicable." Adding
+   the explicit import disambiguates.
+
+4. `HistoryScreen.kt` — the `reasonIcon` helper function returns an
+   icon based on a `when` over reason strings. After the migration its
+   body became `when (...) { -> painterResource(...) }`. But
+   `painterResource()` is `@Composable`, and `reasonIcon` itself was
+   declared as a plain (non-composable) `private fun`. Added the
+   `@Composable` annotation. Both call sites of `reasonIcon` are
+   inside Composable contexts (`leadingIcon = { ... }` lambdas), so
+   they accept the annotated helper.
+
+**PFFFT SIMD fix — separate but important:**
+
+The v0.10.4 build log showed:
+  - `arm64-v8a`: `building float with simd disabled !` warning from
+    `pf_float.h:68`
+  - `armeabi-v7a`: same warning + `unsupported CMAKE_SYSTEM_PROCESSOR
+    'armv7-a'` from marton78's `target_optimizations.cmake:71`
+
+Investigation: PFFFT requires `PFFFT_ENABLE_NEON=1` to be defined to
+activate its NEON SIMD code paths (it's opt-in, not auto-detected from
+the standard `__ARM_NEON` compiler macro). marton78's CMake has logic
+to set it when `CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64"`, but
+on Android NDK builds the processor variable can be `armv7-a` (the
+architecture name) which doesn't match, AND for arm64-v8a the
+detection isn't firing reliably either. Result: PFFFT compiled in
+SCALAR mode, no NEON. The whole point of v0.9.6 was to get the 3-5×
+NEON speedup; without it, we have all the JNI complexity for ~zero
+gain over the original JTransforms.
+
+Fix: force-define `PFFFT_ENABLE_NEON=1` on the PFFFT static-lib target
+from MY CMakeLists, gated on `ANDROID_ABI` being one of the two ARM
+ABIs we build for. Bypasses marton78's auto-detection entirely.
+
+**Net of v0.10.5:** build green (assuming no further failures
+surface), and the JNI PFFFT path actually runs NEON-accelerated as
+intended.
+
 ## v0.10.4 — Full icon migration to Material Symbols (2026-05-13)
 
 User-driven: after v0.10.3 documented the design philosophy for future
