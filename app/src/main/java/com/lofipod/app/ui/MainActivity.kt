@@ -303,6 +303,16 @@ private fun AppNav(
     BackHandler(enabled = currentRoute != null && currentRoute !in PRIMARY_ROUTES) {
         smartBack(nav, currentRoute)
     }
+    // v0.10.15+: the player route's back chevron is gone (Home took its
+    // navigationIcon slot — see PlayerScreen). System back must therefore
+    // run the feed-aware-back logic that the chevron used to invoke, or
+    // we'd silently regress to plain popBackStack and land on the wrong
+    // episodes screen across autoplay-cross-feed sessions. Separate
+    // BackHandler block with a mutually-exclusive `enabled` predicate so
+    // only one handler fires per back press.
+    BackHandler(enabled = currentRoute == "player") {
+        feedAwareBackFromPlayer(nav, playerState.currentFeedUrl)
+    }
 
     // Route to the Player whenever the system media notification (or any other
     // out-of-Compose source) asks us to. Use the cleaning helper so the back

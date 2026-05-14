@@ -2,6 +2,97 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.15 — UI: Home to far-left, EpisodesScreen + NotesBrowser bulk-select (2026-05-14)
+
+Three user-driven UI changes. No playback-pipeline changes.
+
+### 1. PlayerScreen: Home icon moves to navigationIcon (far left)
+
+Previously Home (one-tap-to-Catalog, added v0.10.9) sat in the actions
+row between Heart and My Lists. The down-chevron back button held the
+navigationIcon slot. Per user direction:
+
+  - Home now occupies the navigationIcon slot (leftmost in the top bar).
+  - The down-chevron back button is removed entirely.
+  - Tap Home → Catalog. Back gesture → episodes/{currentFeed} (feed-aware).
+
+To preserve the v0.10.12 feed-aware-back behavior without the visible
+chevron, MainActivity gains a second BackHandler block scoped to the
+"player" route that calls `feedAwareBackFromPlayer(nav,
+playerState.currentFeedUrl)`. The existing BackHandler for
+non-primary routes stays. The two `enabled` predicates are mutually
+exclusive so exactly one handler fires per back press.
+
+### 2. EpisodesScreen: speed icon removed; long-press bulk-select added
+
+  - Per-podcast default-speed icon removed from the top bar. The
+    `DefaultSpeedDialog` composable is also removed (it was the only
+    consumer). Stored override in `podcast_state.defaultSpeed` is still
+    respected by `PlayerController.playEpisode` if previously set —
+    there's just no in-app UI to edit it now. Restore from git history
+    if a future entry point is wanted.
+  - Long-press any episode row → enters selection mode. Long-press
+    additional rows or tap-with-selection-active → toggles each row's
+    membership. Selected rows show a check glyph in the title row + a
+    `tertiaryContainer` background tint.
+  - Top bar transforms while selection non-empty:
+    `[X clear] "N selected" | [Archive] [Download] [Mark played]`
+  - Bulk actions (one-direction; no toggle):
+    - **Archive** — sets `archivedAt = now` for each selected; also
+      removes any extant downloads (matches the per-row archive behavior).
+    - **Download** — starts a download for each selected episode that
+      isn't already QUEUED/DOWNLOADING/COMPLETED. Manual user intent,
+      so we use the inline-start path (no autoplay 15s delayed-fire);
+      also clears any auto_download flag so the finished-TTL sweep
+      doesn't auto-remove the user's explicit choice.
+    - **Mark played** — pins `position = duration` so the isPlayed
+      check returns true and rows fade / line-through.
+  - System back gesture exits selection mode (BackHandler) rather than
+    popping the screen.
+  - The card's interaction model uses Compose's `combinedClickable` —
+    one onClick + onLongClick path replaces the previous two-step
+    expand-only behavior. Title tap still independently routes to
+    preview when not in selection mode.
+
+### 3. NotesBrowserScreen: long-press bulk-select + bulk-delete
+
+The global notes browser previously had only a "play" affordance per
+card (the play_circle_24 icon → jumpToNotePosition). Per-episode
+NotesScreen and PlayerScreen's Notes tab already had play / edit /
+delete per row. The global browser had no delete path at all — to
+delete a note the user had to drill into the episode's NotesScreen
+and find the row.
+
+Added long-press selection + bulk-delete:
+
+  - Long-press a card → enter selection mode.
+  - Tap-with-selection-active or long-press additional cards → toggle
+    membership.
+  - Top bar transforms while selection non-empty:
+    `[X clear] "N selected" | [Delete (red)]`
+  - Tap Delete → confirmation dialog ("Delete N notes? This can't be
+    undone."). Confirm → loops `EpisodeNoteEntryDao.delete(guid,
+    createdAt)` for each selected key. The per-row dao has no
+    multi-delete; the loop is fine for typical bulk-select counts.
+  - Local `entries` list is filtered after the delete completes so the
+    LazyColumn reflects the change immediately (no DAO observe path
+    here — it's a snapshot list).
+  - System back exits selection mode.
+
+Selection key shape: `"guid@createdAt"` (matches the LazyColumn key
++ the composite primary key in `episode_note_entry`). Decomposed at
+delete-time via `lastIndexOf('@')`.
+
+The per-episode NotesScreen + PlayerScreen Notes tab still have their
+existing per-row delete affordance and weren't touched in this pass.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/ui/screens/PlayerScreen.kt`
+  - `app/src/main/java/com/lofipod/app/ui/MainActivity.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/EpisodesScreen.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/NotesBrowserScreen.kt`
+
 ## v0.10.14 — Auto-download from autoplay: delayed-fire instead of deferred (2026-05-14)
 
 User report: after v0.10.12 / v0.10.13 stabilised playback, the

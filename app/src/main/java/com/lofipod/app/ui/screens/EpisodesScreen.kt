@@ -1,6 +1,8 @@
 package com.lofipod.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -71,9 +73,21 @@ fun EpisodesScreen(
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
-    var speedDialogOpen by remember { mutableStateOf(false) }
-    val podcastState by app.db.podcastStateDao().observe(feedUrl).collectAsState(initial = null)
-    val currentDefaultSpeed = podcastState?.defaultSpeed
+
+    // Bulk-selection mode (v0.10.15+). Long-press any episode row to
+    // enter; selection set tracks chosen guids. Top bar transforms while
+    // non-empty (count + Done + bulk actions). Tap in selection mode
+    // toggles the tapped row's membership rather than opening the row.
+    var selection by remember { mutableStateOf(emptySet<String>()) }
+    val inSelectionMode = selection.isNotEmpty()
+
+    // System back gesture exits selection mode rather than navigating
+    // away. The user's mental model after entering selection mode is
+    // "I'm in a sub-mode of this screen" — popping the screen would
+    // discard their selection silently.
+    BackHandler(enabled = inSelectionMode) {
+        selection = emptySet()
+    }
 
     // Sweep + load. Auto-archive runs every time the screen is entered (cheap —
     // single indexed query). Then we hydrate per-episode state into the map.
@@ -157,48 +171,180 @@ fun EpisodesScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text(pod?.title ?: "Loading…", maxLines = 1) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            painterResource(R.drawable.arrow_back_24),
-                            contentDescription = "Back",
-                            modifier = Modifier.size(28.dp)
-                        )
+            // Top bar morphs in selection mode (v0.10.15+):
+            //   normal       — [back] Podcast title | [Archive-visibility-toggle]
+            //   selection-on — [X close] "N selected" | [Archive] [Download] [Mark played]
+            // Speed icon was removed in v0.10.15 per user direction. The
+            // per-podcast default-speed override still applies if previously
+            // set (lives in podcast_state); no in-app UI to edit it now.
+            if (inSelectionMode) {
+                TopAppBar(
+                    title = { Text("${selection.size} selected", maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = { selection = emptySet() }) {
+                            Icon(
+                                painterResource(R.drawable.close_24),
+                                contentDescription = "Clear selection",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                    },
+                    actions = {
+                        // Bulk archive. Always archives (no toggle) — user
+                        // can use the per-row Unarchive in More menu to
+                        // reverse individual episodes.
+                        IconButton(onClick = {
+                            val targets = selection.toList()
+                            selection = emptySet()
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    val dao = app.db.episodeStateDao()
+                                    val now = System.currentTimeMillis()
+                                    for (g in targets) {
+                                        // Ensure row exists, then archive.
+                                        val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                        upsertState(app, ep, pod)
+                                        dao.setArchivedAt(g, now)
+                                    }
+                                    // Archived episodes don't need their
+                                    // downloads taking up disk.
+                                    val haveDownloads = app.downloadsApi.byId.value.keys
+                                    for (g in targets) {
+                                        if (g in haveDownloads) app.downloadsApi.remove(g)
+                                    }
+                                }
+                                // Update in-memory UI state so the rows
+                                // reflect archived immediately.
+                                val now = System.currentTimeMillis()
+                                for (g in targets) {
+                                    episodeStates[g] = (episodeStates[g] ?: EpisodeUiState())
+                                        .copy(archivedAt = now)
+                                }
+                                snackbarHostState.showSnackbar("Archived ${targets.size}")
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.archive_24),
+                                contentDescription = "Archive selected",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        // Bulk download. Starts downloads for any selected
+                        // episodes that don't already have one in flight /
+                        // completed. Manual user-driven, so we use the
+                        // inline start path (no autoplay delayed-fire).
+                        IconButton(onClick = {
+                            val targets = selection.toList()
+                            selection = emptySet()
+                            scope.launch {
+                                var started = 0
+                                val byId = app.downloadsApi.byId.value
+                                for (g in targets) {
+                                    val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                    val existing = byId[g]
+                                    if (existing != null &&
+                                        existing.state != LofiDownload.State.FAILED
+                                    ) {
+                                        // QUEUED / DOWNLOADING / COMPLETED — skip.
+                                        continue
+                                    }
+                                    withContext(Dispatchers.IO) {
+                                        upsertState(app, ep, pod)
+                                        // Bulk-download is explicit user
+                                        // intent; clear any auto-download
+                                        // flag so the finished-TTL sweep
+                                        // doesn't auto-remove it later.
+                                        app.db.autoDownloadDao().delete(g)
+                                    }
+                                    app.downloadsApi.start(ep)
+                                    started++
+                                }
+                                snackbarHostState.showSnackbar(
+                                    if (started == targets.size) "Downloading ${targets.size}"
+                                    else "Downloading $started of ${targets.size} (rest already in flight)"
+                                )
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.download_24),
+                                contentDescription = "Download selected",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        // Bulk mark-played. Pins position to duration so the
+                        // isPlayed check (positionMs >= durationMs - 5_000)
+                        // returns true and the row fades / line-throughs.
+                        IconButton(onClick = {
+                            val targets = selection.toList()
+                            selection = emptySet()
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    val dao = app.db.episodeStateDao()
+                                    val now = System.currentTimeMillis()
+                                    for (g in targets) {
+                                        val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                        upsertState(app, ep, pod)
+                                        val s = episodeStates[g]
+                                        val dur = (s?.durationMs?.takeIf { it > 0 })
+                                            ?: ep.durationSeconds?.let { it * 1000L }
+                                            ?: 1L
+                                        dao.updatePosition(
+                                            guid = g,
+                                            pos = dur,
+                                            dur = dur,
+                                            now = now,
+                                            listenDelta = 0L,
+                                        )
+                                    }
+                                }
+                                for (g in targets) {
+                                    val s = episodeStates[g] ?: EpisodeUiState()
+                                    val ep = pod?.episodes?.find { it.guid == g }
+                                    val dur = (s.durationMs.takeIf { it > 0 })
+                                        ?: ep?.durationSeconds?.let { it * 1000L }
+                                        ?: 1L
+                                    episodeStates[g] = s.copy(positionMs = dur, durationMs = dur)
+                                }
+                                snackbarHostState.showSnackbar("Marked ${targets.size} played")
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.check_circle_24),
+                                contentDescription = "Mark selected played",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
                     }
-                },
-                actions = {
-                    // Default-speed shortcut. Tinted primary when an override
-                    // is set so the user can see at a glance that this
-                    // podcast plays at a non-default speed.
-                    IconButton(onClick = { speedDialogOpen = true }) {
-                        Icon(
-                            painterResource(R.drawable.speed_24),
-                            contentDescription = currentDefaultSpeed?.let {
-                                "Default speed for this podcast: ${"%.2fx".format(it)}"
-                            } ?: "Default speed for this podcast (no override)",
-                            tint = if (currentDefaultSpeed != null)
-                                MaterialTheme.colorScheme.primary
-                            else LocalContentColor.current,
-                            modifier = Modifier.size(26.dp)
-                        )
+                )
+            } else {
+                TopAppBar(
+                    title = { Text(pod?.title ?: "Loading…", maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                painterResource(R.drawable.arrow_back_24),
+                                contentDescription = "Back",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    },
+                    actions = {
+                        // Archive visibility toggle. The icon flips between open and
+                        // closed-archive boxes so the active state reads at a glance.
+                        IconButton(onClick = { showArchived = !showArchived }) {
+                            Icon(
+                                if (showArchived) painterResource(R.drawable.unarchive_24) else painterResource(R.drawable.archive_24),
+                                contentDescription = if (showArchived)
+                                    "Hide archived ($archivedCount)"
+                                else "Show archived ($archivedCount)",
+                                tint = if (showArchived) MaterialTheme.colorScheme.primary
+                                       else LocalContentColor.current,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
                     }
-                    // Archive visibility toggle. The icon flips between open and
-                    // closed-archive boxes so the active state reads at a glance.
-                    IconButton(onClick = { showArchived = !showArchived }) {
-                        Icon(
-                            if (showArchived) painterResource(R.drawable.unarchive_24) else painterResource(R.drawable.archive_24),
-                            contentDescription = if (showArchived)
-                                "Hide archived ($archivedCount)"
-                            else "Show archived ($archivedCount)",
-                            tint = if (showArchived) MaterialTheme.colorScheme.primary
-                                   else LocalContentColor.current,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                }
-            )
+                )
+            }
         }
     ) { padding ->
         if (pod == null) {
@@ -216,6 +362,7 @@ fun EpisodesScreen(
             items(visibleEpisodes, key = { it.guid }) { ep ->
                 val s = episodeStates[ep.guid] ?: EpisodeUiState()
                 val isCurrent = playerState.currentEpisodeGuid == ep.guid
+                val isSelected = ep.guid in selection
                 EpisodeRow(
                     ep = ep,
                     podcastArt = pod.artworkUrl,
@@ -225,11 +372,32 @@ fun EpisodesScreen(
                     isCurrent = isCurrent,
                     isPlaying = isCurrent && playerState.isPlaying,
                     autoplayDirectionUp = autoplayDirectionUp,
+                    inSelectionMode = inSelectionMode,
+                    isSelected = isSelected,
+                    onLongPress = {
+                        // Toggle this guid in the selection set. Entering
+                        // selection mode if previously empty; staying in
+                        // it otherwise.
+                        selection = if (ep.guid in selection) selection - ep.guid
+                                    else selection + ep.guid
+                    },
                     onPlay = {
-                        if (isCurrent) controller.togglePlay()
+                        if (inSelectionMode) {
+                            selection = if (ep.guid in selection) selection - ep.guid
+                                        else selection + ep.guid
+                        } else if (isCurrent) controller.togglePlay()
                         else onPlay(ep, pod)
                     },
-                    onPreviewTitle = { onPreview(ep) },
+                    onPreviewTitle = {
+                        // In selection mode, a title tap toggles selection
+                        // rather than opening the preview — consistent
+                        // with the rest of the row's tap targets so the
+                        // user doesn't escape selection mode by accident.
+                        if (inSelectionMode) {
+                            selection = if (ep.guid in selection) selection - ep.guid
+                                        else selection + ep.guid
+                        } else onPreview(ep)
+                    },
                     onShare = { ctx.shareEnclosure(ep.audioUrl, ep.title) },
                     onToggleAutoplayDirection = {
                         val nextUp = !autoplayDirectionUp
@@ -366,81 +534,15 @@ fun EpisodesScreen(
         }
     }
 
-    if (speedDialogOpen) {
-        DefaultSpeedDialog(
-            current = currentDefaultSpeed,
-            onDismiss = { speedDialogOpen = false },
-            onPick = { picked ->
-                speedDialogOpen = false
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        val dao = app.db.podcastStateDao()
-                        if (dao.get(feedUrl) == null) {
-                            dao.upsert(com.lofipod.app.data.db.PodcastStateEntity(feedUrl, picked))
-                        } else {
-                            dao.setDefaultSpeed(feedUrl, picked)
-                        }
-                    }
-                    snackbarHostState.showSnackbar(
-                        if (picked == null) "Default speed cleared (uses 1.00x)"
-                        else "Default speed set to ${"%.2fx".format(picked)}"
-                    )
-                }
-            }
-        )
-    }
 }
 
-/**
- * Per-podcast default-speed picker. Same six values as the Player speed chip
- * (so the user has one mental model for "valid speeds"), plus a "Clear"
- * action that nulls out the override and reverts to 1.00x.
- */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun DefaultSpeedDialog(
-    current: Float?,
-    onDismiss: () -> Unit,
-    onPick: (Float?) -> Unit
-) {
-    val choices = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Default speed for this podcast") },
-        text = {
-            Column {
-                Text(
-                    "Applied automatically every time you start an episode of this podcast. Set independently per show.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(12.dp))
-                androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    choices.forEach { v ->
-                        val active = current != null && kotlin.math.abs(v - current) < 0.01f
-                        FilterChip(
-                            selected = active,
-                            onClick = { onPick(v) },
-                            label = { Text("%.2fx".format(v)) }
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onPick(null) }, enabled = current != null) {
-                Text("Clear override")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
-        }
-    )
-}
+// DefaultSpeedDialog + speed-icon entry point removed in v0.10.15 per
+// user direction. The per-podcast default-speed override still applies
+// if previously set (stored in podcast_state.defaultSpeed; respected
+// by PlayerController.playEpisode); there's just no in-app UI to edit
+// it now. Restore from git history if a new entry point is desired.
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun EpisodeRow(
     ep: Episode,
@@ -451,6 +553,20 @@ private fun EpisodeRow(
     isCurrent: Boolean,
     isPlaying: Boolean,
     autoplayDirectionUp: Boolean,
+    /** v0.10.15+: true when ANY row on the screen is selected.
+     *  Drives the card's interaction model (taps toggle selection rather
+     *  than expand) and a subtle background tint on selected rows. */
+    inSelectionMode: Boolean,
+    /** v0.10.15+: true when this specific row is part of the current
+     *  selection. Tints the card with primaryContainer + shows a check
+     *  glyph in front of the title so the user can see at a glance
+     *  which rows are queued for a bulk action. */
+    isSelected: Boolean,
+    /** v0.10.15+: long-press anywhere on the card toggles this row's
+     *  membership in the selection set. Used both to enter selection
+     *  mode (when nothing was selected) and to add/remove individual
+     *  rows once selection mode is active. */
+    onLongPress: () -> Unit,
     onPlay: () -> Unit,
     onPreviewTitle: () -> Unit,
     onShare: () -> Unit,
@@ -469,20 +585,34 @@ private fun EpisodeRow(
     // Played-but-not-active rows fade to a softer surface and dim the text so
     // the user's eye skips them when scanning. The "playing now" tint always
     // wins over the played gray-out so the current row stays prominent.
+    // Selected rows (bulk-select mode, v0.10.15+) take a tertiaryContainer
+    // tint so they're visually distinct from both the live "now playing"
+    // primaryContainer and the regular surfaceVariant of unselected rows.
     val containerColor = when {
+        isSelected -> MaterialTheme.colorScheme.tertiaryContainer
         isCurrent -> MaterialTheme.colorScheme.primaryContainer
         isPlayed || isArchived -> MaterialTheme.colorScheme.surface
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    val textAlpha = if (!isCurrent && (isPlayed || isArchived)) 0.55f else 1f
-    val titleDecoration = if (isPlayed && !isCurrent) TextDecoration.LineThrough
+    val textAlpha = if (!isCurrent && !isSelected && (isPlayed || isArchived)) 0.55f else 1f
+    val titleDecoration = if (isPlayed && !isCurrent && !isSelected) TextDecoration.LineThrough
                           else TextDecoration.None
 
     Card(
         colors = CardDefaults.cardColors(containerColor = containerColor),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { expanded = !expanded }
+            .combinedClickable(
+                onClick = {
+                    // In selection mode the card tap toggles selection
+                    // (delegated to onLongPress's same effect for
+                    // consistency — we re-use that callback rather than
+                    // routing a second one through every call site).
+                    // Otherwise it expands the description as before.
+                    if (inSelectionMode) onLongPress() else expanded = !expanded
+                },
+                onLongClick = onLongPress,
+            )
     ) {
         Column(Modifier.padding(12.dp)) {
             if (isArchived) {
@@ -497,34 +627,51 @@ private fun EpisodeRow(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isCurrent) {
-                            Icon(
-                                painterResource(R.drawable.graphic_eq_24),
-                                contentDescription = "Now playing",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                        } else if (isPlayed) {
-                            Icon(
-                                painterResource(R.drawable.check_circle_24),
-                                contentDescription = "Played",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    .copy(alpha = 0.7f),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
+                        when {
+                            // Selection glyph wins over both the "now playing"
+                            // and "played" indicators when the row is part of
+                            // the active bulk-selection set (v0.10.15+).
+                            isSelected -> {
+                                Icon(
+                                    painterResource(R.drawable.check_circle_24),
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            isCurrent -> {
+                                Icon(
+                                    painterResource(R.drawable.graphic_eq_24),
+                                    contentDescription = "Now playing",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            isPlayed -> {
+                                Icon(
+                                    painterResource(R.drawable.check_circle_24),
+                                    contentDescription = "Played",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        .copy(alpha = 0.7f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
                         }
                         Text(
                             ep.title,
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = if (expanded) Int.MAX_VALUE else 2,
                             // Title is its own click target — tap navigates
-                            // to the Player in preview mode. The card's
-                            // surrounding clickable still handles expand /
-                            // collapse for everything else (chevron, meta
-                            // line, description), so tapping anywhere outside
-                            // the title text still toggles the in-card view.
+                            // to the Player in preview mode (or toggles
+                            // selection if selection mode is active; the
+                            // routing is in the call site's onPreviewTitle
+                            // lambda, not here). The card's surrounding
+                            // combinedClickable still handles expand /
+                            // collapse + long-press for everything else
+                            // (chevron, meta line, description).
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable(onClick = onPreviewTitle),

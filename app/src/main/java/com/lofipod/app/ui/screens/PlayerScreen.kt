@@ -318,10 +318,18 @@ fun PlayerScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    // v0.10.15+: Home is the far-left affordance now.
+                    // Tap → Catalog. The "back to episodes" behaviour is
+                    // owned by the system back gesture (wired in
+                    // MainActivity's BackHandler to feedAwareBackFromPlayer
+                    // for the player route), so the down-chevron that used
+                    // to sit here is gone. One-tap-to-Catalog was the
+                    // common ask; for back-to-episodes use the system
+                    // back gesture / button.
+                    IconButton(onClick = onOpenCatalog) {
                         Icon(
-                            painterResource(R.drawable.keyboard_arrow_down_24),
-                            contentDescription = "Back",
+                            painterResource(R.drawable.home_24),
+                            contentDescription = "Catalog",
                             modifier = Modifier.size(28.dp)
                         )
                     }
@@ -372,18 +380,9 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
-                    // v0.10.9+: one-tap jump to Catalog. The chevron-down
-                    // back button next to the title walks the back stack
-                    // (Player → Episodes → Catalog = two taps); the home
-                    // icon collapses that to one.
-                    IconButton(onClick = onOpenCatalog) {
-                        Icon(
-                            painterResource(R.drawable.home_24),
-                            contentDescription = "Catalog",
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
+                    // Home moved to navigationIcon slot (far left) in
+                    // v0.10.15 — see the navigationIcon block above. The
+                    // actions row now starts directly with My lists.
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
                             painterResource(R.drawable.format_list_bulleted_24),
