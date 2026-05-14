@@ -193,6 +193,20 @@ class PlayerController(private val context: Context) {
      *  changes. */
     private var handoffTriggeredForGuid: String? = null
 
+    /**
+     * Pending delayed auto-download for an autoplay-induced episode. Holds
+     * the job so a fast skip-next can cancel-and-replace before the delay
+     * elapses (otherwise a long playlist of short autoplay episodes would
+     * accumulate one orphan coroutine per skipped track). The guid field
+     * is the identity check the firing coroutine uses to bail if a new
+     * playEpisode replaced the schedule before the timer expired.
+     *
+     * Single-threaded access (always from scope.launch on Main.immediate)
+     * so no @Volatile needed.
+     */
+    private var pendingAutoDownloadJob: kotlinx.coroutines.Job? = null
+    private var pendingAutoDownloadGuid: String? = null
+
     fun connect(onReady: () -> Unit) {
         // Pin this controller as the autoplay-confirm target for any
         // service-side media-button intercept (BT, vehicle, system-
@@ -406,6 +420,9 @@ class PlayerController(private val context: Context) {
         autoplayTimerJob?.cancel()
         autoplayTimerJob = null
         _autoplayTimer.value = null
+        pendingAutoDownloadJob?.cancel()
+        pendingAutoDownloadJob = null
+        pendingAutoDownloadGuid = null
         scope.cancel()
     }
 
@@ -885,26 +902,73 @@ class PlayerController(private val context: Context) {
                         )
                     )
                 }
-                // Screen-off + autoplay: defer the actual download. Firing
-                // start() inline opens a second HTTP socket to the same CDN
-                // while the player's streaming socket is still ramping up,
-                // which on a downclocked CPU (screen off → kernel reduces
-                // clocks aggressively) combines with DSP under-budget to
-                // produce the 3-5s BUFFERING↔READY oscillation users have
-                // reported across multiple versions. The auto_download row
-                // is still upserted above, so fireDeferredAutoDownload picks
-                // it up at the next track change or natural end — by which
-                // point the user is usually awake / the device is interactive
-                // again. Manual user-tap plays (wasAutoplay=false) keep the
-                // inline start regardless of screen state.
-                val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-                val interactive = pm?.isInteractive != false
-                if (wasAutoplay && !interactive) {
-                    com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
-                        "auto_download_deferred",
-                        "guid=${ep.guid} reason=screen_off+autoplay (will fire on next track change / screen wake)",
-                    )
+                // Auto-download scheduling.
+                //
+                // v0.10.12's first attempt deferred the download entirely
+                // when the screen was off + autoplay-induced, on the
+                // theory that opening a second HTTP socket to the same CDN
+                // while the player's streaming socket was still ramping up
+                // was triggering the screen-off 3-5s BUFFERING<->READY
+                // oscillation. That logic worked for the oscillation BUT
+                // had a worse failure mode: the deferred fire only ran on
+                // the next track change or STATE_ENDED, which on a
+                // 30-minute episode meant the user finished listening
+                // without ever having the episode offline. The point of
+                // auto-download (offline if I want to scrub or re-listen)
+                // was defeated.
+                //
+                // v0.10.14 fix: keep the inline start for manual user-tap
+                // plays. For autoplay-induced plays, schedule the start
+                // for AUTOPLAY_DOWNLOAD_DELAY_MS later — long enough that
+                // the player's streaming buffer has filled and the audio
+                // chain has settled past the initial-buffer DSP cost
+                // spike, short enough that a typical podcast episode
+                // completes its download well before the user finishes
+                // listening.
+                //
+                // The schedule is cancel-and-replace per controller —
+                // a fast skip-next reassigns pendingAutoDownloadJob to
+                // the new episode and cancels the prior. The previous
+                // episode's auto_download row still exists and will be
+                // picked up by fireDeferredAutoDownload(outgoingId) on
+                // the next transition or by fireDeferredAutoDownloadOrphans
+                // on next connect.
+                if (wasAutoplay) {
+                    pendingAutoDownloadJob?.cancel()
+                    val targetGuid = ep.guid
+                    pendingAutoDownloadGuid = targetGuid
+                    pendingAutoDownloadJob = scope.launch {
+                        delay(AUTOPLAY_DOWNLOAD_DELAY_MS)
+                        // Bail if a newer playEpisode replaced us.
+                        if (pendingAutoDownloadGuid != targetGuid) return@launch
+                        pendingAutoDownloadGuid = null
+                        pendingAutoDownloadJob = null
+                        // Re-check at fire time — user may have manually
+                        // started or completed the download in the
+                        // interim, or removed it.
+                        val current = app.downloadsApi.byId.value[targetGuid]
+                        val needsStartNow = current == null ||
+                            current.state == com.lofipod.app.data.LofiDownload.State.FAILED
+                        if (!needsStartNow) {
+                            com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                                "auto_download_delayed_skip",
+                                "guid=$targetGuid state=${current?.state} (already in flight, no-op)",
+                            )
+                            return@launch
+                        }
+                        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                            "auto_download_delayed_fire",
+                            "guid=$targetGuid after ${AUTOPLAY_DOWNLOAD_DELAY_MS / 1000}s settle",
+                        )
+                        app.downloadsApi.start(ep)
+                    }
                 } else {
+                    // Manual user-tap play. No delay — the user explicitly
+                    // initiated playback and (if auto-download is the
+                    // default for this episode) expects download to start
+                    // immediately. The initial-buffer contention isn't
+                    // a concern here because the user is interacting
+                    // with the device.
                     app.downloadsApi.start(ep)
                 }
             } else {
@@ -2179,6 +2243,16 @@ class PlayerController(private val context: Context) {
          *  stay clear, while the user-reported 3-5s repeat patterns
          *  (ratio typically 0.10-0.20) trip clearly. */
         private const val STALL_STICKY_MIN_ADVANCE_RATIO = 0.30
+
+        /** Delay before firing an autoplay-induced auto-download. Gives
+         *  the player's streaming socket time to ramp up and the DSP
+         *  chain time to settle past the initial-buffer cost spike
+         *  before opening a second HTTP socket to the same CDN. 15 s is
+         *  the sweet spot: long enough that the player has stabilized,
+         *  short enough that the download still completes well before
+         *  most podcast episodes end. Manual user-tap plays bypass this
+         *  delay entirely; only autoplay-induced plays are scheduled. */
+        const val AUTOPLAY_DOWNLOAD_DELAY_MS = 15_000L
 
         // Queue position step. Big enough that enqueueNext (minPos - STEP) stays
         // sortable for many operations before we'd need to re-densify.

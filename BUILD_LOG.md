@@ -2,6 +2,56 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.14 — Auto-download from autoplay: delayed-fire instead of deferred (2026-05-14)
+
+User report: after v0.10.12 / v0.10.13 stabilised playback, the
+autoplay-induced auto-download wasn't firing for screen-off sessions.
+
+**Root cause.** v0.10.12 introduced a defer-on-screen-off branch in
+playEpisode that upserted the auto_download row but skipped the inline
+`app.downloadsApi.start(ep)`, relying on `fireDeferredAutoDownload` to
+pick it up on next track change or STATE_ENDED. On a 30-minute episode
+played screen-off, that meant the download didn't START until the
+episode ENDED — the user finished listening to an episode they never
+had offline. The intent of auto-download (offline for scrub / re-listen)
+was defeated.
+
+**Fix.** Replace the "defer entirely" branch with a "delay slightly"
+branch. Autoplay-induced plays now schedule the download for
+`AUTOPLAY_DOWNLOAD_DELAY_MS` (15s) after `playEpisode` — long enough for
+the streaming socket to ramp + DSP chain to settle past the initial-
+buffer cost spike, short enough that a typical podcast episode is
+downloaded well before the user finishes listening. Manual user-tap
+plays remain inline-start with no delay.
+
+The scheduled job is cancel-and-replace per controller: a fast skip-next
+cancels the pending fire and reassigns to the new episode. The previous
+episode's `auto_download` row stays put and is picked up by
+`fireDeferredAutoDownload(outgoingId)` on the transition or by
+`fireDeferredAutoDownloadOrphans` on next connect.
+
+Re-check at fire time: if the user manually started / completed / removed
+the download during the 15s window, the scheduled fire is a no-op
+(`auto_download_delayed_skip` instead of `auto_download_delayed_fire`).
+
+`pendingAutoDownloadJob` + `pendingAutoDownloadGuid` are torn down in
+`PlayerController.release()` so a leftover schedule from a destroyed
+activity can't fire against a stale `app.downloadsApi`.
+
+### New diagnostics events
+
+  - `auto_download_delayed_fire` — autoplay-induced download started after the 15s settle.
+  - `auto_download_delayed_skip` — scheduled fire bailed because download was already in flight / completed / manually started in the interim.
+
+The v0.10.12 `auto_download_deferred` identifier is removed from active
+code; HELP_TEXT keeps a one-line historical note so anyone reading
+older logs can still decode it.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/AudioDiagnosticsScreen.kt`
+
 ## v0.10.13 — Field-log-driven playback fixes (2026-05-14)
 
 User-provided logcat (`LofiPod log 7d4b926806be.txt`) exposed three

@@ -416,7 +416,9 @@ private val HELP_TEXT: String = """
       track_change             Episode swap. Includes from-guid, to-guid, autoplay flag, target feed URL.
       handoff_forward          Streaming -> downloaded file swap fired (download completed mid-playback).
       handoff_reverse          Downloaded file -> streaming swap fired (download removed mid-playback).
-      auto_download_deferred   Auto-download skipped inline because screen-off + autoplay; will fire at next track change or wake.
+      auto_download_deferred   (v0.10.12 only — removed in v0.10.14) Auto-download skipped inline because screen-off + autoplay.
+      auto_download_delayed_fire  v0.10.14+ replacement: autoplay-induced auto-download started after the configured settle delay (15s default).
+      auto_download_delayed_skip  Scheduled delayed-fire ran but the download was already in flight / completed / manually started in the interim — no-op.
       wake_lock_oscillation    Wake-lock acquired N times in 30s — isPlaying flip-flopping, corroborates arm C.
       back_nav_feed_aware      Back-from-Player routed to episodes/{currentFeed}.
       back_nav_fallback        Back-from-Player feedUrl unknown — used plain smartBack.
