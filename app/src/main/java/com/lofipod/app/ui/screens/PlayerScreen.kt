@@ -766,7 +766,7 @@ fun PlayerScreen(
                                 modifier = Modifier.align(Alignment.CenterEnd),
                             ) {
                                 Icon(
-                                    painter = painterResource(id = R.drawable.flush_valve_24),
+                                    painter = painterResource(id = R.drawable.valve_24),
                                     contentDescription = "Flush audio buffer",
                                 )
                             }

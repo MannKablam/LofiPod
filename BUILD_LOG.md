@@ -2,31 +2,35 @@
 
 Running notes on what's changed and why. Newest at top.
 
-## v0.10.10 — Manual-flush icon redesigned (flush valve, not plunger) (2026-05-13)
+## v0.10.11 — Revert v0.10.10's icon swap; keep wording fix (2026-05-13)
 
-User feedback: the Material Symbols `valve` icon we shipped in v0.10.2
-visually reads as a plunger (industrial valve with wheel handle on a
-stem). They wanted a flush-valve mechanism — the actual button you
-press on a toilet tank to release water.
+I misread the user's v0.10.10 request. They were pointing out that the
+SETTINGS COPY used the word "plunger" while the actual icon we ship is
+a valve — i.e., the WORDING was inconsistent with the icon, not that
+the icon needed changing. v0.10.10 swapped the icon (wrong fix) AND
+updated the wording (correct fix).
 
-Material Symbols doesn't have a literal "flush_valve" icon, so this
-is a custom vector drawable: `res/drawable/flush_valve_24.xml`
-depicting a modern dual-flush button (two stacked rounded ovals —
-larger top button for full flush, smaller bottom button for half
-flush). Hand-drawn in this project to match Material Symbols' viewport
-(960x960) + filled-outline style so it visually belongs next to the
-bundled Material Symbols icons.
+This tag reverts the icon swap:
+  - Restored `res/drawable/valve_24.xml` (Material Symbols valve glyph,
+    same as v0.10.2-v0.10.9).
+  - Deleted v0.10.10's custom `flush_valve_24.xml` (the dual-flush
+    button design).
+  - PlayerScreen reference back to `R.drawable.valve_24`.
 
-PlayerScreen swapped from `R.drawable.valve_24` to
-`R.drawable.flush_valve_24`. Settings → About copy updated:
-"Adds a flush-valve icon to the right of the speed chip..." (was
-"plunger icon"). Comments in PlayerController.kt, PlayerScreen.kt,
-SettingsScreen.kt, and Settings.kt updated similarly.
+The "plunger" → "flush-valve" wording changes from v0.10.10 are KEPT.
+They were the actual fix the user asked for — the Settings copy now
+matches the icon we ship. No "plunger" wording anywhere in the
+codebase post-v0.10.10.
 
-`valve_24.xml` deleted (no longer referenced anywhere). The
-icon-philosophy convention in `ICON_PHILOSOPHY.md` still holds — for
-icons that DON'T exist in Material Symbols (like flush_valve here),
-custom vectors are fine as long as they match the visual style.
+## v0.10.10 — Manual-flush icon redesigned (REVERTED in v0.10.11) (2026-05-13)
+
+[Reverted — see v0.10.11 above. v0.10.10 incorrectly swapped the icon
+when only the wording needed updating. The custom flush_valve_24.xml
+from this tag is no longer in the tree.]
+
+Original change was a custom dual-flush button vector drawable
+replacing the Material Symbols `valve` glyph. Reverted because the
+user's actual request was a wording correction, not an icon change.
 
 ## v0.10.9 — Stale-while-revalidate catalog UX + home-icon nav (2026-05-13)
 
