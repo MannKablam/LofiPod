@@ -75,6 +75,19 @@ class PlaybackService : MediaSessionService() {
     private val recentAcquireTimestamps = ArrayDeque<Long>()
     private var lastOscillationLogAtMs: Long = 0L
 
+    /**
+     * Throttled AudioTrack-underrun tracking. ExoPlayer's
+     * AnalyticsListener.onAudioUnderrun fires once per underrun event from
+     * the audio sink's POV; in a chronic-underrun storm (the user-reported
+     * 3-5s loop) that can be many per second. Aggregate into 30-second
+     * windows and log a single AppDiagnostics entry per window with
+     * (count, worst-buffer-drained-by-ms) so the diagnostics ring isn't
+     * flooded.
+     */
+    private var underrunWindowStartMs: Long = 0L
+    private var underrunWindowCount: Int = 0
+    private var underrunWindowWorstElapsedMs: Long = 0L
+
     companion object {
         // Shared EQ instance — UI can grab it via app-level holder
         val sharedEq = EqAudioProcessor()
@@ -120,6 +133,14 @@ class PlaybackService : MediaSessionService() {
          *  entry per acquire. Same magnitude as the stall-snackbar
          *  throttle in PlayerController. */
         private const val WAKE_LOCK_OSCILLATION_COOLDOWN_MS = 60_000L
+
+        /** Aggregation window for AudioTrack underrun events. Within a
+         *  30s window we keep a count + worst-elapsed-feed-gap and emit
+         *  ONE diagnostics entry summarising the window. Matches the
+         *  arm-C sticky-stall window and the wake-lock oscillation
+         *  window — same time base across all three signals so a
+         *  reader can correlate by looking at "ago" timestamps. */
+        private const val AUDIO_UNDERRUN_WINDOW_MS = 30_000L
     }
 
     override fun onCreate() {
@@ -199,6 +220,57 @@ class PlaybackService : MediaSessionService() {
             }
         })
 
+        // ExoPlayer AnalyticsListener — surfaces low-level audio events
+        // the regular Player.Listener doesn't expose: AudioTrack
+        // underruns (the kernel-layer "audio HAL ran dry" event that
+        // showed up as "AudioTrack: getTimestamp_l device stall time
+        // corrected" in field logs (LofiPod log 7d4b926806be.txt:607,
+        // 664, 687, ...)) and audio-format-change / decoder-error
+        // breadcrumbs. Throttled in the recordAudioUnderrun helper so
+        // a chronic-underrun storm doesn't fill the diagnostics ring.
+        player.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onAudioUnderrun(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                bufferSize: Int,
+                bufferSizeMs: Long,
+                elapsedSinceLastFeedMs: Long,
+            ) {
+                recordAudioUnderrun(bufferSize, bufferSizeMs, elapsedSinceLastFeedMs)
+            }
+
+            override fun onAudioSinkError(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioSinkError: Exception,
+            ) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_sink_error",
+                    "${audioSinkError.javaClass.simpleName}: ${audioSinkError.message ?: "(no message)"}",
+                )
+            }
+
+            override fun onAudioCodecError(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioCodecError: Exception,
+            ) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_codec_error",
+                    "${audioCodecError.javaClass.simpleName}: ${audioCodecError.message ?: "(no message)"}",
+                )
+            }
+
+            override fun onAudioDecoderInitialized(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_decoder_init",
+                    "decoder=$decoderName init_ms=$initializationDurationMs",
+                )
+            }
+        })
+
         // Rehydrate persisted audio prefs into the shared processors.
         // One-shot reads on service creation — the EQ screen writes through
         // to the same Settings entries (and to the live processors) when
@@ -275,7 +347,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Intercepts `Player.COMMAND_PLAY_PAUSE` arriving from any controller
+     * Intercepts `Player.COMMAND_PLAY_PAUSE` arriving from REMOTE controllers
      * (BT headphones, vehicle transport, system media notification) while
      * the autoplay-confirmation timer is active. The activity-side
      * [PlayerController] writes the timer state, [AutoplayConfirmBridge]
@@ -286,12 +358,29 @@ class PlaybackService : MediaSessionService() {
      * activity-side controller has already been told to clear the timer in
      * the same call, so the next play/pause press goes through normally.
      *
-     * Our own activity-side controller never lands here while the timer is
-     * active: [PlayerController.togglePlay] short-circuits to
-     * confirmAutoplayContinuation before issuing player commands, and the
-     * timer's own auto-pause pre-clears the timer state before calling
-     * `pause()` so the bridge no longer reports active by the time the
-     * command arrives.
+     * **Controller-source filtering (v0.10.13 fix).** Pause/play commands
+     * originating from OUR OWN process must NEVER be intercepted. The earlier
+     * "togglePlay short-circuits to confirmAutoplayContinuation" comment
+     * accounted for the public PlayerController.togglePlay path, but missed
+     * [com.lofipod.app.audio.BeepPlayer.duckedBeep] which also calls
+     * `player.pause()` directly to silence the podcast under the beep tone.
+     * That pause arrived here, the timer was active, the bridge interpreted
+     * it as a remote BT press, fired confirmAutoplayContinuation (cancelling
+     * the timer + the in-flight beep coroutine), and Media3 then tried to
+     * build a SessionResult Bundle from RESULT_INFO_SKIPPED — which fails
+     * an internal assertion at SessionResult.java:227, producing the
+     * "Ignoring malformed Bundle for SessionResult" warning observed in
+     * field logs (LofiPod log 7d4b926806be.txt:619-658).
+     *
+     * Net effect of the old code: every autoplay-induced episode was
+     * silently uninterruptible after T=60s (first beep). Beep #2 / #3 and
+     * the T=190s auto-pause never fired because the timer had been
+     * inadvertently confirmed by our own pause-for-beep.
+     *
+     * Fix: gate the intercept on `controller.uid != Process.myUid()`.
+     * Same-uid pauses (BeepPlayer, togglePlay, the timer's auto-pause,
+     * future code paths we haven't thought of yet) always pass through to
+     * default handling. Only true remote controllers hit the intercept.
      */
     private object AutoplayConfirmCallback : MediaSession.Callback {
         // Media3 1.5 deprecated this MediaSession.Callback.onPlayerCommandRequest
@@ -308,9 +397,26 @@ class PlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo,
             playerCommand: Int,
         ): Int {
-            if (playerCommand == Player.COMMAND_PLAY_PAUSE &&
-                AutoplayConfirmBridge.handleMediaButtonPlayPause()
-            ) {
+            if (playerCommand != Player.COMMAND_PLAY_PAUSE) {
+                return SessionResult.RESULT_SUCCESS
+            }
+            // Same-uid = our own MediaController (or anything else in our
+            // process). Let it through unconditionally — the public
+            // PlayerController.togglePlay / pause paths already handle the
+            // autoplay-timer confirmation themselves; internal pauses from
+            // BeepPlayer must not be intercepted because the resulting
+            // confirm + timer-cancel would self-defeat the beep window.
+            val ownUid = android.os.Process.myUid()
+            if (controller.uid == ownUid) {
+                return SessionResult.RESULT_SUCCESS
+            }
+            // Remote controller — apply the bridge intercept.
+            if (AutoplayConfirmBridge.handleMediaButtonPlayPause()) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "autoplay_confirm_remote",
+                    "remote controller pause/play intercepted as autoplay confirm " +
+                        "(uid=${controller.uid} pkg=${controller.packageName})",
+                )
                 return SessionResult.RESULT_INFO_SKIPPED
             }
             return SessionResult.RESULT_SUCCESS
@@ -394,6 +500,37 @@ class PlaybackService : MediaSessionService() {
         } catch (t: Throwable) {
             Log.w("LofiPodPlayback", "WakeLock acquire failed: ${t.message}")
             wakeLockHeld = false
+        }
+    }
+
+    /**
+     * Throttled aggregator for [AnalyticsListener.onAudioUnderrun]
+     * events. The user-reported 3-5s playback loop appears at the audio-
+     * HAL layer as repeated AudioTrack underruns; logging each one
+     * individually would flood the diagnostics ring. Aggregate in a
+     * 30s window and emit one entry per window with the count + worst
+     * "elapsed since last feed" measurement so we can see severity at a
+     * glance without losing the signal.
+     */
+    private fun recordAudioUnderrun(bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
+        val now = System.currentTimeMillis()
+        if (underrunWindowStartMs == 0L || now - underrunWindowStartMs > AUDIO_UNDERRUN_WINDOW_MS) {
+            // Flush the previous window if it had any events, then start fresh.
+            if (underrunWindowCount > 0) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_underrun_window",
+                    "$underrunWindowCount underruns in " +
+                        "${AUDIO_UNDERRUN_WINDOW_MS / 1000}s — worst gap " +
+                        "${underrunWindowWorstElapsedMs}ms (buffer sized ${bufferSizeMs}ms)",
+                )
+            }
+            underrunWindowStartMs = now
+            underrunWindowCount = 0
+            underrunWindowWorstElapsedMs = 0L
+        }
+        underrunWindowCount++
+        if (elapsedSinceLastFeedMs > underrunWindowWorstElapsedMs) {
+            underrunWindowWorstElapsedMs = elapsedSinceLastFeedMs
         }
     }
 

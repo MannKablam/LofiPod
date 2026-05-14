@@ -1,6 +1,7 @@
 package com.lofipod.app.player
 
 import android.content.Context
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -8,6 +9,8 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioTrackBufferSizeProvider
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.SilenceSkippingProcessor
 
@@ -37,6 +40,45 @@ class EqRenderersFactory(
     private val eq: EqAudioProcessor,
     private val skipSilence: SilenceSkippingProcessor,
 ) : DefaultRenderersFactory(context) {
+
+    init {
+        // MediaCodecSelector preferring SOFTWARE MP3 decoders over hardware
+        // ones. Field logs (LofiPod log 7d4b926806be.txt:683-684, 689-691,
+        // 708, 712-713, ...) show repeated MediaCodec accounting errors
+        // from `c2.android.mp3.decoder`:
+        //   D CCodecBuffers: Client returned a buffer it does not own
+        //   D MediaCodec: keep callback message for reclaim
+        //   I CCodecConfig: query failed after returning 8 values (BAD_INDEX)
+        // These are known Codec 2 software-decoder bugs on Android 13+
+        // when ExoPlayer rapidly transitions states (seek + speed change +
+        // resume). They co-occur with AudioTrack underruns at the HAL layer.
+        //
+        // Counterintuitively the issue is with `c2.android.mp3.decoder`
+        // (Google's Codec 2 SOFTWARE decoder) — not a hardware OEM
+        // decoder. The selector below prefers any NON-c2.android.* MP3
+        // decoder available on the device, falling back to the Codec 2
+        // version only if nothing else is registered. On Pixel devices
+        // this typically picks `OMX.google.mp3.decoder` (the older OMX
+        // software decoder) which has been stable across the Codec 2
+        // transition window.
+        //
+        // For non-MP3 codecs we let the default selector pick — they
+        // haven't shown the same accounting issues in field logs.
+        setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+            val defaults = MediaCodecSelector.DEFAULT.getDecoderInfos(
+                mimeType, requiresSecureDecoder, requiresTunnelingDecoder,
+            )
+            if (mimeType != MimeTypes.AUDIO_MPEG) return@setMediaCodecSelector defaults
+            // Partition: non-Codec2 software decoders first, then everything
+            // else (preserving relative order within each partition). The
+            // MediaCodecRenderer will try them in this order, so the first
+            // viable non-Codec2 entry wins.
+            val (preferred, fallback) = defaults.partition { info: MediaCodecInfo ->
+                info.softwareOnly && !info.name.startsWith("c2.android.")
+            }
+            preferred + fallback
+        }
+    }
 
     // Audio offload is implicitly disabled: we override buildAudioSink to return
     // our own DefaultAudioSink, and DefaultAudioSink.Builder doesn't enable offload

@@ -2,6 +2,115 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.13 — Field-log-driven playback fixes (2026-05-14)
+
+User-provided logcat (`LofiPod log 7d4b926806be.txt`) exposed three
+distinct bugs the v0.10.12 diagnostics pass would have caught but
+weren't directly addressed. Fixing them all here, plus codec-selector
+mitigation for the kernel-layer audio HAL stalls observed in the same
+log.
+
+### Fix #1: Autoplay-confirmation timer was silently broken by its own beep
+
+**Symptom** (log lines 619-660): at T=60s into an autoplay window, the
+first beep fired, BeepPlayer.duckedBeep called `player.pause()` to
+silence the podcast under the beep tone, the pause traversed
+MediaController IPC to MediaSession, and our own
+`AutoplayConfirmCallback.onPlayerCommandRequest` intercepted it as if
+it were a remote BT/notification press — fired
+`confirmAutoplayContinuation`, cancelled the timer job, which
+propagated into the in-flight beep coroutine as JobCancellationException
+("Piezo beep failed; skipping audio strike"). The pause was denied
+(RESULT_INFO_SKIPPED), Media3's SessionResult Bundle construction failed
+its internal assertion ("Ignoring malformed Bundle for SessionResult"),
+and the podcast continued playing under a half-played beep.
+
+**Net effect since the autoplay-confirmation feature shipped:** every
+autoplay-induced episode was uninterruptible after the first beep at
+T=60s. Beep #2 / #3 and the T=190s auto-pause never fired. Battery
+drained overnight on long episode chains.
+
+**Fix** (PlaybackService.kt): gate the autoplay-confirm intercept on
+`controller.uid != Process.myUid()`. Our own MediaController's pauses
+(BeepPlayer, togglePlay, the timer's own auto-pause, any future
+internal path) now always pass through to default Media3 handling.
+Only true remote controllers (BT, vehicle, system notification) trigger
+the autoplay-confirm intercept.
+
+Also logs `autoplay_confirm_remote` to AppDiagnostics when a remote
+intercept fires, so back-end triage can see what remote controller
+triggered a confirmation (uid + package name).
+
+### Fix #2: FATAL crash on activity destroy ("Service not registered")
+
+**Symptom** (log lines 9-25): on activity destroy after a particular
+playback session, `PlayerController.release()` called
+`controller?.release()`, which inside Media3's MediaControllerImplBase
+called `ContextImpl.unbindService`, which threw
+`IllegalArgumentException: Service not registered` — known Media3 race
+on the service binding teardown path.
+
+**Fix** (PlayerController.kt): wrap both `controller?.removeListener` and
+`controller?.release()` in try/catch. We're tearing down the activity
+anyway; the framework's accounting is already screwed at that point.
+Log to AppDiagnostics under `controller_release_failed` so we can see
+how often this still fires post-fix.
+
+### Fix #3: AudioTrack underruns invisible to the diagnostics surface
+
+**Symptom** (log lines 607-775, 90+ seconds of sustained underruns): the
+user's reported 3-5s playback loop showed up at the kernel audio HAL
+layer as repeated `AudioTrack: getTimestamp_l device stall time
+corrected using current time` messages at 3-9 second intervals, plus
+MP3 decoder bookkeeping confusion. None of this surfaced on our
+diagnostics screen — we were only watching ExoPlayer's BUFFERING<->READY
+state at the renderer layer.
+
+**Fix** (PlaybackService.kt): added an `AnalyticsListener` to the
+ExoPlayer instance with overrides for `onAudioUnderrun`,
+`onAudioSinkError`, `onAudioCodecError`, and `onAudioDecoderInitialized`.
+Underruns are aggregated into 30-second windows (matching arm C's window
++ wake-lock oscillation window) so a chronic storm produces one entry
+per window with count + worst-elapsed-feed-gap, not one per underrun.
+
+New event identifiers:
+  - `audio_underrun_window`: N underruns in 30s, worst gap M ms, buffer K ms.
+  - `audio_sink_error`: DefaultAudioSink threw.
+  - `audio_codec_error`: MediaCodec threw.
+  - `audio_decoder_init`: which decoder Media3 picked (lets us verify Fix #4 took effect).
+
+### Fix #4: Software MP3 decoder preference (`c2.android.mp3.decoder` bookkeeping bugs)
+
+**Symptom** (log lines 683-691, 708-715, 728-732, ...): repeated
+`CCodecBuffers: Client returned a buffer it does not own according to
+our record` + `MediaCodec: keep callback message for reclaim` +
+`CCodecConfig: query failed after returning 8 values (BAD_INDEX)` from
+`c2.android.mp3.decoder`. Google's Codec 2 software MP3 decoder is
+known buggy on Android 13+ when ExoPlayer rapidly transitions states
+(seek + speed change + resume). Co-occurs with the AudioTrack underrun
+storm.
+
+**Fix** (EqRenderersFactory.kt): override `setMediaCodecSelector` to
+prefer non-`c2.android.*` software MP3 decoders. The selector partitions
+available decoders into preferred (`softwareOnly && !c2.android.*`) and
+fallback (everything else, preserving relative order). On Pixel devices
+this typically picks `OMX.google.mp3.decoder` — the older OMX software
+decoder that hasn't shown the same accounting issues. For non-MP3 codecs
+we use the default selector unchanged.
+
+If a device has no non-Codec2 MP3 decoder registered, the fallback path
+still picks the Codec 2 one — better than refusing playback. The
+`audio_decoder_init` AppDiagnostics event reports which decoder actually
+got picked so we can confirm the override took effect.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+  - `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+  - `app/src/main/java/com/lofipod/app/player/EqRenderersFactory.kt`
+  - `app/src/main/java/com/lofipod/app/audio/BeepPlayer.kt` (comment only)
+  - `app/src/main/java/com/lofipod/app/ui/screens/AudioDiagnosticsScreen.kt` (HELP_TEXT)
+
 ## v0.10.12 — Playback hardening pass (2026-05-14)
 
 Five long-standing playback issues addressed in one pass, with diagnostics

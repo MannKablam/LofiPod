@@ -420,6 +420,12 @@ private val HELP_TEXT: String = """
       wake_lock_oscillation    Wake-lock acquired N times in 30s — isPlaying flip-flopping, corroborates arm C.
       back_nav_feed_aware      Back-from-Player routed to episodes/{currentFeed}.
       back_nav_fallback        Back-from-Player feedUrl unknown — used plain smartBack.
+      autoplay_confirm_remote  Remote-controller (BT, vehicle, notification) play/pause intercepted as autoplay confirm. v0.10.13+: our own process's pauses no longer trigger this.
+      controller_release_failed  Media3's MediaController.release threw on activity destroy (usually IllegalArgumentException "Service not registered" — framework race, swallowed since we're tearing down anyway).
+      audio_underrun_window    AudioTrack underran N times in 30s — worst gap M ms vs buffer K ms. Kernel-layer signal: the audio HAL ran dry, not just BUFFERING<->READY oscillation. If this fires repeatedly the DSP chain isn't keeping up.
+      audio_sink_error         ExoPlayer's DefaultAudioSink threw — Media3 chain-level failure.
+      audio_codec_error        MediaCodec (decoder) threw — codec-level failure. If accompanied by mp3-decoder events look at Fix #4 (software decoder preference).
+      audio_decoder_init       Which decoder Media3 picked for the current track. v0.10.13+ prefers non-c2.android.* MP3 decoders.
 
     Actions:
       Copy to clipboard       dumps every section above as plain text.

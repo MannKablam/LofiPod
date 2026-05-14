@@ -375,8 +375,31 @@ class PlayerController(private val context: Context) {
 
     fun release() {
         AutoplayConfirmBridge.unbind(this)
-        controller?.removeListener(listener)
-        controller?.release()
+        // Both removeListener and release wrapped in try/catch. Media3's
+        // MediaControllerImplBase.release internally calls ContextImpl.
+        // unbindService, which throws IllegalArgumentException ("Service
+        // not registered") if the service binding was already torn down
+        // (or never completed) — observed as a FATAL EXCEPTION on activity
+        // destroy in field logs (LofiPod log 7d4b926806be.txt:9-25). The
+        // framework's accounting is screwed at that point but we're
+        // tearing down anyway; swallowing the exception is the right
+        // call. removeListener gets the same defensive wrap in case a
+        // future Media3 update routes it through a similar
+        // service-bound path.
+        try {
+            controller?.removeListener(listener)
+        } catch (t: Throwable) {
+            android.util.Log.w("LofiPodPlayer", "controller.removeListener threw: ${t.message}")
+        }
+        try {
+            controller?.release()
+        } catch (t: Throwable) {
+            android.util.Log.w("LofiPodPlayer", "controller.release threw: ${t.message}")
+            com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                "controller_release_failed",
+                "${t.javaClass.simpleName}: ${t.message ?: "(no message)"}",
+            )
+        }
         controller = null
         _pendingReturn.value = null
         pendingPlay = null
