@@ -398,6 +398,10 @@ fun EqScreen(
                                 settings.setPhaseMode(Settings.PHASE_MODE_PURE_IIR)
                             }
                             eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.PURE_IIR)
+                            // v0.10.1+: flush the AudioTrack so the 1.5-3 s of
+                            // pre-switch PCM queued ahead doesn't continue
+                            // playing through the old mode's settings.
+                            controller.flushAudio()
                         }
                     },
                     label = { Text("Pure IIR") }
@@ -411,6 +415,7 @@ fun EqScreen(
                                 settings.setPhaseMode(Settings.PHASE_MODE_MIN_FIR)
                             }
                             eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.MIN_FIR)
+                            controller.flushAudio()
                         }
                     },
                     label = { Text("Min FIR") }
@@ -424,6 +429,7 @@ fun EqScreen(
                                 settings.setPhaseMode(Settings.PHASE_MODE_LINEAR_FIR)
                             }
                             eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.LINEAR_FIR)
+                            controller.flushAudio()
                         }
                     },
                     label = { Text("Linear FIR") }
@@ -437,6 +443,7 @@ fun EqScreen(
                                 settings.setPhaseMode(Settings.PHASE_MODE_MIXED)
                             }
                             eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.MIXED)
+                            controller.flushAudio()
                         }
                     },
                     label = { Text("Mixed") }

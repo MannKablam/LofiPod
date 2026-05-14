@@ -2,6 +2,49 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.1 — Min FIR Kaiser fix + auto-flush on mode switch + manual flush plunger (2026-05-13)
+
+Three fixes / features in response to first real-device testing of the
+v0.9.0 → v0.10.0 audio rebuild:
+
+**Bug: Min FIR ~5% of original volume.** Root cause: I was applying the
+symmetric Kaiser window (β=6) to the min-phase kernel. Kaiser's value is
+~1.0 at the center of the array and ~0.015 at the edges. The linear-phase
+kernel has its impulse energy at the center, so Kaiser there is a no-op
+(multiply by ~1). The min-phase kernel has all its energy at the START
+of the array (causal, energy-front-loaded), so Kaiser at index 0 ≈ 0.015
+multiplied straight against the dominant taps was a -36 dB attenuation
+of the kernel. Combined with energy spread over the first few hundred
+samples this surfaced as ~5% audible volume. Fix: removed the Kaiser
+multiplication from synthMinPhaseKernel — the cepstrum kernel naturally
+tapers to near-zero in its tail, so truncation alone is fine. Mixed
+mode escaped the bug because its min-phase contribution is time-shifted
+to the center where Kaiser ≈ 1.0, and the magnitudes are crossover-scaled.
+
+**Bug fix: auto-flush on phase-mode switch.** Toggling phase mode
+called chainReset() which cleared the chain's internal state — but the
+AudioTrack already had 1.5-3 s of pre-switch PCM queued ahead, which
+continued playing through the now-cleared chain. For Linear FIR
+specifically this could surface as "0% volume at 1× speed" or
+"buffering loop until a manual flush." Now EqScreen's mode-switch chips
+call PlayerController.flushAudio() after the chain state change, which
+issues a Media3 seek to currentPosition − 50 ms — guaranteed-real
+flush (same-position seeks are sometimes deduped) with a ~50 ms audible
+rewind. Acceptable cost for a mode switch.
+
+**Feature: manual flush plunger icon (opt-in).** Settings → "Show
+manual flush button on Player" (off by default). When enabled, a
+plunger icon appears to the RIGHT of the Speed chip in the player.
+Speed chip stays horizontally centered (via Box layout with
+contentAlignment=Center for the chip, Alignment.CenterEnd for the
+plunger). Tap → calls PlayerController.flushAudio() with the same
+50 ms rewind. Useful when something sounds contaminated and a clean
+restart is the fastest fix, without disrupting position much.
+
+Icon: Icons.Filled.Plumbing (material-icons-extended). Closest match
+to "plunger" semantically in the Material set; visually a wrench /
+plumbing tool.
+
 ## v0.10.0 — Audio rebuild endpoint: content + diagnostics polish (2026-05-13)
 
 Content/polish tag closing out the audio rebuild arc that started at

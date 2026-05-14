@@ -142,6 +142,20 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Show a "plunger" icon in the player screen for manual AudioTrack
+     * flush (v0.10.1+). Same vertical row as the speed chip, justified
+     * right (speed stays centered). Pressing the plunger triggers
+     * [PlayerController.flushAudio]. Off by default — niche debugging
+     * affordance.
+     */
+    val showFlushButtonInPlayer: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SHOW_FLUSH_BUTTON_IN_PLAYER] ?: false }
+
+    suspend fun setShowFlushButtonInPlayer(v: Boolean) {
+        context.dataStore.edit { it[KEY_SHOW_FLUSH_BUTTON_IN_PLAYER] = v }
+    }
+
+    /**
      * How many days a *played* episode lingers in the per-podcast list before
      * the auto-archive sweep moves it to the archive. 0 = off (never
      * auto-archive). Default 3 days, matching the original hardcoded constant.
@@ -436,6 +450,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("show_played_in_list")
         private val KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER =
             androidx.datastore.preferences.core.booleanPreferencesKey("show_diagnostics_tab_in_player")
+        private val KEY_SHOW_FLUSH_BUTTON_IN_PLAYER =
+            androidx.datastore.preferences.core.booleanPreferencesKey("show_flush_button_in_player")
         private val KEY_AUTO_ARCHIVE_DAYS =
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
         private val KEY_SKIP_SILENCE_LEVEL =

@@ -245,6 +245,13 @@ fun PlayerScreen(
         com.lofipod.app.data.Settings(app).showDiagnosticsTabInPlayer
     }.collectAsState(initial = false)
 
+    // Manual flush button (plunger icon). v0.10.1+; off by default. When
+    // enabled, sits to the right of the Speed chip with the chip itself
+    // staying horizontally centered.
+    val showFlushButton by remember(app) {
+        com.lofipod.app.data.Settings(app).showFlushButtonInPlayer
+    }.collectAsState(initial = false)
+
     // Surface controller-side transient messages as snackbars so play-button
     // taps that hit a no-op state (player not bound, no media loaded,
     // already buffering) get explicit user feedback rather than feeling
@@ -696,12 +703,32 @@ fun PlayerScreen(
                 // Speed chip is a live-playback tweak — the per-podcast
                 // default-speed picker (top of the per-podcast Episodes list)
                 // is the equivalent affordance for preview mode.
+                //
+                // The Box keeps SpeedChip centered horizontally; the
+                // optional flush plunger icon (v0.10.1+) sits aligned to
+                // CenterEnd without disturbing the chip's center position.
                 if (!isPreview) {
                     Spacer(Modifier.height(8.dp))
-                    SpeedChip(
-                        speed = state.speed,
-                        onPick = { controller.setSpeed(it) }
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        SpeedChip(
+                            speed = state.speed,
+                            onPick = { controller.setSpeed(it) }
+                        )
+                        if (showFlushButton) {
+                            IconButton(
+                                onClick = { controller.flushAudio() },
+                                modifier = Modifier.align(Alignment.CenterEnd),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Plumbing,
+                                    contentDescription = "Flush audio buffer",
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

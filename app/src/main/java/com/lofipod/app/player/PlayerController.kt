@@ -1519,6 +1519,37 @@ class PlayerController(private val context: Context) {
         controller?.seekTo(target)
     }
 
+    /**
+     * Force a Media3 audio-pipeline flush at the current position. Triggers
+     * AudioProcessor.flush() on every processor in the chain (clears chain
+     * state) AND drains the AudioTrack of any pre-flush PCM that was queued
+     * ahead.
+     *
+     * Used by:
+     *   - The EQ screen on phase-mode changes (v0.10.1+) — without this,
+     *     the 1.5-3s of pre-switch PCM in the AudioTrack continues to play
+     *     through the old mode's settings, and FIR modes can show audible
+     *     contamination from the prior mode's chain state.
+     *   - The optional plunger button in the player screen (v0.10.1+) — a
+     *     manual user-triggered flush for cases where the chain seems off
+     *     and a forced reset is the fastest fix.
+     *
+     * Mechanism: seek to currentPosition minus a small offset (default
+     * 50 ms). Same-position seeks are sometimes deduped by Media3; the
+     * small negative offset guarantees a real flush. Audible cost: ~50 ms
+     * of audio replays. Acceptable for a manual / mode-switch action.
+     */
+    fun flushAudio(rewindMs: Long = 50L) {
+        val c = controller ?: return
+        val current = c.currentPosition
+        val target = (current - rewindMs).coerceAtLeast(0L)
+        c.seekTo(target)
+        com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
+            identifier = "manual_flush",
+            detail = "Force-flushed at ${current / 1000}s (rewind=${rewindMs}ms).",
+        )
+    }
+
     fun setSpeed(speed: Float) {
         val clamped = speed.coerceIn(0.5f, 3.0f)
         // Mirror speed into AudioChainTelemetry immediately so the PerfHint

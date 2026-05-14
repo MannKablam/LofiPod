@@ -468,12 +468,22 @@ class FirEq {
         // Step 7: truncate to KERNEL_LENGTH (energy is front-loaded so
         // truncation drops the negligible tail). NO circular shift — the
         // min-phase IR is already causal at index 0 in the IFFT output.
-        // Apply Kaiser window for symmetric edge cleanup.
+        //
+        // **CRITICAL**: NO Kaiser window here. The symmetric Kaiser
+        // window has its maximum at the CENTER of KERNEL_LENGTH and tapers
+        // to ~0.015 at both edges (β=6). For the linear-phase kernel,
+        // the impulse energy is at the center, so the window's max value
+        // multiplies the dominant taps — gain ≈ 1. For the min-phase
+        // kernel, energy is at the START of KERNEL_LENGTH (causal,
+        // front-loaded), so the window's MIN value multiplies the dominant
+        // taps — this was a -36 dB attenuation bug shipped in v0.9.3
+        // through v0.10.0 that surfaced as "Min FIR ~5% of original volume"
+        // in real-world testing (v0.10.1 fix). The cepstrum kernel
+        // naturally tapers to near-zero in its tail; truncating at
+        // KERNEL_LENGTH without windowing introduces a tiny step
+        // discontinuity well below audibility (< -80 dB at typical Qs).
         val kernel = DoubleArray(KERNEL_LENGTH)
         System.arraycopy(minSpec, 0, kernel, 0, KERNEL_LENGTH)
-        for (i in 0 until KERNEL_LENGTH) {
-            kernel[i] *= KAISER_WINDOW[i]
-        }
         return kernel
     }
 

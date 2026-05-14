@@ -208,6 +208,12 @@ fun SettingsScreen(
             // the mini-player visible at the bottom for transport while
             // you read.
             DiagnosticsTabToggleRow()
+            // Manual flush plunger in Player. Off by default; on for users
+            // who want a one-tap audio reset (clears the AudioTrack buffer
+            // and re-seeks). Useful for diagnosing audio-chain state issues
+            // or when something sounds contaminated and you want a clean
+            // restart without disrupting position much (~50 ms rewind).
+            FlushButtonToggleRow()
             // App-wide bug telemetry — feed failures, download failures,
             // scripture-tag skips, etc. Distinct from Audio diagnostics
             // (chain-specific). Lands here so a user can capture concrete
@@ -339,6 +345,41 @@ private fun DiagnosticsTabToggleRow() {
             )
             Text(
                 "Adds a 4th tab next to Notes / Details / Transcript with live audio-chain health, watchpoints, and a one-tap snapshot-to-note. Includes a full-screen mode that keeps the mini-player visible for transport.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Toggle for the manual flush plunger icon shown in the player. Lives next
+ * to DiagnosticsTabToggleRow because both are "Player UI affordance" flags
+ * with similar plumbing.
+ */
+@Composable
+private fun FlushButtonToggleRow() {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
+    val settings = remember { Settings(app) }
+    val scope = rememberCoroutineScope()
+    val enabled by settings.showFlushButtonInPlayer.collectAsState(initial = false)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Switch(
+            checked = enabled,
+            onCheckedChange = { v -> scope.launch { settings.setShowFlushButtonInPlayer(v) } },
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Show manual flush button on Player",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                "Adds a plunger icon to the right of the speed chip. Tapping it forces an AudioTrack flush + brief re-seek (~50 ms), clearing any pre-flush PCM in the buffer. Useful when something sounds off and a clean restart is the fastest fix.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
