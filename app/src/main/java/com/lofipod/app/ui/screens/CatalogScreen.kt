@@ -4,6 +4,7 @@ package com.lofipod.app.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,6 +17,12 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -672,10 +679,14 @@ private fun KabodPackRow(
                     }
                 }
             }
-            // Hebrew kabod chip (כָּבוֹד), upper-right. System fonts on
-            // Android pick up Noto Sans Hebrew automatically; no font asset
-            // needed. Bold + slightly larger than labelMedium so the
-            // characters read clearly at chip size.
+            // Hebrew kabod chip (כבוד), upper-right. Pre-v0.10.16 used
+            // Noto Sans Hebrew via Android's font fallback — clean but
+            // missing the tagin (תגין / kether crowns) characteristic
+            // of Stam (סת"ם) sofer-style sacred-text writing. Android
+            // ships no Stam font and Google Fonts has no licensed Hebrew
+            // font with tagin, so we draw the word ourselves as a
+            // Compose Canvas. Stylised, not authentic ksav ari — but
+            // unmistakably "this is a sacred-text word, not chip filler."
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -684,15 +695,11 @@ private fun KabodPackRow(
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 shape = MaterialTheme.shapes.small,
             ) {
-                Text(
-                    // Unpointed spelling — cleaner at chip size and what the
-                    // word looks like in everyday written Hebrew. The pointed
-                    // form (כָּבוֹד) carries the same meaning but the niqqud
-                    // dots clash with a small chip's vertical metrics.
-                    text = "כבוד",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                KabodStamGlyph(
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .size(width = 54.dp, height = 22.dp),
                 )
             }
         }
@@ -756,5 +763,231 @@ private fun GroupRow(
                     .graphicsLayer { rotationZ = rotation }
             )
         }
+    }
+}
+
+/**
+ * Hand-drawn Hebrew "כבוד" (kabod) in a stylised Stam form, with tagin
+ * (תגין / kether crowns) above each letter. Android ships no Stam font
+ * and no permissively-licensed Hebrew font in the system fallback has
+ * tagin, so the four letters are drawn as Compose Canvas paths instead
+ * of relying on the text rendering pipeline. The shapes are simplified
+ * — not authentic sofer ksav — but the family is unambiguously Stam
+ * (calligraphic strokes + three-pronged crowns above each letter).
+ *
+ * Glyph order is right-to-left (Hebrew reading direction):
+ *   xKaf > xBet > xVav > xDal (kaf rightmost, dalet leftmost).
+ *
+ * Color is parameterised so the chip can paint the glyph in its
+ * onPrimary contentColor without us having to read MaterialTheme here.
+ */
+@Composable
+private fun KabodStamGlyph(
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        // Vertical layout: crowns occupy the top ~22% of the canvas,
+        // then a tiny gap, then the letter body, then a tiny breath at
+        // the baseline.
+        val tagH = h * 0.22f
+        val letterTop = tagH + h * 0.05f
+        val letterBottom = h * 0.95f
+        val letterH = letterBottom - letterTop
+        // Calligraphic stroke weight. Square caps so corners look like
+        // Stam quill-and-ink, not rounded ballpoint.
+        val stroke = h * 0.12f
+
+        // Letter widths: three "wide" letters (kaf, bet, dalet) + one
+        // narrow (vav). Gaps eat the remainder evenly between letters.
+        val gap = w * 0.04f
+        val totalGap = gap * 3f
+        val wideW = (w - totalGap) * 0.30f
+        val narrowW = (w - totalGap) * 0.10f
+
+        // RTL positioning. We compute right-edge for each letter then
+        // subtract its width.
+        val xKafRight = w
+        val xKaf = xKafRight - wideW
+        val xBetRight = xKaf - gap
+        val xBet = xBetRight - wideW
+        val xVavRight = xBet - gap
+        val xVav = xVavRight - narrowW
+        val xDalRight = xVav - gap
+        val xDal = xDalRight - wideW
+
+        drawKaf(xKaf, letterTop, wideW, letterH, stroke, color)
+        drawBet(xBet, letterTop, wideW, letterH, stroke, color)
+        drawVav(xVav, letterTop, narrowW, letterH, stroke, color)
+        drawDalet(xDal, letterTop, wideW, letterH, stroke, color)
+
+        // Tagin above each letter — three small pronged crowns. Position
+        // them on top of the letter's horizontal stroke (slightly inset
+        // from edges so they read as three distinct crowns).
+        drawTagin(xKaf, letterTop, wideW, tagH, stroke * 0.6f, color)
+        drawTagin(xBet, letterTop, wideW, tagH, stroke * 0.6f, color)
+        drawTagin(xVav, letterTop, narrowW, tagH, stroke * 0.6f, color, count = 1)
+        drawTagin(xDal, letterTop, wideW, tagH, stroke * 0.6f, color)
+    }
+}
+
+/**
+ * Draw kaf (כ) — open on the left, smooth bottom corner. Path traces:
+ * top horizontal → right vertical → bottom horizontal. Stroke join
+ * Round so the right-side corners read as the soft kaf curve (vs
+ * bet's sharp corners + thorn).
+ */
+private fun DrawScope.drawKaf(
+    x: Float, y: Float, w: Float, h: Float, stroke: Float, color: Color,
+) {
+    val p = Path().apply {
+        moveTo(x, y)
+        lineTo(x + w, y)
+        lineTo(x + w, y + h)
+        lineTo(x, y + h)
+    }
+    drawPath(
+        path = p,
+        color = color,
+        style = Stroke(width = stroke, cap = StrokeCap.Square, join = StrokeJoin.Round),
+    )
+}
+
+/**
+ * Draw bet (ב) — same shape as kaf but with a small thorn (the "kotzo
+ * shel bet") protruding down-left from the bottom-right corner, and
+ * sharp corners (StrokeJoin.Miter).
+ */
+private fun DrawScope.drawBet(
+    x: Float, y: Float, w: Float, h: Float, stroke: Float, color: Color,
+) {
+    val p = Path().apply {
+        moveTo(x, y)
+        lineTo(x + w, y)
+        lineTo(x + w, y + h)
+        lineTo(x, y + h)
+    }
+    drawPath(
+        path = p,
+        color = color,
+        style = Stroke(width = stroke, cap = StrokeCap.Square, join = StrokeJoin.Miter),
+    )
+    // Thorn: a small downward stroke from the bottom-right corner. This
+    // is what visually distinguishes bet from kaf in print + Stam.
+    val thorn = Path().apply {
+        moveTo(x + w, y + h)
+        lineTo(x + w + stroke * 0.4f, y + h + stroke * 0.7f)
+    }
+    drawPath(
+        path = thorn,
+        color = color,
+        style = Stroke(width = stroke * 0.8f, cap = StrokeCap.Square),
+    )
+}
+
+/**
+ * Draw vav (ו) — single vertical stroke with a small flag at the top
+ * extending right. Vav is narrow; w is typically ~10% of the canvas.
+ */
+private fun DrawScope.drawVav(
+    x: Float, y: Float, w: Float, h: Float, stroke: Float, color: Color,
+) {
+    val cx = x + w * 0.5f
+    // Top flag: a small horizontal extending from cx to (cx + w*0.5)
+    val flag = Path().apply {
+        moveTo(cx - w * 0.2f, y)
+        lineTo(cx + w * 0.5f, y)
+    }
+    drawPath(
+        path = flag,
+        color = color,
+        style = Stroke(width = stroke, cap = StrokeCap.Square),
+    )
+    // Vertical body
+    val body = Path().apply {
+        moveTo(cx, y)
+        lineTo(cx, y + h)
+    }
+    drawPath(
+        path = body,
+        color = color,
+        style = Stroke(width = stroke, cap = StrokeCap.Square),
+    )
+}
+
+/**
+ * Draw dalet (ד) — inverted-L / Γ-like shape: top horizontal + right
+ * vertical down to the baseline. Open on the bottom-left. Small
+ * "kotzo" thorn at the top-right corner (sticking up-right) is the
+ * traditional Stam adornment that distinguishes dalet from resh.
+ */
+private fun DrawScope.drawDalet(
+    x: Float, y: Float, w: Float, h: Float, stroke: Float, color: Color,
+) {
+    val p = Path().apply {
+        moveTo(x, y)
+        lineTo(x + w, y)
+        lineTo(x + w, y + h)
+    }
+    drawPath(
+        path = p,
+        color = color,
+        style = Stroke(width = stroke, cap = StrokeCap.Square, join = StrokeJoin.Miter),
+    )
+    // Top-right kotzo (dalet's identifying thorn).
+    val kotzo = Path().apply {
+        moveTo(x + w, y)
+        lineTo(x + w + stroke * 0.5f, y - stroke * 0.7f)
+    }
+    drawPath(
+        path = kotzo,
+        color = color,
+        style = Stroke(width = stroke * 0.8f, cap = StrokeCap.Square),
+    )
+}
+
+/**
+ * Draw a row of tagin (crowns) above a letter. Each crown is a small
+ * three-pronged zigzag — the classic sofer-style ornament. [count]
+ * controls how many crowns to draw across the letter width; the
+ * default 3 is the canonical "shatnez gatz" complement, but narrower
+ * letters (vav) get fewer.
+ *
+ * Crowns are stacked vertically — they SIT on top of the letter's
+ * upper edge, so [y] is the letter's top (we draw upward from there).
+ */
+private fun DrawScope.drawTagin(
+    x: Float, y: Float, w: Float, h: Float, stroke: Float, color: Color, count: Int = 3,
+) {
+    if (count <= 0) return
+    val crownH = h * 0.75f
+    val crownW = (w * 0.7f) / count
+    val crownGap = (w - crownW * count) / (count + 1)
+    for (i in 0 until count) {
+        val cx = x + crownGap + i * (crownW + crownGap) + crownW * 0.5f
+        // Each crown: short vertical stem + small triangular flag at top
+        val stem = Path().apply {
+            moveTo(cx, y)
+            lineTo(cx, y - crownH * 0.6f)
+        }
+        drawPath(
+            path = stem,
+            color = color,
+            style = Stroke(width = stroke, cap = StrokeCap.Square),
+        )
+        // Triangular flag pointing up-left (matches traditional Stam
+        // tagin shape — a small flag/banner curling left off the stem).
+        val flag = Path().apply {
+            moveTo(cx, y - crownH * 0.6f)
+            lineTo(cx - crownW * 0.4f, y - crownH * 0.95f)
+            lineTo(cx + crownW * 0.05f, y - crownH * 0.5f)
+            close()
+        }
+        drawPath(
+            path = flag,
+            color = color,
+        )
     }
 }

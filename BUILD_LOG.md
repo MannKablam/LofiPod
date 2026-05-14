@@ -2,6 +2,56 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.16 — Kabod chip: hand-drawn Stam glyph with tagin (2026-05-14)
+
+The Kabod Pack badge previously rendered the Hebrew word כבוד via the
+Android system font fallback (Noto Sans Hebrew). Clean print typography
+but missing the tagin (תגין / kether crowns) that mark Stam (סת"ם)
+sofer-style sacred-text writing — the visual tradition the Kabod Pack
+naming gestures toward.
+
+Android ships no Stam font, and no permissively-licensed Hebrew Stam
+font is available via Google Fonts / Material's font path, so we draw
+the four letters and their crowns as Compose Canvas paths. Stylised,
+not authentic ksav ari — but unmistakably "this is a sacred-text word,
+not chip filler."
+
+### Drawing details
+
+`KabodStamGlyph` composable in CatalogScreen.kt. Single Canvas, RTL
+positioning (kaf rightmost, dalet leftmost), per-letter helper
+functions for the four shapes:
+
+  - **drawKaf** — open on the left, smooth bottom corner (StrokeJoin.Round)
+  - **drawBet** — same C-shape as kaf but with the bottom-right kotzo
+    thorn and miter joins for the sharp bet corners
+  - **drawVav** — narrow single vertical stroke with small flag at top
+  - **drawDalet** — Γ-shape (top + right side only) with the top-right
+    kotzo thorn that distinguishes dalet from resh
+
+`drawTagin` paints three small zigzag crowns across each letter's top
+edge — vertical stem + filled triangular flag curling up-left, matching
+the traditional sofer-quill ornament. Vav gets 1 crown instead of 3
+since it's narrow.
+
+Stroke weights, gap proportions, and crown sizes are all derived from
+the Canvas height so the glyph scales cleanly if the chip is resized.
+
+### Why not a font file
+
+Considered: Culmus's Stam Ashkenaz CLM (GPL with font exception, safe
+for a sideloaded app) and Stam Sefarad CLM. Both would render proper
+ksav and authentic tagin. Trade-off: ~150-300 KB per font file in the
+APK + a font-loading code path. For a single 4-letter glyph on one
+chip in the catalog, the Canvas approach is the simpler answer.
+
+If the Hebrew vocabulary expands beyond this chip in a future tag,
+revisit the font-file path — the Canvas hand-drawing scales poorly.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/ui/screens/CatalogScreen.kt`
+
 ## v0.10.15 — UI: Home to far-left, EpisodesScreen + NotesBrowser bulk-select (2026-05-14)
 
 Three user-driven UI changes. No playback-pipeline changes.
