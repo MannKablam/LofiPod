@@ -2,6 +2,103 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.19 — Kabod playback fixes: cleartext HTTP whitelist + Nyquist guard (2026-05-15)
+
+Two field-bug fixes from the v0.10.18 content drop. Both shipped together
+because both surface the same way (Kabod Pack episode fails to play) on
+different code paths.
+
+### 1. William Still pack: cleartext HTTP block
+
+**Symptom.** `monergism-still-leviticus` and `monergism-still-hosea`
+episodes fail with:
+
+```
+HttpDataSourceException: java.io.IOException:
+  java.util.concurrent.ExecutionException:
+  java.net.UnknownHostException ...
+```
+
+The `UnknownHostException` is a misleading surface error — DNS for
+`tapesfromscotland.org` resolves fine on every other client. The real
+cause is Android's API 28+ default that rejects cleartext (HTTP)
+network traffic unless explicitly whitelisted. Both Still packs source
+their audio from `http://tapesfromscotland.org/Audio*/N.mp3`; the host's
+HTTPS endpoint serves an expired certificate (verified via curl —
+`SEC_E_CERT_EXPIRED`) so we can't simply rewrite the URLs.
+
+**Fix.** New file `app/src/main/res/xml/network_security_config.xml`
+declares HTTPS-only as the global default plus a single domain-config
+exception for `tapesfromscotland.org` (and subdomains) marked
+`cleartextTrafficPermitted="true"`. The other six kabod packs use HTTPS
+already and are unaffected by the global default. Manifest's
+`<application>` element gets `android:networkSecurityConfig=
+"@xml/network_security_config"`.
+
+### 2. Kabod packs only worked in PURE_IIR mode (FIR/MIN_FIR/MIXED broken)
+
+**Symptom.** With phase mode set to anything other than PURE_IIR
+(`MIN_FIR`, `LINEAR_FIR`, `MIXED`), Kabod Pack episodes failed silently
+to produce audio while standard RSS-feed podcasts played fine. The user
+was effectively pinned to PURE_IIR for sermon listening.
+
+**Root cause.** Kabod packs ship a far wider audio-format range than
+typical RSS podcasts:
+
+  - `sermonaudio-chanski-leviticus` — 16 kHz mono
+  - `monergism-still-*`             — 22.05 kHz mono
+  - `desiringgod-piper-romans`      — 32 kHz stereo
+  - `citieschurch-parnell-leviticus`— 44.1 kHz joint-stereo
+  - `sermonaudio-allen-ezekiel`     — 48 kHz stereo
+
+LofiPod's 10-band EQ has fixed centers `31, 62, 125, 250, 500, 1000,
+2000, 4000, 8000, 16000` Hz. At 16 kHz source rate the Nyquist limit
+is 8 kHz — so the **8 kHz band sits AT Nyquist** and the **16 kHz band
+sits ABOVE Nyquist**. At 22.05 kHz the 16 kHz band is above Nyquist.
+The RBJ peaking-EQ cookbook formulas degenerate above Nyquist:
+
+  - `w0 = 2π · centerHz / sampleRate` exceeds π
+  - `cos(w0)` and `sin(w0)` wrap to negative or zero
+  - `alpha = sin(w0) / (2Q)` flips sign or vanishes
+  - resulting biquad coefficients describe a non-physical response
+
+**Why PURE_IIR survived but FIR broke.** At LofiPod's default FLAT
+preset (`gainDb = 0` on every band) the cookbook math has a happy
+coincidence: `A = 10^(0/40) = 1`, so `b·A == b/A` exactly, the
+numerator and denominator polynomials cancel coefficient-for-coefficient,
+and the biquad reduces to identity (1·x + 0·z⁻¹ + 0·z⁻²). The FIR
+kernel synthesis (`FirEq.biquadMagSquared`) **also** returns 1.0 in
+this degenerate case, so FLAT-preset users wouldn't have noticed.
+
+But the FIR kernel synthesis evaluates the magnitude across the
+entire `[0, π]` frequency axis (not just at `w0`). For any non-flat
+band whose centerHz exceeds Nyquist, the cookbook coefficients produce
+finite but extreme magnitude values across the audible band — those
+fold into the kernel via the IFFT and propagate as silence-or-noise
+through the UPC convolver. PURE_IIR's biquad cascade sees the same
+ill-conditioned coefficients but its time-domain feedback path tends
+to converge to a near-passthrough state when state isn't being driven
+hard, so it sounded "fine" even when mathematically wrong.
+
+**Fix.** Both `Biquad.setPeaking` (the IIR coefficient setter) and
+`FirEq.biquadMagSquared` (the FIR kernel-synthesis magnitude target)
+now early-return identity / unity respectively when
+`centerHz · 2 >= sampleRate`. The check is a single multiplication
+and one branch — immeasurable cost. Bypassed bands carry zero
+information about the source's spectrum since the source has no
+content above its own Nyquist limit anyway, so this is a defensive
+guard with no audible side-effect on the legitimate response.
+
+### Files touched
+
+  - `app/src/main/res/xml/network_security_config.xml` (new)
+  - `app/src/main/AndroidManifest.xml` (added `networkSecurityConfig`
+    attribute on `<application>`)
+  - `app/src/main/java/com/lofipod/app/audio/Biquad.kt` (Nyquist guard
+    in `setPeaking`)
+  - `app/src/main/java/com/lofipod/app/audio/FirEq.kt` (Nyquist guard
+    in `biquadMagSquared`)
+
 ## Content — Kabod packs: 6 new packs + Romans v2 + schema v2 (2026-05-14)
 
 Content drop, no code-path changes beyond a 6-line additive list extension

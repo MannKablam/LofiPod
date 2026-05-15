@@ -41,8 +41,31 @@ class Biquad {
 
     fun reset() { z1 = 0.0; z2 = 0.0 }
 
-    /** Configure as a peaking EQ band. */
+    /**
+     * Configure as a peaking EQ band.
+     *
+     * **Nyquist guard.** When [centerHz] >= sampleRate/2 (the source's
+     * Nyquist limit), the cookbook formulas degenerate: w0 wraps past π
+     * so cos/sin go negative or zero, alpha can flip sign, and the
+     * resulting biquad's response across the audible band becomes
+     * arbitrary (sometimes near-identity, sometimes wildly skewed). Real
+     * sources at low sample rates trip this — Kabod packs ship 16 kHz
+     * mono (Chanski Leviticus) and 22.05 kHz mono (Still packs); at those
+     * rates LofiPod's 16 kHz band sits above Nyquist and the 8 kHz band
+     * sits at it. Bypassing those bands as identity keeps the cascade
+     * well-behaved on low-rate sources without changing the response on
+     * the audible part of the spectrum (you can't EQ what isn't there).
+     */
     fun setPeaking(sampleRate: Int, centerHz: Float, gainDb: Float, q: Float) {
+        if (centerHz * 2f >= sampleRate.toFloat()) {
+            // Identity biquad: pass-through, preserves whatever state z1/z2
+            // already hold. Coefficients computed once at companion init
+            // wouldn't preserve z1/z2 across calls; setting them inline is
+            // correct + cheap.
+            b0 = 1.0; b1 = 0.0; b2 = 0.0
+            a1 = 0.0; a2 = 0.0
+            return
+        }
         val a = 10.0.pow(gainDb / 40.0)
         val w0 = 2.0 * PI * centerHz / sampleRate
         val cosW0 = cos(w0)

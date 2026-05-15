@@ -591,8 +591,21 @@ class FirEq {
          * pre-UPC LinearPhaseEq.biquadMagSquared; pulled into the companion so
          * both LINEAR and MIN_PHASE synth paths can use it without
          * duplication.
+         *
+         * **Nyquist guard.** Mirrors [Biquad.setPeaking] — bands whose
+         * centerHz is at or above sampleRate/2 are bypassed as unity
+         * magnitude. The biquad coefficient math degenerates above Nyquist
+         * (w0 > π → wrapped cos/sin → arbitrary alpha sign), and feeding
+         * the resulting non-physical response into the FIR kernel
+         * synthesis can produce extreme tap values that propagate as
+         * underflow/overflow noise through UPC convolution. Without this
+         * guard, kabod packs at low sample rates (16 kHz mono Chanski
+         * Leviticus, 22.05 kHz mono Still packs) silently broke FIR
+         * playback while PURE_IIR survived (its biquads at flat gain
+         * happened to numerically cancel to identity).
          */
         private fun biquadMagSquared(band: EqBand, w: Double, sampleRate: Int): Double {
+            if (band.centerHz * 2f >= sampleRate.toFloat()) return 1.0
             val A = 10.0.pow(band.gainDb / 40.0)
             val w0 = 2.0 * PI * band.centerHz / sampleRate
             val alpha = sin(w0) / (2.0 * band.qFactor)
