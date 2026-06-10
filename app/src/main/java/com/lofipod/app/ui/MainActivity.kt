@@ -79,6 +79,19 @@ class MainActivity : ComponentActivity() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
+    /**
+     * Inbound shared-note deep links (lofipod://note?…), from either a
+     * direct link tap (ACTION_VIEW) or a share-into-LofiPod (ACTION_SEND
+     * with the link embedded in text). Same replay/buffer rationale as
+     * [openPlayerEvents]: a link that arrives before the NavController is
+     * collecting still gets delivered once it is.
+     */
+    private val noteLinkEvents = MutableSharedFlow<com.lofipod.app.util.NoteLinks.NoteLink>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* notification permission is best-effort */ }
@@ -97,7 +110,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LofiPodTheme {
-                AppNav(playerController, openPlayerEvents.asSharedFlow())
+                AppNav(
+                    playerController,
+                    openPlayerEvents.asSharedFlow(),
+                    noteLinkEvents.asSharedFlow(),
+                )
             }
         }
 
@@ -119,6 +136,22 @@ class MainActivity : ComponentActivity() {
     private fun handleLaunchIntent(intent: Intent?) {
         if (intent?.action == PlaybackService.ACTION_OPEN_PLAYER) {
             openPlayerEvents.tryEmit(Unit)
+            return
+        }
+        // Shared-note deep link — direct tap (VIEW) or share-into-app (SEND).
+        val link = when (intent?.action) {
+            Intent.ACTION_VIEW -> com.lofipod.app.util.NoteLinks.parse(intent.data)
+            Intent.ACTION_SEND -> com.lofipod.app.util.NoteLinks.extractNoteLink(
+                intent.getStringExtra(Intent.EXTRA_TEXT)
+            )
+            else -> null
+        }
+        if (link != null) {
+            com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                "note_link_received",
+                "feed=${link.feedUrl} guid=${link.guid} t=${link.positionMs}",
+            )
+            noteLinkEvents.tryEmit(link)
         }
     }
 
@@ -287,7 +320,8 @@ private fun smartBack(nav: NavController, currentRoute: String?) {
 @Composable
 private fun AppNav(
     controller: PlayerController,
-    openPlayerEvents: SharedFlow<Unit>
+    openPlayerEvents: SharedFlow<Unit>,
+    noteLinkEvents: SharedFlow<com.lofipod.app.util.NoteLinks.NoteLink>,
 ) {
     val nav = rememberNavController()
     val playerState by controller.state.collectAsState()
@@ -322,6 +356,47 @@ private fun AppNav(
         openPlayerEvents.collect {
             if (nav.currentDestination?.route != "player") {
                 navigateToPlayerCleanly(nav)
+            }
+        }
+    }
+
+    // Shared-note deep links: resolve (feedUrl, guid) against the local
+    // catalog and start playback at the note's position. Resolution order:
+    // in-memory cache → disk-cache hydration → kabod asset loader → a live
+    // one-off fetch of the feed (covers "recipient has the feed in their
+    // sources but hasn't refreshed yet" and "feed isn't in their sources at
+    // all" alike — the fetched feed isn't added to sources, just played).
+    val appCtx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    LaunchedEffect(Unit) {
+        noteLinkEvents.collect { link ->
+            val app = appCtx as com.lofipod.app.LofiPodApp
+            app.repo.hydrateFromDisk()
+            var pod = app.repo.cached(link.feedUrl)
+            if (pod == null && app.kabodLoader.isKabodFeed(link.feedUrl)) {
+                pod = app.kabodLoader.loadIntoCache(link.feedUrl)
+            }
+            if (pod == null) {
+                pod = runCatching {
+                    app.repo.fetchOne(
+                        com.lofipod.app.parser.SourceEntry(link.feedUrl, null)
+                    )
+                }.getOrNull()
+            }
+            val ep = pod?.episodes?.find { it.guid == link.guid }
+            if (pod != null && ep != null) {
+                controller.playEpisode(
+                    ep,
+                    podcastTitle = pod.title,
+                    podcastArt = pod.artworkUrl,
+                    forcedStartMs = link.positionMs,
+                )
+                navigateToPlayerCleanly(nav)
+            } else {
+                android.widget.Toast.makeText(
+                    appCtx,
+                    "Couldn't open shared note — episode not found in this library.",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
             }
         }
     }

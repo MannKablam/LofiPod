@@ -324,9 +324,9 @@ fun EqScreen(
                 Text("Audio enhancement", style = MaterialTheme.typography.titleMedium)
             }
             Text(
-                "EQ + master gain are global — they apply to every podcast and " +
-                    "every episode. For one-off shaping, use the toggles below " +
-                    "while an episode is playing.",
+                "Master switch for the whole audio chain. EQ bands are " +
+                    "per-podcast (each show keeps its own tuning); volume boost, " +
+                    "tone filters, and DC blocker are global.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -351,6 +351,81 @@ fun EqScreen(
                     )
                 }
             }
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Tone filters (v0.11) ----
+            // Zero-latency corrective stage upstream of the per-podcast EQ.
+            // Global (like the DC blocker): low-cut kills rumble, high-cut
+            // kills hiss, tilt is the classic one-knob dark<->bright. All
+            // three behave identically across the four phase modes because
+            // they run as minimum-phase IIR outside the FIR engine.
+            val toneLowCut by settings.toneLowCutHz.collectAsState(initial = 0f)
+            val toneHighCut by settings.toneHighCutHz.collectAsState(initial = 0f)
+            val toneTilt by settings.toneTiltDb.collectAsState(initial = 0f)
+            // Local mirror for the tilt slider so dragging feels live; the
+            // persisted value lands on release.
+            var tiltDrag by remember { mutableStateOf<Float?>(null) }
+
+            Text("Tone filters", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Corrective filters that run before the EQ in every phase mode. " +
+                    "Low cut removes rumble and plosive thumps, high cut tames " +
+                    "tape hiss on old recordings, tilt trades warmth against " +
+                    "presence with one control. Global, zero added latency.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            ToneCutChipRow(
+                label = "Low cut",
+                currentHz = toneLowCut,
+                optionsHz = listOf(40f, 60f, 80f, 120f),
+                onSelect = { hz ->
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setToneLowCutHz(hz) }
+                        eq.setLowCutHz(hz)
+                    }
+                },
+            )
+            Spacer(Modifier.height(6.dp))
+            ToneCutChipRow(
+                label = "High cut",
+                currentHz = toneHighCut,
+                optionsHz = listOf(8_000f, 10_000f, 12_000f),
+                onSelect = { hz ->
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setToneHighCutHz(hz) }
+                        eq.setHighCutHz(hz)
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+            val tiltShown = tiltDrag ?: toneTilt
+            Text(
+                "Tilt: " + (if (tiltShown == 0f) "off"
+                    else "%+.1f dB %s".format(tiltShown, if (tiltShown < 0f) "(darker)" else "(brighter)")),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Slider(
+                value = tiltShown,
+                onValueChange = { v ->
+                    // Snap the detent at 0 so "off" is easy to land on.
+                    val snapped = if (abs(v) < 0.25f) 0f else v
+                    tiltDrag = snapped
+                    eq.setTiltDb(snapped)
+                },
+                onValueChangeFinished = {
+                    val v = tiltDrag ?: return@Slider
+                    tiltDrag = null
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setToneTiltDb(v) }
+                    }
+                },
+                valueRange = -6f..6f,
+                steps = 23,
+                colors = sliderColors,
+            )
             Spacer(Modifier.height(16.dp))
 
             // ---- Phase mode (v0.9.5 four-mode lineup) ----
@@ -743,6 +818,45 @@ fun EqScreen(
                 onRelease = { eq.setEnabled(true) },
             )
             Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+/**
+ * One row of the tone-filter section: a fixed-width label + an "Off" chip +
+ * one chip per cutoff option. Selecting the active option again is a no-op
+ * (turn it off via the Off chip — explicit beats toggle-by-retap for
+ * controls the user sets rarely and reads often).
+ */
+@Composable
+private fun ToneCutChipRow(
+    label: String,
+    currentHz: Float,
+    optionsHz: List<Float>,
+    onSelect: (Float) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            modifier = Modifier.width(64.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            FilterChip(
+                selected = currentHz <= 0f,
+                onClick = { onSelect(0f) },
+                label = { Text("Off") },
+            )
+            optionsHz.forEach { hz ->
+                FilterChip(
+                    selected = currentHz == hz,
+                    onClick = { onSelect(hz) },
+                    label = { Text(formatHz(hz)) },
+                )
+            }
         }
     }
 }

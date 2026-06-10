@@ -384,6 +384,18 @@ class PlayerController(private val context: Context) {
             c.prepare()
             // Explicit: do NOT call play(). The user wants the episode
             // surfaced, not auto-resumed.
+
+            // Re-assert the per-podcast default speed. playEpisode does this
+            // on every real play, but the cold-start restore path bypassed
+            // it — so resuming via the restored mini-player ran at 1.0× until
+            // the user manually re-set the speed.
+            val speedOverride = withContext(Dispatchers.IO) {
+                podcastStateDao.get(state.feedUrl)?.defaultSpeed
+            }
+            if (speedOverride != null && kotlin.math.abs(speedOverride - 1.0f) > 0.001f) {
+                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = speedOverride
+                c.setPlaybackSpeed(speedOverride)
+            }
         }
     }
 
@@ -1165,8 +1177,23 @@ class PlayerController(private val context: Context) {
         val guid = c.currentMediaItem?.mediaId ?: return
         scope.launch {
             val ep = episodeFromState(guid) ?: return@launch
-            playEpisode(ep, podcastTitle = "", podcastArt = ep.episodeArtworkUrl)
+            playEpisode(ep, podcastTitle = podcastTitleFor(ep.feedUrl), podcastArt = ep.episodeArtworkUrl)
         }
+    }
+
+    /**
+     * Best-effort podcast display title for [feedUrl]: live cache first,
+     * then the hardcoded sources list. Several reconstruct-from-state play
+     * paths (retry chip, note/history jumps, canon advance) used to pass
+     * "" here, which blanked the artist line in the player + media
+     * notification after those flows. Empty string only when truly unknown.
+     */
+    private fun podcastTitleFor(feedUrl: String?): String {
+        if (feedUrl.isNullOrBlank()) return ""
+        val app = context.applicationContext as LofiPodApp
+        return app.repo.cached(feedUrl)?.title
+            ?: com.lofipod.app.data.Sources.displayNameOf(feedUrl)
+            ?: ""
     }
 
     /**
@@ -1788,7 +1815,7 @@ class PlayerController(private val context: Context) {
                 )
                 playEpisode(
                     ep,
-                    podcastTitle = "",
+                    podcastTitle = podcastTitleFor(state.feedUrl),
                     podcastArt = state.artworkUrl,
                     forcedStartMs = targetPositionMs
                 )
@@ -2036,7 +2063,11 @@ class PlayerController(private val context: Context) {
             return false
         }
         val ep = episodeFromState(next.guid) ?: return false
-        playEpisode(ep = ep, podcastTitle = "", podcastArt = ep.episodeArtworkUrl)
+        // Canon advance is autoplay-induced — without this flag the play
+        // skips the autoplay-confirmation window + the delayed auto-download
+        // path, both of which exist precisely for unattended advances.
+        lastPlayWasAutoplay = true
+        playEpisode(ep = ep, podcastTitle = podcastTitleFor(ep.feedUrl), podcastArt = ep.episodeArtworkUrl)
         return true
     }
 
@@ -2071,6 +2102,47 @@ class PlayerController(private val context: Context) {
         val settings = com.lofipod.app.data.Settings(app)
         val enabled = settings.autoPlayNextInFeed.first()
         if (!enabled || excluding == null) return
+
+        // Kabod packs advance by PART ORDER, not pubDate. An exposition
+        // series is authored as parts 1..N (possibly multi-preacher, where
+        // pubDates aren't even monotonic with the passage order), so the
+        // pubDate walk below — built for reverse-chronological RSS lists —
+        // can jump around the series. partNumber is the pack author's
+        // explicit "what comes next," so when the finished episode carries
+        // one, honor it. The direction toggle deliberately doesn't apply:
+        // "next" in a numbered series only ever means the next part.
+        val kabodMeta = withContext(Dispatchers.IO) { app.db.episodeKabodDao().get(excluding) }
+        val finishedPart = kabodMeta?.partNumber
+        if (kabodMeta != null && finishedPart != null) {
+            val packFeedUrl = "kabod://${kabodMeta.packId}"
+            val pack = app.repo.cached(packFeedUrl)
+            if (pack != null) {
+                val packMeta = withContext(Dispatchers.IO) {
+                    app.db.episodeKabodDao().getForPack(kabodMeta.packId)
+                }
+                val donePackGuids = withContext(Dispatchers.IO) {
+                    dao.getByGuids(pack.episodes.map { it.guid })
+                        .filter { it.durationMs > 0 && it.positionMs >= it.durationMs - 5_000 }
+                        .map { it.guid }
+                        .toSet()
+                }
+                // getForPack returns partNumber-ascending; first later,
+                // unplayed part wins. Parts without a number sort to the
+                // end of the DAO result and are skipped by the filter.
+                val nextEp = packMeta
+                    .filter { (it.partNumber ?: Int.MAX_VALUE) > finishedPart }
+                    .firstOrNull { it.guid != excluding && it.guid !in donePackGuids }
+                    ?.let { nm -> pack.episodes.find { it.guid == nm.guid } }
+                if (nextEp != null) {
+                    lastPlayWasAutoplay = true
+                    playEpisode(nextEp, pack.title, pack.artworkUrl)
+                }
+                // End of the pack: stop rather than falling through to the
+                // pubDate walk — a completed series shouldn't loop back
+                // through itself in date order.
+                return
+            }
+        }
 
         val finishedFeedUrl = withContext(Dispatchers.IO) { dao.get(excluding)?.feedUrl }
             ?: return

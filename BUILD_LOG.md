@@ -2,6 +2,86 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.20 — Tune-up pass: tone filters, shared-note deep links, Kabod parity (2026-06-09)
+
+Broad pass across the four asks: Kabod/RSS feature parity, richer audio
+tuning, shareable notes, and a round of bug fixes.
+
+### Tone filters (FabFilter-lite corrective stage)
+
+New zero-latency IIR stage in `EqAudioProcessor`, upstream of the EQ in
+**every** phase mode (it runs as min-phase biquads outside the FIR engine,
+which is exactly how zero-latency mode works in desktop parametrics):
+
+  - **Low cut** — 12 dB/oct Butterworth high-pass at 40/60/80/120 Hz
+    (rumble, plosive thumps).
+  - **High cut** — 12 dB/oct low-pass at 8/10/12 kHz (tape hiss on the
+    older sermon archives).
+  - **Tilt** — ±6 dB complementary shelf pair pivoting at 700 Hz; one
+    slider from darker to brighter.
+
+Biquad grew `setHighpass` / `setLowpass` / `setLowShelf` / `setHighShelf`
+(RBJ cookbook, same Nyquist guards as `setPeaking`, so 16 kHz-mono Kabod
+sources stay well-behaved). Global like the DC blocker; persisted in
+DataStore; rehydrated by PlaybackService; included in the diagnostics
+screen's "Reset audio to defaults"; UI in Audio Fine-tuning above Phase
+mode. Off = bit-identical passthrough (folded into the
+isPassthroughEffective check).
+
+### Shared-note deep links
+
+Share icon on every note card (per-episode Notes screen, Player Notes tab,
+global notes browser). Shares the note text + episode title + position +
+a `lofipod://note?feed=…&guid=…&t=…` link. On a receiving LofiPod:
+
+  - Direct link tap (ACTION_VIEW, new `lofipod` scheme intent-filter), or
+  - share the message INTO LofiPod (ACTION_SEND text/plain — the URI is
+    extracted from the surrounding prose, for messengers that don't
+    linkify custom schemes).
+
+Resolution: in-memory cache → disk hydration → kabod asset loader → live
+one-off feed fetch. Plays the episode at the note's position and routes to
+the Player. Misses surface a toast instead of failing silently.
+
+### Kabod / RSS parity
+
+  - **Autoplay advances by part order.** `advanceToNextInQueue` now
+    consults `episode_kabod.partNumber` when the finished episode belongs
+    to a pack: next unplayed part wins, end-of-pack stops cleanly. The
+    pubDate walk was wrong for multi-preacher packs where dates aren't
+    monotonic with the passage order — this was the biggest "packs play
+    differently" gap.
+  - **Part + scripture on episode rows.** "Part N · <passage>" meta line
+    in EpisodesScreen for pack episodes (was buried in the Player Details
+    tab).
+  - **`enclosure length` parsed** by KabodPackParser (RSS parser already
+    did) so future packs can ship sizes without the HTTP probe.
+  - **EpisodesScreen survives cold entry.** Was a one-shot cache read that
+    rendered a permanent "Feed not loaded." if the screen was reached
+    before the catalog hydrated (deep links, process-death restore). Now
+    awaits disk hydration and falls back to the kabod asset loader.
+
+### Bug fixes
+
+  - **Canon-order autoplay never armed the confirmation window** —
+    `tryAdvanceToNextInCanon` didn't set `lastPlayWasAutoplay`, so canon
+    advances skipped the 3:10 beep/auto-pause guard AND the delayed
+    auto-download path. Both now engage.
+  - **Blank artist line after retry / note-jump / canon advance** — those
+    reconstruct-from-state paths passed `podcastTitle = ""`. New
+    `podcastTitleFor(feedUrl)` resolves from the live cache, then the
+    hardcoded sources list.
+  - **Cold-start restore ignored per-podcast default speed** — resuming
+    via the restored mini-player ran at 1.0× until manually re-set.
+  - **Stale legacy global EQ rehydrate removed** from PlaybackService —
+    it read the pre-v0.6.12 `eq_bands` DataStore key (which nothing
+    writes anymore), so an ancient curve could audibly flash between
+    service start and the first track transition.
+  - **EqScreen copy** claimed "EQ + master gain are global" — wrong since
+    the v0.6.12 per-podcast reshape. Rewritten.
+  - SCREEN_MAP.md refreshed (CatalogScreen/catalog, missing routes, deep
+    link section).
+
 ## v0.10.19 — Kabod playback fixes: cleartext HTTP whitelist + Nyquist guard (2026-05-15)
 
 Two field-bug fixes from the v0.10.18 content drop. Both shipped together

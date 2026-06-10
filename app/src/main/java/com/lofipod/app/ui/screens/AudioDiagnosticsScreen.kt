@@ -280,8 +280,9 @@ fun AudioDiagnosticsScreen(
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = {
                 // Defaults: audio_enhancement=on, master_gain=0, bands=FLAT,
-                // skip_silence=off, dc_blocker=off. Same recovery path the
-                // inline Settings panel offered before this screen existed.
+                // skip_silence=off, dc_blocker=off, tone filters off. Same
+                // recovery path the inline Settings panel offered before
+                // this screen existed.
                 scope.launch {
                     withContext(Dispatchers.IO) {
                         settings.setAudioEnhancementEnabled(true)
@@ -289,10 +290,16 @@ fun AudioDiagnosticsScreen(
                         settings.setEqBandsCsv(EqPresets.FLAT.joinToString(",") { it.gainDb.toString() })
                         settings.setSkipSilenceLevel(0)
                         settings.setDcBlockerEnabled(false)
+                        settings.setToneLowCutHz(0f)
+                        settings.setToneHighCutHz(0f)
+                        settings.setToneTiltDb(0f)
                     }
                     eq.setBands(EqPresets.FLAT)
                     eq.setGainDb(0f)
                     eq.setDcBlockerEnabled(false)
+                    eq.setLowCutHz(0f)
+                    eq.setHighCutHz(0f)
+                    eq.setTiltDb(0f)
                     PlaybackService.sharedSkipSilence.setLevel(0)
                     playerState.currentEpisodeGuid?.let {
                         controller.applyEqOverrideFor(it)

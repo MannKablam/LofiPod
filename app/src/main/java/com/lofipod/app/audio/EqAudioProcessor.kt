@@ -59,6 +59,24 @@ class EqAudioProcessor : BaseAudioProcessor() {
     @Volatile private var phaseMode: PhaseMode = PhaseMode.PURE_IIR
     @Volatile private var dirty: Boolean = true       // recompute coefficients on next buffer
 
+    // ---- Tone filters (v0.11 "FabFilter-lite" corrective stage) ----
+    // Three zero-latency IIR controls that run BEFORE the EQ stage (right
+    // after the DC blocker) in every phase mode:
+    //   - lowCutHz  > 0: 12 dB/oct Butterworth high-pass (rumble removal)
+    //   - highCutHz > 0: 12 dB/oct Butterworth low-pass (hiss removal)
+    //   - tiltDb   != 0: complementary low/high shelf pair pivoting at
+    //     TILT_PIVOT_HZ — one knob from "darker" (negative) to "brighter"
+    //     (positive)
+    // Deliberately IIR (minimum-phase) even when the EQ stage runs FIR:
+    // corrective cuts *want* min-phase behavior (no pre-ringing), this is
+    // exactly how zero-latency mode works in the desktop parametrics the
+    // feature is modeled on, and it keeps the controls identical across
+    // all four phase modes with zero added latency.
+    @Volatile private var lowCutHz: Float = 0f
+    @Volatile private var highCutHz: Float = 0f
+    @Volatile private var tiltDb: Float = 0f
+    @Volatile private var toneDirty: Boolean = true
+
     // ---- Internal DSP state ----
     private var sampleRate = 0
     private var channelCount = 0
@@ -88,6 +106,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
     // dcBlockers[channel] — one DcBlocker per channel; each carries its own
     // x_prev/y_prev. Allocated in onConfigure once channelCount is known.
     private var dcBlockers: Array<DcBlocker> = emptyArray()
+    // Tone-filter biquads, one of each per channel. Allocated in onConfigure;
+    // configured lazily by [ensureToneCoefficients] when [toneDirty].
+    private var lowCutFilters: Array<Biquad> = emptyArray()
+    private var highCutFilters: Array<Biquad> = emptyArray()
+    private var tiltLowFilters: Array<Biquad> = emptyArray()
+    private var tiltHighFilters: Array<Biquad> = emptyArray()
     // Single TPDF generator for the Double → int16 truncation at the chain
     // output. Signal-independent noise (TPDF property) means we can share
     // one instance across channels without channel-correlation artifacts.
@@ -145,6 +169,37 @@ class EqAudioProcessor : BaseAudioProcessor() {
         AudioChainTelemetry.incBandChanges()
     }
     fun setGainDb(db: Float) { gainDb = db.coerceIn(-12f, 12f) }
+
+    /** Low-cut (high-pass) corner in Hz; 0 disables. Takes effect next buffer. */
+    fun setLowCutHz(hz: Float) {
+        val v = if (hz <= 0f) 0f else hz.coerceIn(20f, 300f)
+        if (v == lowCutHz) return
+        lowCutHz = v
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_low_cut", if (v == 0f) "off" else "${v.toInt()} Hz")
+    }
+
+    /** High-cut (low-pass) corner in Hz; 0 disables. Takes effect next buffer. */
+    fun setHighCutHz(hz: Float) {
+        val v = if (hz <= 0f) 0f else hz.coerceIn(2_000f, 20_000f)
+        if (v == highCutHz) return
+        highCutHz = v
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_high_cut", if (v == 0f) "off" else "${v.toInt()} Hz")
+    }
+
+    /** Spectral tilt in dB (negative = darker, positive = brighter); 0 disables. */
+    fun setTiltDb(db: Float) {
+        val v = db.coerceIn(-6f, 6f)
+        if (v == tiltDb) return
+        tiltDb = v
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_tilt", "%+.1f dB".format(v))
+    }
+
+    fun currentLowCutHz(): Float = lowCutHz
+    fun currentHighCutHz(): Float = highCutHz
+    fun currentTiltDb(): Float = tiltDb
     fun setEnabled(on: Boolean) {
         enabled = on
         AudioChainTelemetry.enabled = on
@@ -206,6 +261,10 @@ class EqAudioProcessor : BaseAudioProcessor() {
         for (ch in filters) for (b in ch) b.reset()
         for (ch in oldFilters) for (b in ch) b.reset()
         for (b in dcBlockers) b.reset()
+        for (b in lowCutFilters) b.reset()
+        for (b in highCutFilters) b.reset()
+        for (b in tiltLowFilters) b.reset()
+        for (b in tiltHighFilters) b.reset()
         limiter.reset()
         oversampler.reset()
         firEq.reset()
@@ -276,10 +335,15 @@ class EqAudioProcessor : BaseAudioProcessor() {
     private fun isPassthroughEffective(): Boolean {
         if (dcBlocker) return false
         if (gainDb != 0f) return false
+        if (toneActive()) return false
         val current = bands
         for (b in current) if (b.gainDb != 0f) return false
         return true
     }
+
+    /** True when any tone filter (low-cut / high-cut / tilt) is engaged. */
+    private fun toneActive(): Boolean =
+        lowCutHz > 0f || highCutHz > 0f || tiltDb != 0f
 
     fun currentBands(): List<EqBand> = bands
     fun currentGainDb(): Float = gainDb
@@ -304,6 +368,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // Configure here so the cutoff coefficient matches the new sample
         // rate; reused even when the toggle is off (cheap to keep around).
         dcBlockers = Array(channelCount) { DcBlocker().apply { configure(sampleRate) } }
+        // Tone-filter biquads. Coefficients depend on sample rate, so mark
+        // dirty and let ensureToneCoefficients reconfigure on the first
+        // buffer at the new rate.
+        lowCutFilters = Array(channelCount) { Biquad() }
+        highCutFilters = Array(channelCount) { Biquad() }
+        tiltLowFilters = Array(channelCount) { Biquad() }
+        tiltHighFilters = Array(channelCount) { Biquad() }
+        toneDirty = true
         // Oversampler: 2x polyphase up/down. FIR coefficients depend only on
         // the FIR design parameters (length, cutoff, β), not on sample rate,
         // so configure here only allocates per-channel delay lines.
@@ -384,6 +456,10 @@ class EqAudioProcessor : BaseAudioProcessor() {
         filters = emptyArray()
         oldFilters = emptyArray()
         dcBlockers = emptyArray()
+        lowCutFilters = emptyArray()
+        highCutFilters = emptyArray()
+        tiltLowFilters = emptyArray()
+        tiltHighFilters = emptyArray()
         // Limiter + oversampler buffers freed via reset; configure will
         // reallocate next time.
         limiter.reset()
@@ -438,6 +514,43 @@ class EqAudioProcessor : BaseAudioProcessor() {
         }
         hasInitialized = true
         dirty = false
+    }
+
+    /**
+     * Recompute the tone-filter coefficients when [toneDirty]. Unlike the
+     * band cascade there's no cross-fade machinery: these are corrective
+     * filters adjusted via discrete chips / a coarse slider, and the biquad
+     * state (z1/z2) is preserved across coefficient swaps, so transitions
+     * are click-free in practice.
+     */
+    private fun ensureToneCoefficients() {
+        if (!toneDirty) return
+        val lc = lowCutHz
+        val hc = highCutHz
+        val tilt = tiltDb
+        for (ch in 0 until channelCount) {
+            if (lc > 0f) lowCutFilters[ch].setHighpass(sampleRate, lc)
+            else lowCutFilters[ch].setIdentity()
+            if (hc > 0f) highCutFilters[ch].setLowpass(sampleRate, hc)
+            else highCutFilters[ch].setIdentity()
+            if (tilt != 0f) {
+                tiltLowFilters[ch].setLowShelf(sampleRate, TILT_PIVOT_HZ, -tilt)
+                tiltHighFilters[ch].setHighShelf(sampleRate, TILT_PIVOT_HZ, tilt)
+            } else {
+                tiltLowFilters[ch].setIdentity()
+                tiltHighFilters[ch].setIdentity()
+            }
+        }
+        toneDirty = false
+    }
+
+    /** Run one sample of channel [ch] through the tone-filter stage. */
+    private fun processTone(ch: Int, x: Double): Double {
+        var y = lowCutFilters[ch].process(x)
+        y = highCutFilters[ch].process(y)
+        y = tiltLowFilters[ch].process(y)
+        y = tiltHighFilters[ch].process(y)
+        return y
     }
 
     /**
@@ -542,6 +655,8 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // Snapshot toggles once per buffer — `dcBlocker` is volatile, so
         // toggling mid-buffer would otherwise produce a half-treated frame.
         val applyDcBlocker = dcBlocker
+        val applyTone = toneActive()
+        if (applyTone) ensureToneCoefficients()
 
         for (frame in 0 until frameCount) {
             // Compute per-frame fade weights once; reuse across channels in
@@ -569,6 +684,9 @@ class EqAudioProcessor : BaseAudioProcessor() {
 
                 if (applyDcBlocker) {
                     x = dcBlockers[ch].process(x)
+                }
+                if (applyTone) {
+                    x = processTone(ch, x)
                 }
 
                 // Run NEW chain. Always — even during fade, we still need
@@ -685,16 +803,19 @@ class EqAudioProcessor : BaseAudioProcessor() {
         val invDrive = 32767.0
         val gainLinear = 10.0.pow(gainDb / 20.0)
         val applyDcBlocker = dcBlocker
+        val applyTone = toneActive()
+        if (applyTone) ensureToneCoefficients()
 
-        // Pass 1: read the whole input buffer through the DC blocker into
-        // the FIR EQ. Per-channel accumulators inside [firEq] hold partial
-        // blocks across queueInput calls; complete blocks (BLOCK_SIZE
-        // samples per channel) trigger the UPC convolution.
+        // Pass 1: read the whole input buffer through the DC blocker + tone
+        // filters into the FIR EQ. Per-channel accumulators inside [firEq]
+        // hold partial blocks across queueInput calls; complete blocks
+        // (BLOCK_SIZE samples per channel) trigger the UPC convolution.
         for (frame in 0 until frameCount) {
             for (ch in 0 until channelCount) {
                 val sampleI = src.short.toInt()
                 var x = sampleI * driveScale
                 if (applyDcBlocker) x = dcBlockers[ch].process(x)
+                if (applyTone) x = processTone(ch, x)
                 frameInput[ch] = x
             }
             firEq.pushFrame(frameInput)
@@ -883,5 +1004,13 @@ class EqAudioProcessor : BaseAudioProcessor() {
          * 44.1 / 48 kHz is 3 ms, inaudible.
          */
         const val FADE_LENGTH_SAMPLES = 2048
+
+        /**
+         * Pivot frequency for the tilt control's complementary shelf pair.
+         * ~700 Hz sits in the meat of speech formants — tilting around it
+         * trades "body" against "presence/air" symmetrically, which is the
+         * classic single-knob tone behavior the control is modeled on.
+         */
+        const val TILT_PIVOT_HZ = 700f
     }
 }

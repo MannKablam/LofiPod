@@ -31,6 +31,7 @@ fun NotesScreen(
     onBack: () -> Unit
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { Settings(app) }
 
@@ -124,7 +125,8 @@ fun NotesScreen(
                                 }
                                 editEntry = entry
                             },
-                            onDelete = { deleteEntry = entry }
+                            onDelete = { deleteEntry = entry },
+                            onShare = { scope.launch { shareNoteEntry(ctx, entry) } },
                         )
                     }
                 }

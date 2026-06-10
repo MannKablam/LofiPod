@@ -87,6 +87,114 @@ class Biquad {
     }
 
     /**
+     * Configure as a 2nd-order high-pass (RBJ cookbook). Used by the tone-
+     * filter stage's low-cut. Butterworth Q (0.707) by default — maximally
+     * flat passband, 12 dB/oct slope. Same Nyquist guard as [setPeaking]:
+     * a cutoff at/above Nyquist degenerates the math, so bypass as identity
+     * (the caller treats "cut everything" as a config error, not a goal).
+     */
+    fun setHighpass(sampleRate: Int, cutoffHz: Float, q: Float = 0.7071f) {
+        if (cutoffHz * 2f >= sampleRate.toFloat()) {
+            setIdentity(); return
+        }
+        val w0 = 2.0 * PI * cutoffHz / sampleRate
+        val cosW0 = cos(w0)
+        val sinW0 = sin(w0)
+        val alpha = sinW0 / (2.0 * q)
+
+        val b0p = (1.0 + cosW0) / 2.0
+        val b1p = -(1.0 + cosW0)
+        val b2p = (1.0 + cosW0) / 2.0
+        val a0  = 1.0 + alpha
+        val a1p = -2.0 * cosW0
+        val a2p = 1.0 - alpha
+        commit(b0p, b1p, b2p, a0, a1p, a2p)
+    }
+
+    /** 2nd-order low-pass (RBJ). Tone-filter stage's high-cut. Nyquist-guarded
+     *  to identity — a low-pass at/above Nyquist passes everything anyway. */
+    fun setLowpass(sampleRate: Int, cutoffHz: Float, q: Float = 0.7071f) {
+        if (cutoffHz * 2f >= sampleRate.toFloat()) {
+            setIdentity(); return
+        }
+        val w0 = 2.0 * PI * cutoffHz / sampleRate
+        val cosW0 = cos(w0)
+        val sinW0 = sin(w0)
+        val alpha = sinW0 / (2.0 * q)
+
+        val b0p = (1.0 - cosW0) / 2.0
+        val b1p = 1.0 - cosW0
+        val b2p = (1.0 - cosW0) / 2.0
+        val a0  = 1.0 + alpha
+        val a1p = -2.0 * cosW0
+        val a2p = 1.0 - alpha
+        commit(b0p, b1p, b2p, a0, a1p, a2p)
+    }
+
+    /**
+     * Low shelf (RBJ, shelf-slope form with S=1 → gentle one-octave-ish
+     * transition). Positive [gainDb] lifts everything below [cornerHz];
+     * negative dips it. Used in a complementary pair with [setHighShelf]
+     * for the tilt control.
+     */
+    fun setLowShelf(sampleRate: Int, cornerHz: Float, gainDb: Float) {
+        if (cornerHz * 2f >= sampleRate.toFloat() || gainDb == 0f) {
+            setIdentity(); return
+        }
+        val a = 10.0.pow(gainDb / 40.0)
+        val w0 = 2.0 * PI * cornerHz / sampleRate
+        val cosW0 = cos(w0)
+        val sinW0 = sin(w0)
+        // S = 1 (standard shelf slope): alpha = sin/2 * sqrt((A + 1/A)(1/S - 1) + 2)
+        val alpha = sinW0 / 2.0 * kotlin.math.sqrt((a + 1.0 / a) * (1.0 / 1.0 - 1.0) + 2.0)
+        val twoSqrtAAlpha = 2.0 * kotlin.math.sqrt(a) * alpha
+
+        val b0p = a * ((a + 1) - (a - 1) * cosW0 + twoSqrtAAlpha)
+        val b1p = 2 * a * ((a - 1) - (a + 1) * cosW0)
+        val b2p = a * ((a + 1) - (a - 1) * cosW0 - twoSqrtAAlpha)
+        val a0  = (a + 1) + (a - 1) * cosW0 + twoSqrtAAlpha
+        val a1p = -2 * ((a - 1) + (a + 1) * cosW0)
+        val a2p = (a + 1) + (a - 1) * cosW0 - twoSqrtAAlpha
+        commit(b0p, b1p, b2p, a0, a1p, a2p)
+    }
+
+    /** High shelf (RBJ, S=1). Mirror of [setLowShelf] for the top end. */
+    fun setHighShelf(sampleRate: Int, cornerHz: Float, gainDb: Float) {
+        if (cornerHz * 2f >= sampleRate.toFloat() || gainDb == 0f) {
+            setIdentity(); return
+        }
+        val a = 10.0.pow(gainDb / 40.0)
+        val w0 = 2.0 * PI * cornerHz / sampleRate
+        val cosW0 = cos(w0)
+        val sinW0 = sin(w0)
+        val alpha = sinW0 / 2.0 * kotlin.math.sqrt((a + 1.0 / a) * (1.0 / 1.0 - 1.0) + 2.0)
+        val twoSqrtAAlpha = 2.0 * kotlin.math.sqrt(a) * alpha
+
+        val b0p = a * ((a + 1) + (a - 1) * cosW0 + twoSqrtAAlpha)
+        val b1p = -2 * a * ((a - 1) + (a + 1) * cosW0)
+        val b2p = a * ((a + 1) + (a - 1) * cosW0 - twoSqrtAAlpha)
+        val a0  = (a + 1) - (a - 1) * cosW0 + twoSqrtAAlpha
+        val a1p = 2 * ((a - 1) - (a + 1) * cosW0)
+        val a2p = (a + 1) - (a - 1) * cosW0 - twoSqrtAAlpha
+        commit(b0p, b1p, b2p, a0, a1p, a2p)
+    }
+
+    /** Identity (pass-through) coefficients; state preserved. */
+    fun setIdentity() {
+        b0 = 1.0; b1 = 0.0; b2 = 0.0
+        a1 = 0.0; a2 = 0.0
+    }
+
+    /** Normalize by a0 and install. Shared by all the RBJ configure paths. */
+    private fun commit(b0p: Double, b1p: Double, b2p: Double, a0: Double, a1p: Double, a2p: Double) {
+        b0 = b0p / a0
+        b1 = b1p / a0
+        b2 = b2p / a0
+        a1 = a1p / a0
+        a2 = a2p / a0
+    }
+
+    /**
      * Copy [other]'s coefficients AND state into this filter. Used by the
      * cross-fade machinery to spawn a fresh "old" filter that picks up
      * exactly where the in-place filter left off, while the in-place filter

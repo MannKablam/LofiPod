@@ -213,6 +213,33 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Tone filters (v0.11) — global corrective stage that runs before the
+     * per-podcast EQ in every phase mode. Like the DC blocker, these are
+     * source-conditioning controls rather than per-show voicing, so they
+     * live app-wide in Settings. 0 = off for all three.
+     */
+    val toneLowCutHz: Flow<Float> =
+        context.dataStore.data.map { it[KEY_TONE_LOW_CUT_HZ] ?: 0f }
+
+    suspend fun setToneLowCutHz(v: Float) {
+        context.dataStore.edit { it[KEY_TONE_LOW_CUT_HZ] = v }
+    }
+
+    val toneHighCutHz: Flow<Float> =
+        context.dataStore.data.map { it[KEY_TONE_HIGH_CUT_HZ] ?: 0f }
+
+    suspend fun setToneHighCutHz(v: Float) {
+        context.dataStore.edit { it[KEY_TONE_HIGH_CUT_HZ] = v }
+    }
+
+    val toneTiltDb: Flow<Float> =
+        context.dataStore.data.map { (it[KEY_TONE_TILT_DB] ?: 0f).coerceIn(-6f, 6f) }
+
+    suspend fun setToneTiltDb(v: Float) {
+        context.dataStore.edit { it[KEY_TONE_TILT_DB] = v.coerceIn(-6f, 6f) }
+    }
+
+    /**
      * Set of feedUrls excluded from the canon-browse Bible index. Lets the
      * user hide a noisy feed (e.g., one that mistags a lot) from the
      * book/chapter/verse grids without removing it from the catalog. CSV
@@ -461,6 +488,12 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
         private val KEY_DC_BLOCKER_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
+        private val KEY_TONE_LOW_CUT_HZ =
+            androidx.datastore.preferences.core.floatPreferencesKey("tone_low_cut_hz")
+        private val KEY_TONE_HIGH_CUT_HZ =
+            androidx.datastore.preferences.core.floatPreferencesKey("tone_high_cut_hz")
+        private val KEY_TONE_TILT_DB =
+            androidx.datastore.preferences.core.floatPreferencesKey("tone_tilt_db")
         private val KEY_PHASE_MODE_LINEAR =
             androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
         private val KEY_PHASE_MODE =

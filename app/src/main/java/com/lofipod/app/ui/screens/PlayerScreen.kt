@@ -1011,6 +1011,7 @@ private fun NotesTab(
         return
     }
     val app = LocalContext.current.applicationContext as LofiPodApp
+    val noteShareCtx = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { Settings(app) }
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
@@ -1099,6 +1100,7 @@ private fun NotesTab(
                         onJump = { controller.jumpToNotePosition(entry) },
                         onEdit = { pauseIfWanted(); editEntry = entry },
                         onDelete = { deleteEntry = entry },
+                        onShare = { scope.launch { shareNoteEntry(noteShareCtx, entry) } },
                     )
                 }
             }

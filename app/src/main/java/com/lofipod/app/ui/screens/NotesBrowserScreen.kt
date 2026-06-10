@@ -45,6 +45,7 @@ fun NotesBrowserScreen(
     onBack: () -> Unit
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var searchMode by remember { mutableStateOf(false) }
@@ -253,7 +254,10 @@ fun NotesBrowserScreen(
                                     selection = if (key in selection) selection - key
                                                 else selection + key
                                 } else onOpenEpisodeNotes(entry.guid)
-                            }
+                            },
+                            onShare = {
+                                scope.launch { shareNoteEntry(ctx, entry) }
+                            },
                         )
                     }
                     if (loading) {
@@ -322,7 +326,8 @@ private fun BrowserNoteCard(
     isSelected: Boolean,
     onLongPress: () -> Unit,
     onJump: () -> Unit,
-    onOpenInEpisode: () -> Unit
+    onOpenInEpisode: () -> Unit,
+    onShare: () -> Unit,
 ) {
     val containerColor = if (isSelected) MaterialTheme.colorScheme.tertiaryContainer
                          else MaterialTheme.colorScheme.surfaceVariant
@@ -355,6 +360,13 @@ private fun BrowserNoteCard(
                         contentDescription = "Jump to position",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
+                    )
+                }
+                IconButton(onClick = onShare, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        painterResource(R.drawable.share_24),
+                        contentDescription = "Share note",
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

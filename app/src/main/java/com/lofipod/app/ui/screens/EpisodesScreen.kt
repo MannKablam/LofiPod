@@ -61,7 +61,26 @@ fun EpisodesScreen(
     onPreview: (Episode) -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
-    val pod = remember(feedUrl) { app.repo.cached(feedUrl) }
+    // Resolve the podcast from the in-memory cache, falling back to a disk
+    // hydration (cold start where this screen is reached before the Catalog
+    // populated the cache — deep links, process-death restore) and, for
+    // kabod:// feeds, to the bundled-asset loader (kabod packs aren't part
+    // of the feed disk cache; they re-parse from assets in a few ms).
+    // Previously this was a plain `remember { app.repo.cached(feedUrl) }`,
+    // which rendered a permanent "Feed not loaded." on those paths.
+    var podState by remember(feedUrl) { mutableStateOf(app.repo.cached(feedUrl)) }
+    LaunchedEffect(feedUrl) {
+        if (podState == null) {
+            app.repo.hydrateFromDisk()
+            podState = app.repo.cached(feedUrl)
+                ?: app.kabodLoader.takeIf { it.isKabodFeed(feedUrl) }
+                    ?.loadIntoCache(feedUrl)
+        }
+    }
+    // Plain local val so the existing smart-cast-dependent code below keeps
+    // compiling (delegated state properties can't be smart cast). Refreshes
+    // on every recomposition, including the one triggered by the load above.
+    val pod = podState
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val playerState by controller.state.collectAsState()
@@ -73,6 +92,26 @@ fun EpisodesScreen(
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
+
+    // Kabod pack metadata per guid — "Part N · <scripture>" line shown on
+    // each episode row, so the sermon-series structure that previously only
+    // surfaced in the Player's Details tab is visible while browsing the
+    // pack. Empty for regular RSS feeds (single indexed query, kabod only).
+    var kabodLineByGuid by remember(feedUrl) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(feedUrl) {
+        if (!feedUrl.startsWith("kabod://")) return@LaunchedEffect
+        val packId = feedUrl.removePrefix("kabod://")
+        val rows = withContext(Dispatchers.IO) {
+            app.db.episodeKabodDao().getForPack(packId)
+        }
+        kabodLineByGuid = rows.mapNotNull { row ->
+            val parts = listOfNotNull(
+                row.partNumber?.let { "Part $it" },
+                row.scripture?.takeIf { it.isNotBlank() },
+            )
+            if (parts.isEmpty()) null else row.guid to parts.joinToString(" · ")
+        }.toMap()
+    }
 
     // Bulk-selection mode (v0.10.15+). Long-press any episode row to
     // enter; selection set tracks chosen guids. Top bar transforms while
@@ -349,7 +388,7 @@ fun EpisodesScreen(
     ) { padding ->
         if (pod == null) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("Feed not loaded.")
+                Text("Loading feed…")
             }
             return@Scaffold
         }
@@ -366,6 +405,7 @@ fun EpisodesScreen(
                 EpisodeRow(
                     ep = ep,
                     podcastArt = pod.artworkUrl,
+                    kabodLine = kabodLineByGuid[ep.guid],
                     state = s,
                     isQueued = ep.guid in queueSet,
                     download = downloadsByGuid[ep.guid],
@@ -547,6 +587,9 @@ fun EpisodesScreen(
 private fun EpisodeRow(
     ep: Episode,
     podcastArt: String?,
+    /** "Part N · <scripture>" meta line for Kabod-pack episodes; null for
+     *  regular RSS episodes (and kabod rows without part/scripture tags). */
+    kabodLine: String?,
     state: EpisodeUiState,
     isQueued: Boolean,
     download: LofiDownload?,
@@ -694,6 +737,15 @@ private fun EpisodeRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                             .copy(alpha = textAlpha)
                     )
+                    kabodLine?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                                .copy(alpha = textAlpha),
+                            maxLines = 1,
+                        )
+                    }
                 }
                 Icon(
                     if (expanded) painterResource(R.drawable.expand_less_24) else painterResource(R.drawable.expand_more_24),

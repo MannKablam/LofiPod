@@ -279,20 +279,24 @@ class PlaybackService : MediaSessionService() {
             val settings = com.lofipod.app.data.Settings(this@PlaybackService)
             sharedSkipSilence.setLevel(settings.skipSilenceLevel.first())
 
-            // EQ bands — CSV of 10 gain values, one per ISO band. If the
-            // CSV is missing or malformed, leave the processor at FLAT
-            // defaults rather than half-loading a bad config.
-            val csv = settings.eqBandsCsv.first()
-            if (csv != null) {
-                val gains = csv.split(",").mapNotNull { it.trim().toFloatOrNull() }
-                if (gains.size == com.lofipod.app.audio.EqPresets.DEFAULT_BANDS.size) {
-                    val rehydrated = com.lofipod.app.audio.EqPresets.DEFAULT_BANDS
-                        .mapIndexed { i, b -> b.copy(gainDb = gains[i]) }
-                    sharedEq.setBands(rehydrated)
-                }
-            }
+            // EQ bands deliberately NOT rehydrated here. Since the v0.6.12
+            // reshape there is no global EQ — bands live per-podcast
+            // (podcast_state.eqBandsCsvOverride) with optional per-episode
+            // branches, and PlayerController.applyEqOverrideFor installs the
+            // right curve on every MediaItem transition (including the
+            // cold-start restore's setMediaItem). The old code here read the
+            // LEGACY global `eq_bands` DataStore key — which nothing writes
+            // anymore — so a stale pre-v0.6.12 curve could audibly flash
+            // between service start and the first transition. FLAT until the
+            // first applyEqOverrideFor is the correct boot state.
 
             sharedEq.setGainDb(settings.gainDb.first())
+
+            // Tone filters (low-cut / high-cut / tilt) — global corrective
+            // stage, same persistence model as the DC blocker below.
+            sharedEq.setLowCutHz(settings.toneLowCutHz.first())
+            sharedEq.setHighCutHz(settings.toneHighCutHz.first())
+            sharedEq.setTiltDb(settings.toneTiltDb.first())
 
             // Master "Audio enhancement" enable. PlayerController.applyEqOverrideFor
             // re-evaluates this on every track transition and ANDs it with the
