@@ -289,6 +289,9 @@ fun AudioDiagnosticsScreen(
                         settings.setGainDb(0f)
                         settings.setEqBandsCsv(EqPresets.FLAT.joinToString(",") { it.gainDb.toString() })
                         settings.setSkipSilenceLevel(0)
+                        settings.setPauseSkipSensitivity(
+                            com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                        )
                         settings.setDcBlockerEnabled(false)
                         settings.setToneLowCutHz(0f)
                         settings.setToneHighCutHz(0f)
@@ -301,6 +304,9 @@ fun AudioDiagnosticsScreen(
                     eq.setHighCutHz(0f)
                     eq.setTiltDb(0f)
                     PlaybackService.sharedSkipSilence.setLevel(0)
+                    PlaybackService.sharedPauseTap.setSensitivity(
+                        com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                    )
                     playerState.currentEpisodeGuid?.let {
                         controller.applyEqOverrideFor(it)
                     }

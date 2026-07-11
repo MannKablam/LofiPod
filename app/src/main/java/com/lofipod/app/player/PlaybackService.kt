@@ -95,6 +95,11 @@ class PlaybackService : MediaSessionService() {
         // setLevel(0..3), defaults off. Lives next to sharedEq so the EQ
         // screen can mutate both via PlaybackService.<X>.
         val sharedSkipSilence = SilenceSkippingProcessor()
+        // Shared pause tap — records media positions of audible pauses for
+        // the "skip back to previous pause" control. Sensitivity is set from
+        // the player UI (long-press on the pause-skip button) and persisted
+        // via Settings.pauseSkipSensitivity.
+        val sharedPauseTap = com.lofipod.app.audio.PauseTapProcessor()
         private const val SAVE_INTERVAL_MS = 10_000L
 
         /**
@@ -188,7 +193,7 @@ class PlaybackService : MediaSessionService() {
             .setTargetBufferBytes(8 * 1024 * 1024)
             .build()
 
-        val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq, sharedSkipSilence))
+        val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq, sharedSkipSilence, sharedPauseTap))
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -217,6 +222,49 @@ class PlaybackService : MediaSessionService() {
                     saveCurrent(player, listenDelta = 0L)
                     releasePlaybackWakeLock()
                 }
+            }
+
+            // --- PauseTap anchoring -------------------------------------
+            // The pause tap reconstructs media positions from PCM frame
+            // counts and needs an authoritative position for the first
+            // frame after every pipeline flush. Every event below reports
+            // the position that the post-flush (or post-restart) stream
+            // begins at; the tap adopts the freshest post at its next
+            // buffer, so posting generously is safe.
+            override fun onMediaItemTransition(
+                mediaItem: androidx.media3.common.MediaItem?,
+                reason: Int,
+            ) {
+                // New item ⇒ old pauses are meaningless.
+                sharedPauseTap.clearPauses()
+                sharedPauseTap.postAnchor(player.currentPosition)
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                sharedPauseTap.postAnchor(newPosition.positionMs)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                // Covers flushes with no discontinuity (route changes etc.):
+                // after the pipeline refills, position hasn't advanced, so
+                // it's a valid anchor for the restarted stream.
+                if (playbackState == Player.STATE_READY) {
+                    sharedPauseTap.postAnchor(player.currentPosition)
+                }
+            }
+
+            override fun onPlaybackParametersChanged(
+                playbackParameters: androidx.media3.common.PlaybackParameters,
+            ) {
+                // Speed changes can rebuild the sink pipeline without a
+                // position discontinuity or READY transition; re-anchor so
+                // the pause tap isn't left waiting until the next
+                // incidental event.
+                sharedPauseTap.postAnchor(player.currentPosition)
             }
         })
 
@@ -278,6 +326,7 @@ class PlaybackService : MediaSessionService() {
         scope.launch {
             val settings = com.lofipod.app.data.Settings(this@PlaybackService)
             sharedSkipSilence.setLevel(settings.skipSilenceLevel.first())
+            sharedPauseTap.setSensitivity(settings.pauseSkipSensitivity.first())
 
             // EQ bands deliberately NOT rehydrated here. Since the v0.6.12
             // reshape there is no global EQ — bands live per-podcast

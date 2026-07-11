@@ -472,12 +472,18 @@ private fun AudioDiagnosticsRow(controller: PlayerController) {
                             .joinToString(",") { it.gainDb.toString() }
                     )
                     settings.setSkipSilenceLevel(0)
+                    settings.setPauseSkipSensitivity(
+                        com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                    )
                 }
                 // Push the new values into the live processors so the
                 // change takes effect without restarting the service.
                 eq.setBands(com.lofipod.app.audio.EqPresets.FLAT)
                 eq.setGainDb(0f)
                 PlaybackService.sharedSkipSilence.setLevel(0)
+                PlaybackService.sharedPauseTap.setSensitivity(
+                    com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                )
                 playerState.currentEpisodeGuid?.let {
                     controller.applyEqOverrideFor(it)
                 }

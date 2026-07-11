@@ -2,6 +2,113 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.21 (pending tag) — Pause-skip, promotion notes, quick-scroll, playback-order fixes (2026-07-11)
+
+Five asks in one pass: a new transport control, notes-system integration
+for promotions, list ergonomics, and a sweep of playback-consistency bugs
+(Kabod vs streams).
+
+### Skip back to the previous audible pause
+
+New transport button (left of Back-15s): tap seeks to just before the end
+of the most recent silence gap — sentence/paragraph boundary — so "wait,
+what did he just say" costs one tap instead of scrubbing. Long-press opens
+a sensitivity dialog (1..5, default 3 ≈ 0.7 s gaps; persisted in
+DataStore, mirrored live into the processor).
+
+Mechanics: new `PauseTapProcessor` — a passthrough observer FIRST in the
+audio chain (decoder → PauseTap → EQ → SkipSilence → Sonic → sink). It
+peak-scans 16-bit PCM frames, reconstructs media positions as
+anchor + framesSinceFlush/sampleRate (anchors posted from PlaybackService
+on seeks / item transitions / READY; adopted at the first buffer after a
+flush), and keeps a ring of the last 512 pauses. Sitting before Sonic
+makes it speed-immune; before the silence-skipper makes it drop-immune.
+Repeated taps walk back through successive pauses (1.2 s guard window).
+Unanchored stretches record nothing and the button falls back to the
+plain 15 s skip — degrade, never lie.
+
+### Promotions surface in Notes
+
+Promoting an episode to Excellent or Most-excellent now auto-drops a
+canned note ("Promoted to Excellent" / "Promoted to most-excellent") at
+the live playback position (or the saved resume position from the episode
+list). Both heart sites (Player top bar, episode-row heart) write it.
+Demotions write nothing; the notes stay as history.
+
+### Notes ordering
+
+`observeForEpisode` now ORDER BY createdAt DESC — Player Notes tab and
+per-episode Notes screen show the newest note first, matching the global
+notes browser.
+
+### Quick-scroll in the episodes list
+
+New `FastScroller` overlay (reusable BoxScope composable): slim thumb on
+the right edge, fades in with scrolling, draggable to jump proportionally
+through the list; while dragging, a bubble shows the episode's publish
+month (MM/yy — kabod parts without pubDates show "n / total"). Hidden
+under 25 items.
+
+### Playback-order and speed fixes (the irksome ones)
+
+- **Stale-speed leak (prime stall suspect):** leaving a feed that has a
+  per-podcast `defaultSpeed` for one that doesn't never reset the player —
+  `playbackParameters` survive `setMediaItem`, so audio kept the old 2.0×
+  while `AudioChainTelemetry.playbackSpeed` was reset to 1.0×. That
+  telemetry drives the PerfHint wall-clock budget, so the OS got a budget
+  2× too generous → downclock → AudioTrack-underrun stalls, exactly at
+  Kabod↔stream transitions. Both `playEpisode` and the cold-start restore
+  now reset the *player* too (guarded to skip the call when already 1.0×).
+- **Kabod part-order autoplay survives cache misses:** the part-order
+  advance silently fell through to the pubDate walk (arbitrary part on
+  multi-preacher packs) whenever the pack wasn't in the in-memory repo
+  cache (service outliving UI, process restart). Now hydrates via
+  `kabodLoader.loadIntoCache`, and never pubDate-walks a numbered series
+  even if the pack is unreadable.
+- **Canon autoplay no longer hijacks numbered series:** finishing Kabod
+  part N with canon-order autoplay enabled jumped cross-pack to
+  `nextInCanon` instead of part N+1. Canon advance now defers to part
+  order when the finished episode carries a partNumber.
+
+### Post-review hardening (8-angle self-review before commit)
+
+- Transport row switched to fillMaxWidth + SpaceEvenly (fixed spacers
+  overflowed 320dp-wide/split-screen windows and clipped the outer
+  buttons).
+- FastScroller drag now maps over the same denominator as the thumb
+  (total − visible), killing a top-of-track dead zone and the
+  thumb-snap on release.
+- Pause-skip guard trimmed 1.2s → 400ms: the just-passed pause is
+  reachable on the first tap (landing before a pause's end already
+  self-excludes it on repeat taps, so the big guard was overkill).
+- Pause-skip: single-pass frame copy via a scratch array (the
+  SilenceSkipping-style rewind+re-read doubled audio-thread buffer
+  reads for no reason in a pure passthrough); pause query snapshots
+  under the lock and scans outside it; dropped a redundant
+  `awaitingAnchor` flag; re-anchor on onPlaybackParametersChanged so a
+  speed-change pipeline rebuild can't leave the tap dormant; dialog
+  labels pull from the same ms table the detector runs on.
+- Promotion notes: at most one per tier per episode (heart-cycling laps
+  would otherwise pile up duplicates); Player-screen fallback position
+  now uses the episode's saved resume position, matching the episode
+  list; per-feed speed application centralized in one helper
+  (playEpisode + cold-start restore shared diverging copies).
+- Canon autoplay end-of-pack regression (introduced mid-pass, caught in
+  review): canon now yields to Kabod part order only while a next part
+  actually exists, so finishing the last part still continues to the
+  next passage in canon. Part lookup also skips DB-metadata rows missing
+  from the loaded pack asset instead of halting the series at the gap.
+- "Reset audio to defaults" (Settings + Audio diagnostics) now also
+  resets pause-skip sensitivity.
+
+Known-but-unchanged (deliberate): Kabod part-advance stays gated behind
+the same `autoPlayNextInFeed` toggle as regular feeds (one autoplay
+concept); guid namespacing across user-imported packs is still by
+convention only (a collision guard would orphan existing state — revisit
+if user-authored packs become a thing); promotion auto-note dedup means
+a re-promotion after a demotion won't stamp a fresh note (the original
+anointment note is the record).
+
 ## v0.10.20 — Tune-up pass: tone filters, shared-note deep links, Kabod parity (2026-06-09)
 
 Broad pass across the four asks: Kabod/RSS feature parity, richer audio

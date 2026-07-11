@@ -392,9 +392,10 @@ fun EpisodesScreen(
             }
             return@Scaffold
         }
+        Box(Modifier.fillMaxSize().padding(padding)) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.padding(padding),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -460,6 +461,15 @@ fun EpisodesScreen(
                         episodeStates[ep.guid] = s.copy(favoriteTier = next)
                         scope.launch {
                             upsertState(app, ep, pod, newTier = next)
+                            // Promotions surface in the notes system as a
+                            // canned auto-note (no-op on the clear-to-0 leg).
+                            // Position: live player position if this episode
+                            // is loaded, else its persisted resume position.
+                            val posMs = if (playerState.currentEpisodeGuid == ep.guid)
+                                controller.currentPositionMs() else s.positionMs
+                            com.lofipod.app.data.recordPromotionNote(
+                                app.db, ep.guid, next, posMs
+                            )
                             // Promotion to tier 2 drops a checkpoint into the
                             // global history so the moment of anointment is
                             // recoverable later. Snackbar gives the user a
@@ -571,6 +581,21 @@ fun EpisodesScreen(
                     }
                 }
             }
+        }
+        // Quick-scroll: draggable thumb on the right edge for long archives.
+        // The bubble shows the publish month (MM/yy) of the episode under
+        // the thumb; kabod parts without a pubDate fall back to "n / total".
+        val bubbleDateFmt = remember { SimpleDateFormat("MM/yy", Locale.getDefault()) }
+        FastScroller(
+            listState = listState,
+            itemCount = visibleEpisodes.size,
+            bubbleText = { idx ->
+                visibleEpisodes.getOrNull(idx)?.let { ep ->
+                    ep.pubDateMillis?.let { bubbleDateFmt.format(Date(it)) }
+                        ?: "${idx + 1} / ${visibleEpisodes.size}"
+                }
+            },
+        )
         }
     }
 

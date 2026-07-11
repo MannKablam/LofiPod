@@ -184,6 +184,19 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Pause-skip sensitivity: 1 (long, deep pauses only) .. 5 (short gaps
+     * too). Feeds PauseTapProcessor, which powers the "skip back to the
+     * previous audible pause" transport control. Adjusted by long-pressing
+     * that control in the Player. Default 3 (≈0.7 s of near-silence).
+     */
+    val pauseSkipSensitivity: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_PAUSE_SKIP_SENSITIVITY] ?: 3).coerceIn(1, 5) }
+
+    suspend fun setPauseSkipSensitivity(level: Int) {
+        context.dataStore.edit { it[KEY_PAUSE_SKIP_SENSITIVITY] = level.coerceIn(1, 5) }
+    }
+
+    /**
      * Master "Audio enhancement" toggle from the EQ screen. Default true.
      * Distinct from the per-podcast `podcast_state.eqDisabled` override —
      * both feed into [com.lofipod.app.player.PlayerController.applyEqOverrideFor],
@@ -484,6 +497,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
         private val KEY_SKIP_SILENCE_LEVEL =
             androidx.datastore.preferences.core.intPreferencesKey("skip_silence_level")
+        private val KEY_PAUSE_SKIP_SENSITIVITY =
+            androidx.datastore.preferences.core.intPreferencesKey("pause_skip_sensitivity")
         private val KEY_AUDIO_ENHANCEMENT_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
         private val KEY_DC_BLOCKER_ENABLED =

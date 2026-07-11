@@ -20,6 +20,7 @@ import com.lofipod.app.data.db.PlaybackCheckpointEntity
 import com.lofipod.app.data.db.QueueEntryDao
 import com.lofipod.app.data.db.QueueEntryEntity
 import com.lofipod.app.data.model.Episode
+import com.lofipod.app.data.model.Podcast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -392,9 +393,33 @@ class PlayerController(private val context: Context) {
             val speedOverride = withContext(Dispatchers.IO) {
                 podcastStateDao.get(state.feedUrl)?.defaultSpeed
             }
-            if (speedOverride != null && kotlin.math.abs(speedOverride - 1.0f) > 0.001f) {
-                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = speedOverride
-                c.setPlaybackSpeed(speedOverride)
+            applyFeedSpeedOverride(c, speedOverride)
+        }
+    }
+
+    /**
+     * Apply a per-podcast default-speed override to the live player,
+     * keeping the AudioChainTelemetry mirror in lockstep with the REAL
+     * player speed. playbackParameters are player-level and survive
+     * setMediaItem, so "no override" must actively reset a stale speed
+     * left by the previous feed — resetting only the mirror (the pre-fix
+     * behavior) left audio at the stale speed while PerfHint budgeted
+     * wall-clock for 1.0×, a budget 2× too generous at 2× real speed →
+     * CPU downclock → AudioTrack underrun stalls at exactly the
+     * Kabod↔stream transitions out of a speed-overridden feed. The reset
+     * is guarded so a player already at 1.0× skips the renderer-resetting
+     * setPlaybackSpeed call entirely.
+     */
+    private fun applyFeedSpeedOverride(c: Player, override: Float?) {
+        if (override != null && kotlin.math.abs(override - 1.0f) > 0.001f) {
+            // Mirror speed into AudioChainTelemetry too — see setSpeed
+            // for rationale (PerfHint target wall-clock budget scaling).
+            com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = override
+            c.setPlaybackSpeed(override)
+        } else {
+            com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = 1.0f
+            if (kotlin.math.abs(c.playbackParameters.speed - 1.0f) > 0.001f) {
+                c.setPlaybackSpeed(1.0f)
             }
         }
     }
@@ -857,17 +882,7 @@ class PlayerController(private val context: Context) {
             val speedOverride = withContext(Dispatchers.IO) {
                 podcastStateDao.get(ep.feedUrl)?.defaultSpeed
             }
-            if (speedOverride != null && kotlin.math.abs(speedOverride - 1.0f) > 0.001f) {
-                // Mirror speed into AudioChainTelemetry too — see setSpeed
-                // for rationale (PerfHint target wall-clock budget scaling).
-                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = speedOverride
-                c.setPlaybackSpeed(speedOverride)
-            } else {
-                // No override (or 1.0×): reset the mirror so a previous
-                // episode's per-podcast speed doesn't leak into PerfHint
-                // math for this one.
-                com.lofipod.app.audio.AudioChainTelemetry.playbackSpeed = 1.0f
-            }
+            applyFeedSpeedOverride(c, speedOverride)
 
             // Mark this feed as "seen" — kills the new-episodes badge in Catalog
             // for this feed. Playing is the strongest signal that the user is
@@ -1859,6 +1874,30 @@ class PlayerController(private val context: Context) {
     /** Forward equivalent of [seekBack]; uses seekForwardIncrementMs. */
     fun seekForward() { controller?.seekForward() }
 
+    /**
+     * Seek back to just before the end of the previous audible pause
+     * (sentence/paragraph boundary), as recorded by the shared
+     * [com.lofipod.app.audio.PauseTapProcessor]. Repeated taps walk back
+     * through successive pauses (the tap's guard window excludes the pause
+     * we just landed after). Falls back to the plain 15 s [seekBack] when
+     * no pause is known behind the playhead — cold start, right after a
+     * cross-item transition, or content with no detectable gaps.
+     *
+     * Returns true when a pause was found (UI can differentiate feedback).
+     */
+    fun skipBackToPreviousPause(): Boolean {
+        if (controller == null) return false
+        val target = PlaybackService.sharedPauseTap
+            .previousPauseTargetBefore(currentPositionMs())
+        return if (target != null) {
+            seekTo(target)
+            true
+        } else {
+            seekBack()
+            false
+        }
+    }
+
     fun seekTo(positionMs: Long) {
         // Compensate the requested UI position by the chain's algorithmic
         // delay so the AUDIBLE result lands at the position the user asked
@@ -2040,6 +2079,14 @@ class PlayerController(private val context: Context) {
             settings.canonAutoplayEnabled.first()
         }
         if (!enabled) return false
+        // Kabod parts follow their pack's explicit part order. Canon-order
+        // autoplay must not hijack a numbered series mid-run — nextInCanon
+        // is cross-pack/cross-feed, so it would jump to a different
+        // preacher's sermon on the adjacent passage instead of part N+1.
+        // Yield exactly when part-order will actually advance; at the END
+        // of a pack (nextKabodPart == null) canon proceeds, so finishing
+        // the last part still continues to the next passage in canon.
+        if (nextKabodPart(finishedGuid) != null) return false
         val current = withContext(Dispatchers.IO) {
             app.db.episodeScriptureDao().get(finishedGuid)
         } ?: return false
@@ -2069,6 +2116,54 @@ class PlayerController(private val context: Context) {
         lastPlayWasAutoplay = true
         playEpisode(ep = ep, podcastTitle = podcastTitleFor(ep.feedUrl), podcastArt = ep.episodeArtworkUrl)
         return true
+    }
+
+    private class KabodNextPart(val episode: Episode, val pack: Podcast)
+
+    /**
+     * Next unplayed part of the same kabod pack, in the pack author's
+     * explicit part order — or null when [finishedGuid] isn't a numbered
+     * kabod part, it was the last remaining part, or the pack can't be
+     * loaded. Hydrates the repo cache from the bundled asset on a miss
+     * (the service can outlive the UI that originally cached the pack).
+     * Metadata rows whose guid is missing from the loaded pack (DB vs
+     * asset drift after a pack update) are skipped rather than halting
+     * the series at the gap.
+     *
+     * Shared by the part-order advance in [advanceToNextInQueue] and by
+     * [tryAdvanceToNextInCanon]'s yield check — canon defers to part
+     * order exactly when this returns non-null and takes over at the end
+     * of the pack.
+     */
+    private suspend fun nextKabodPart(finishedGuid: String): KabodNextPart? {
+        val app = context.applicationContext as LofiPodApp
+        val kabodMeta = withContext(Dispatchers.IO) {
+            app.db.episodeKabodDao().get(finishedGuid)
+        }
+        val finishedPart = kabodMeta?.partNumber ?: return null
+        val packFeedUrl = "kabod://${kabodMeta.packId}"
+        val pack = app.repo.cached(packFeedUrl)
+            ?: app.kabodLoader.loadIntoCache(packFeedUrl)
+            ?: return null
+        val packMeta = withContext(Dispatchers.IO) {
+            app.db.episodeKabodDao().getForPack(kabodMeta.packId)
+        }
+        val doneGuids = withContext(Dispatchers.IO) {
+            dao.getByGuids(pack.episodes.map { it.guid })
+                .filter { it.durationMs > 0 && it.positionMs >= it.durationMs - 5_000 }
+                .map { it.guid }
+                .toSet()
+        }
+        // getForPack returns partNumber-ascending; the first later, unplayed
+        // part that exists in the loaded pack wins. Parts without a number
+        // sort to the end of the DAO result and are excluded by the filter.
+        return packMeta
+            .asSequence()
+            .filter { (it.partNumber ?: Int.MAX_VALUE) > finishedPart }
+            .filter { it.guid != finishedGuid && it.guid !in doneGuids }
+            .mapNotNull { nm -> pack.episodes.find { it.guid == nm.guid } }
+            .firstOrNull()
+            ?.let { KabodNextPart(it, pack) }
     }
 
     private suspend fun advanceToNextInQueue(excluding: String?) {
@@ -2112,36 +2207,17 @@ class PlayerController(private val context: Context) {
         // one, honor it. The direction toggle deliberately doesn't apply:
         // "next" in a numbered series only ever means the next part.
         val kabodMeta = withContext(Dispatchers.IO) { app.db.episodeKabodDao().get(excluding) }
-        val finishedPart = kabodMeta?.partNumber
-        if (kabodMeta != null && finishedPart != null) {
-            val packFeedUrl = "kabod://${kabodMeta.packId}"
-            val pack = app.repo.cached(packFeedUrl)
-            if (pack != null) {
-                val packMeta = withContext(Dispatchers.IO) {
-                    app.db.episodeKabodDao().getForPack(kabodMeta.packId)
-                }
-                val donePackGuids = withContext(Dispatchers.IO) {
-                    dao.getByGuids(pack.episodes.map { it.guid })
-                        .filter { it.durationMs > 0 && it.positionMs >= it.durationMs - 5_000 }
-                        .map { it.guid }
-                        .toSet()
-                }
-                // getForPack returns partNumber-ascending; first later,
-                // unplayed part wins. Parts without a number sort to the
-                // end of the DAO result and are skipped by the filter.
-                val nextEp = packMeta
-                    .filter { (it.partNumber ?: Int.MAX_VALUE) > finishedPart }
-                    .firstOrNull { it.guid != excluding && it.guid !in donePackGuids }
-                    ?.let { nm -> pack.episodes.find { it.guid == nm.guid } }
-                if (nextEp != null) {
-                    lastPlayWasAutoplay = true
-                    playEpisode(nextEp, pack.title, pack.artworkUrl)
-                }
-                // End of the pack: stop rather than falling through to the
-                // pubDate walk — a completed series shouldn't loop back
-                // through itself in date order.
-                return
+        if (kabodMeta?.partNumber != null) {
+            val next = nextKabodPart(excluding)
+            if (next != null) {
+                lastPlayWasAutoplay = true
+                playEpisode(next.episode, next.pack.title, next.pack.artworkUrl)
             }
+            // End of the pack (or pack asset unreadable): stop rather than
+            // falling through — the pubDate walk is never a valid order for
+            // a numbered series, and a completed series shouldn't loop back
+            // through itself in date order.
+            return
         }
 
         val finishedFeedUrl = withContext(Dispatchers.IO) { dao.get(excluding)?.feedUrl }

@@ -1,6 +1,8 @@
 package com.lofipod.app.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
@@ -93,7 +96,7 @@ private suspend fun resolvePreviewData(app: LofiPodApp, guid: String): PreviewDa
         }
     }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PlayerScreen(
     controller: PlayerController,
@@ -143,6 +146,11 @@ fun PlayerScreen(
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
+    // Pause-skip ("back to previous audible pause") sensitivity dialog,
+    // opened by long-pressing the transport control. Settings collection
+    // lives inside the dialog block so the screen root isn't subscribed
+    // to a DataStore flow it only needs while the dialog is up.
+    var pauseSkipDialogOpen by remember { mutableStateOf(false) }
     // Per-episode download state for the inline DownloadButton. Recomposes
     // automatically as downloads progress / change state.
     val downloadsByGuid by app.downloadsApi.byId.collectAsState()
@@ -348,9 +356,10 @@ fun PlayerScreen(
                         IconButton(onClick = {
                             val next = (currentTier + 1) % 3
                             scope.launch {
-                                withContext(Dispatchers.IO) {
+                                val existing = withContext(Dispatchers.IO) {
                                     val dao = app.db.episodeStateDao()
-                                    if (dao.get(guid) == null) {
+                                    val row = dao.get(guid)
+                                    if (row == null) {
                                         // Synthesise a row so the tier sticks. Pull
                                         // identity from previewData if we have it.
                                         previewData?.episode?.let { ep ->
@@ -369,7 +378,19 @@ fun PlayerScreen(
                                     } else {
                                         dao.setFavoriteTier(guid, next)
                                     }
+                                    row
                                 }
+                                // Promotions surface in the notes system too —
+                                // canned auto-note (no-op on the clear-to-0 leg)
+                                // stamped at the live playback position if this
+                                // episode is loaded, else its saved resume
+                                // position (matches the episode-list heart).
+                                val posMs = if (state.currentEpisodeGuid == guid)
+                                    controller.currentPositionMs()
+                                else existing?.positionMs ?: 0L
+                                com.lofipod.app.data.recordPromotionNote(
+                                    app.db, guid, next, posMs
+                                )
                                 if (next == 2) {
                                     controller.recordMostExcellentPromotion(guid)
                                     snackbarHostState.showSnackbar("Promoted to most-excellent")
@@ -613,11 +634,40 @@ fun PlayerScreen(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // SpaceEvenly + fillMaxWidth instead of fixed spacers: four
+                // fixed-size controls total 268dp, which fits a 320dp-wide
+                // window (272dp usable inside the 24dp side padding) only if
+                // the gaps flex. Fixed 8-16dp spacers overflowed and clipped
+                // the outer buttons on compact/split-screen widths.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
                     // Skip-back/forward only make sense for live playback.
                     // Drop them in preview so the transport row collapses to
                     // a single big Play button.
                     if (!isPreview) {
+                        // Pause-skip: tap = seek back to the previous audible
+                        // pause; long-press = sensitivity dialog. Box +
+                        // combinedClickable because IconButton has no
+                        // long-press slot.
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .combinedClickable(
+                                    onClick = { controller.skipBackToPreviousPause() },
+                                    onLongClick = { pauseSkipDialogOpen = true },
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painterResource(R.drawable.skip_previous_24),
+                                contentDescription = "Back to previous pause (hold to adjust sensitivity)",
+                                modifier = Modifier.size(38.dp)
+                            )
+                        }
                         IconButton(
                             onClick = { controller.seekBack() },
                             modifier = Modifier.size(64.dp)
@@ -628,7 +678,6 @@ fun PlayerScreen(
                                 modifier = Modifier.size(56.dp)
                             )
                         }
-                        Spacer(Modifier.width(16.dp))
                     }
                     val countdown = rememberAutoplayCountdown(
                         if (isPreview) null else autoplayTimer
@@ -698,7 +747,6 @@ fun PlayerScreen(
                         }
                     }
                     if (!isPreview) {
-                        Spacer(Modifier.width(16.dp))
                         IconButton(
                             onClick = { controller.seekForward() },
                             modifier = Modifier.size(64.dp)
@@ -788,6 +836,60 @@ fun PlayerScreen(
                 modifier = Modifier.weight(1f).fillMaxWidth()
             )
         }
+    }
+
+    if (pauseSkipDialogOpen) {
+        val pauseSkipSettings = remember { Settings(app) }
+        val pauseSkipSensitivity by pauseSkipSettings.pauseSkipSensitivity
+            .collectAsState(
+                initial = com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+            )
+        AlertDialog(
+            onDismissRequest = { pauseSkipDialogOpen = false },
+            title = { Text("Pause-skip sensitivity") },
+            text = {
+                Column {
+                    Text(
+                        "How small a gap in the audio counts as a pause when " +
+                            "skipping back. Higher catches short breaths between " +
+                            "sentences; lower only stops at real breaks.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Slider(
+                        value = pauseSkipSensitivity.toFloat(),
+                        onValueChange = { v ->
+                            val level = v.toInt().coerceIn(1, 5)
+                            if (level != pauseSkipSensitivity) {
+                                // Write-through: live processor immediately,
+                                // DataStore for persistence (same pattern as
+                                // the EQ screen's skip-silence level).
+                                com.lofipod.app.player.PlaybackService
+                                    .sharedPauseTap.setSensitivity(level)
+                                scope.launch {
+                                    pauseSkipSettings.setPauseSkipSensitivity(level)
+                                }
+                            }
+                        },
+                        valueRange = 1f..5f,
+                        steps = 3,
+                    )
+                    // Label pulls the min-silence value from the same table
+                    // the detector runs on, so re-tuning the processor can't
+                    // leave the UI advertising stale thresholds.
+                    val gapSec = com.lofipod.app.audio.PauseTapProcessor
+                        .minSilenceMsFor(pauseSkipSensitivity) / 1000f
+                    Text(
+                        String.format(Locale.getDefault(), "%d — gaps of ~%.1fs and longer", pauseSkipSensitivity, gapSec),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pauseSkipDialogOpen = false }) { Text("Done") }
+            },
+        )
     }
 }
 

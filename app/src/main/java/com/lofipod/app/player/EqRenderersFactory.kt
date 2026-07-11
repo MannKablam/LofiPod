@@ -12,6 +12,7 @@ import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import com.lofipod.app.audio.EqAudioProcessor
+import com.lofipod.app.audio.PauseTapProcessor
 import com.lofipod.app.audio.SilenceSkippingProcessor
 
 /**
@@ -21,9 +22,13 @@ import com.lofipod.app.audio.SilenceSkippingProcessor
  * speed / pitch changes.
  *
  * Audio chain order:
- *   decoder -> EQ -> SilenceSkipping(custom) -> Sonic (speed) -> sink
+ *   decoder -> PauseTap -> EQ -> SilenceSkipping(custom) -> Sonic (speed) -> sink
  *
- * EQ runs first so its biquad coefficients are computed against the source's
+ * PauseTap is a pure passthrough observer that records the media positions
+ * of audible pauses for the "skip back to previous pause" control; it sits
+ * first so it sees the raw source signal and so its frame counting isn't
+ * affected by frames the silence-skipper drops.
+ * EQ runs next so its biquad coefficients are computed against the source's
  * native sample rate. Our silence-skipping runs against the EQ-treated signal
  * so a heavy bass cut doesn't accidentally re-classify low rumble as
  * "silence." Sonic operates downstream and preserves sample rate, so neither
@@ -39,6 +44,7 @@ class EqRenderersFactory(
     context: Context,
     private val eq: EqAudioProcessor,
     private val skipSilence: SilenceSkippingProcessor,
+    private val pauseTap: PauseTapProcessor,
 ) : DefaultRenderersFactory(context) {
 
     init {
@@ -90,7 +96,7 @@ class EqRenderersFactory(
         enableAudioTrackPlaybackParams: Boolean
     ): AudioSink {
         val chain = DefaultAudioSink.DefaultAudioProcessorChain(
-            /* audioProcessors = */ arrayOf<AudioProcessor>(eq, skipSilence),
+            /* audioProcessors = */ arrayOf<AudioProcessor>(pauseTap, eq, skipSilence),
             /* silenceSkippingAudioProcessor = */ SilenceSkippingAudioProcessor(),
             /* sonicAudioProcessor = */ SonicAudioProcessor()
         )

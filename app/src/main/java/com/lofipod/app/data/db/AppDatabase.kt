@@ -145,7 +145,10 @@ interface PlaybackCheckpointDao {
 @Dao
 interface EpisodeNoteEntryDao {
 
-    @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt ASC")
+    // Newest-first so the most recent note surfaces at the top of the
+    // Player's Notes tab and the per-episode Notes screen, matching the
+    // global notes browser.
+    @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt DESC")
     fun observeForEpisode(guid: String): Flow<List<EpisodeNoteEntryEntity>>
 
     @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt ASC")
