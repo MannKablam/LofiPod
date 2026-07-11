@@ -296,6 +296,11 @@ fun AudioDiagnosticsScreen(
                         settings.setToneLowCutHz(0f)
                         settings.setToneHighCutHz(0f)
                         settings.setToneTiltDb(0f)
+                        settings.setToneLowCutSteep(false)
+                        settings.setVoiceDeEsserLevel(0)
+                        settings.setVoiceWarmthLevel(0)
+                        settings.setVoiceLevelerLevel(0)
+                        settings.setVoiceAirLevel(0)
                     }
                     eq.setBands(EqPresets.FLAT)
                     eq.setGainDb(0f)
@@ -303,6 +308,11 @@ fun AudioDiagnosticsScreen(
                     eq.setLowCutHz(0f)
                     eq.setHighCutHz(0f)
                     eq.setTiltDb(0f)
+                    eq.setLowCutSteep(false)
+                    eq.setDeEsserLevel(0)
+                    eq.setWarmthLevel(0)
+                    eq.setLevelerLevel(0)
+                    eq.setAirLevel(0)
                     PlaybackService.sharedSkipSilence.setLevel(0)
                     PlaybackService.sharedPauseTap.setSensitivity(
                         com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
@@ -471,6 +481,8 @@ private data class TelemetrySnapshot(
     val passthrough: Boolean,
     val ditherActive: Boolean,
     val enabled: Boolean,
+    val deEsserGainLin: Double,
+    val levelerGainLin: Double,
     val configures: Int,
     val flushes: Int,
     val crossFades: Int,
@@ -510,6 +522,8 @@ private data class TelemetrySnapshot(
                 passthrough = passthrough,
                 ditherActive = ditherActive,
                 enabled = enabled,
+                deEsserGainLin = deEsserGainLin,
+                levelerGainLin = levelerGainLin,
                 configures = configureCount(),
                 flushes = flushCount(),
                 crossFades = crossFadeCount(),
@@ -553,6 +567,16 @@ private fun formatChainSpec(s: TelemetrySnapshot): String {
         append("  chain_latency    = ~${"%.2f".format(firUs / 1000.0)} ms total (live, mode-aware)\n")
         append("  postEQ_latency   = ${s.totalLatencyFrames1x} frames @1x (~${"%.2f".format(s.totalLatencyMs)} ms)\n")
         append("  dc_blocker       = ${if (s.dcBlockerEnabled) "on" else "off"}\n")
+        val eq = com.lofipod.app.player.PlaybackService.sharedEq
+        append(
+            "  voice_suite      = deesser L${eq.currentDeEsserLevel()}, " +
+                "warmth L${eq.currentWarmthLevel()}, " +
+                "leveler L${eq.currentLevelerLevel()}, " +
+                "air L${eq.currentAirLevel()}\n"
+        )
+        append(
+            "  low_cut_slope    = ${if (eq.currentLowCutSteep()) "24" else "12"} dB/oct\n"
+        )
         append("  master_enabled   = ${s.enabled}")
     }
 }
@@ -595,6 +619,10 @@ private fun formatLive(s: TelemetrySnapshot): String = buildString {
     append("  in_peak          = ${linearToDb(s.inputPeak)}\n")
     append("  out_peak         = ${linearToDb(s.outputPeak)}\n")
     append("  limiter_GR       = ${"%5.2f".format(s.reductionDb)} dB\n")
+    // Voice suite: de-esser high-band GR + leveler ride gain, in dB.
+    // Both read 0.00 while their stage is off (gain mirror rests at 1.0).
+    append("  deesser_GR       = ${"%5.2f".format(20.0 * log10(s.deEsserGainLin.coerceAtLeast(1e-6)))} dB\n")
+    append("  leveler_gain     = ${"%+5.2f".format(20.0 * log10(s.levelerGainLin.coerceAtLeast(1e-6)))} dB\n")
     append("  flags            = ")
     val flags = buildList {
         if (s.passthrough) add("passthrough")

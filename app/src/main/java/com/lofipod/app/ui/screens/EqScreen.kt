@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -388,11 +389,43 @@ fun EqScreen(
                     }
                 },
             )
+            // Slope selector for the low cut — 12 dB/oct (single Butterworth
+            // section, the original) vs 24 dB/oct (LR4, two cascaded
+            // sections) for stubborn rumble. Only shown while a low cut is
+            // engaged; the toggle is meaningless at "Off".
+            val toneLowCutSteep by settings.toneLowCutSteep.collectAsState(initial = false)
+            if (toneLowCut > 0f) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(64.dp))
+                    FilterChip(
+                        selected = !toneLowCutSteep,
+                        onClick = {
+                            composeScope.launch {
+                                withContext(Dispatchers.IO) { settings.setToneLowCutSteep(false) }
+                                eq.setLowCutSteep(false)
+                            }
+                        },
+                        label = { Text("12 dB/oct") },
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(
+                        selected = toneLowCutSteep,
+                        onClick = {
+                            composeScope.launch {
+                                withContext(Dispatchers.IO) { settings.setToneLowCutSteep(true) }
+                                eq.setLowCutSteep(true)
+                            }
+                        },
+                        label = { Text("24 dB/oct") },
+                    )
+                }
+            }
             Spacer(Modifier.height(6.dp))
             ToneCutChipRow(
                 label = "High cut",
                 currentHz = toneHighCut,
-                optionsHz = listOf(8_000f, 10_000f, 12_000f),
+                optionsHz = listOf(8_000f, 10_000f, 12_000f, 14_000f, 16_000f),
                 onSelect = { hz ->
                     composeScope.launch {
                         withContext(Dispatchers.IO) { settings.setToneHighCutHz(hz) }
@@ -426,6 +459,107 @@ fun EqScreen(
                 steps = 23,
                 colors = sliderColors,
             )
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Voice suite (v0.11 premium stages) ----
+            // Four staged studio-style voice treatments, global like the
+            // tone filters and identical across all four phase modes:
+            //   De-esser — split-band sibilance tamer (level-independent
+            //     band-vs-band detector, reduction on >5.6 kHz only).
+            //   Warmth  — tube-style soft saturation, oversampled 2x so the
+            //     harmonics never alias.
+            //   Leveler — slow gain rider toward one comfortable level;
+            //     freezes on silence so noise floors don't get ridden up.
+            //   Air     — top-octave exciter (clean lift + gentle harmonics
+            //     above 7.2 kHz), also inside the 2x envelope.
+            // Initial = the live processor's level (mirrors the skip-silence
+            // control) so the buttons don't flash "off" for the first frame
+            // while DataStore emits. onCycle also computes `next` from the
+            // live level, NOT these mirrors — the mirror lags the DataStore
+            // round-trip, so rapid taps would otherwise re-read a stale
+            // value and drop cycles (three fast taps landing on L1, not L3).
+            val voiceDeEsser by settings.voiceDeEsserLevel
+                .collectAsState(initial = eq.currentDeEsserLevel())
+            val voiceWarmth by settings.voiceWarmthLevel
+                .collectAsState(initial = eq.currentWarmthLevel())
+            val voiceLeveler by settings.voiceLevelerLevel
+                .collectAsState(initial = eq.currentLevelerLevel())
+            val voiceAir by settings.voiceAirLevel
+                .collectAsState(initial = eq.currentAirLevel())
+
+            Text("Voice suite", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Studio-style voice treatment. De-esser tames sibilant " +
+                    "\"s\" spit, Warmth adds tube-style body, Leveler rides " +
+                    "quiet and hot recordings toward one comfortable level, " +
+                    "Air opens the top octave. Zero added latency; all four " +
+                    "work in every phase mode.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StagedLevelButton(
+                    currentLevel = voiceDeEsser,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentDeEsserLevel() + 1) % 4
+                        eq.setDeEsserLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceDeEsserLevel(next) }
+                        }
+                    },
+                    offLabel = "De-esser: off",
+                    onLabelPrefix = "De-esser",
+                    modifier = Modifier.weight(1f),
+                )
+                StagedLevelButton(
+                    currentLevel = voiceWarmth,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentWarmthLevel() + 1) % 4
+                        eq.setWarmthLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceWarmthLevel(next) }
+                        }
+                    },
+                    offLabel = "Warmth: off",
+                    onLabelPrefix = "Warmth",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StagedLevelButton(
+                    currentLevel = voiceLeveler,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentLevelerLevel() + 1) % 4
+                        eq.setLevelerLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceLevelerLevel(next) }
+                        }
+                    },
+                    offLabel = "Leveler: off",
+                    onLabelPrefix = "Leveler",
+                    modifier = Modifier.weight(1f),
+                )
+                StagedLevelButton(
+                    currentLevel = voiceAir,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentAirLevel() + 1) % 4
+                        eq.setAirLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceAirLevel(next) }
+                        }
+                    },
+                    offLabel = "Air: off",
+                    onLabelPrefix = "Air",
+                    modifier = Modifier.weight(1f),
+                )
+            }
             Spacer(Modifier.height(16.dp))
 
             // ---- Phase mode (v0.9.5 four-mode lineup) ----
@@ -843,7 +977,11 @@ private fun ToneCutChipRow(
         )
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.weight(1f),
+            // Scrollable: the high-cut row grew to six chips (v0.11 adds
+            // 14k/16k), which overflows a 360dp screen with a fixed row.
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
         ) {
             FilterChip(
                 selected = currentHz <= 0f,

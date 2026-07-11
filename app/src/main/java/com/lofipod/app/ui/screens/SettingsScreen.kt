@@ -475,11 +475,34 @@ private fun AudioDiagnosticsRow(controller: PlayerController) {
                     settings.setPauseSkipSensitivity(
                         com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
                     )
+                    // v0.11: cover the tone filters, DC blocker and voice
+                    // suite too — this reset previously lagged the fuller
+                    // one on the Audio-diagnostics screen, so "reset to
+                    // defaults" here left tone cuts and the DC blocker
+                    // silently engaged.
+                    settings.setDcBlockerEnabled(false)
+                    settings.setToneLowCutHz(0f)
+                    settings.setToneHighCutHz(0f)
+                    settings.setToneTiltDb(0f)
+                    settings.setToneLowCutSteep(false)
+                    settings.setVoiceDeEsserLevel(0)
+                    settings.setVoiceWarmthLevel(0)
+                    settings.setVoiceLevelerLevel(0)
+                    settings.setVoiceAirLevel(0)
                 }
                 // Push the new values into the live processors so the
                 // change takes effect without restarting the service.
                 eq.setBands(com.lofipod.app.audio.EqPresets.FLAT)
                 eq.setGainDb(0f)
+                eq.setDcBlockerEnabled(false)
+                eq.setLowCutHz(0f)
+                eq.setHighCutHz(0f)
+                eq.setTiltDb(0f)
+                eq.setLowCutSteep(false)
+                eq.setDeEsserLevel(0)
+                eq.setWarmthLevel(0)
+                eq.setLevelerLevel(0)
+                eq.setAirLevel(0)
                 PlaybackService.sharedSkipSilence.setLevel(0)
                 PlaybackService.sharedPauseTap.setSensitivity(
                     com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY

@@ -75,6 +75,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
     @Volatile private var lowCutHz: Float = 0f
     @Volatile private var highCutHz: Float = 0f
     @Volatile private var tiltDb: Float = 0f
+    // v0.11 refinement: optional 24 dB/oct low-cut slope. When on, a second
+    // identical Butterworth section cascades after the first — two Q=0.707
+    // stages form a 4th-order Linkwitz-Riley high-pass (-6 dB at corner,
+    // 24 dB/oct skirt). Steeper rumble removal without touching the voice
+    // band above the corner.
+    @Volatile private var lowCutSteep: Boolean = false
     @Volatile private var toneDirty: Boolean = true
 
     // ---- Internal DSP state ----
@@ -139,6 +145,22 @@ class EqAudioProcessor : BaseAudioProcessor() {
     // synthesis and the min-phase real-cepstrum synthesis path, both feeding
     // the underlying [UpcConvolver].
     private val firEq = FirEq()
+    // ---- Voice suite (v0.11 premium stages) ----
+    // Four staged (off/L1-L3) voice-treatment effects, modeled on the
+    // desktop mastering suites:
+    //   - deEsser + leveler: zero-latency, run at 1x on the pre-EQ frame
+    //     (corrective placement — the EQ and everything downstream see the
+    //     tamed, ridden signal).
+    //   - saturator (Warmth) + airExciter (Air): nonlinear, so they run
+    //     INSIDE the existing 2x oversampling envelope between upsampler
+    //     and limiter — harmonics land below the 2x Nyquist and the
+    //     downsampler's anti-alias FIR removes anything above the source
+    //     band. Zero added latency, no extra oversampler instances.
+    // All four are identical across every phase mode, like the tone stage.
+    private val deEsser = DeEsser()
+    private val leveler = Leveler()
+    private val saturator = Saturator()
+    private val airExciter = AirExciter()
     // Scratch arrays sized to channelCount, allocated on configure. Used to
     // hand whole frames between stages: 1x-rate arrays for input/output,
     // plus two 2x-rate arrays for the upsampler→limiter→downsampler bridge
@@ -155,6 +177,15 @@ class EqAudioProcessor : BaseAudioProcessor() {
     // before they enter the gain → oversample → limiter chain. Sized at
     // configure to channelCount; reused every frame.
     private var firPop: DoubleArray = DoubleArray(0)
+    // Pre-EQ frame scratch: the voice stages (leveler, de-esser) need the
+    // whole frame — all channels — for linked detection BEFORE the EQ
+    // cascade runs, so the IIR path decodes into this first.
+    private var framePre: DoubleArray = DoubleArray(0)
+    // Second low-cut section, cascaded when [lowCutSteep] (LR4 slope).
+    private var lowCutFilters2: Array<Biquad> = emptyArray()
+    // Audio-thread mirror of [lowCutSteep], set by ensureToneCoefficients
+    // alongside the coefficient swap so processTone stays branch-cheap.
+    private var steepActive = false
 
     fun setBands(newBands: List<EqBand>) {
         bands = newBands
@@ -197,9 +228,49 @@ class EqAudioProcessor : BaseAudioProcessor() {
         AudioChainTelemetry.logEvent("tone_tilt", "%+.1f dB".format(v))
     }
 
+    /** 24 dB/oct low-cut slope (LR4). Only audible while low cut is on. */
+    fun setLowCutSteep(on: Boolean) {
+        if (on == lowCutSteep) return
+        lowCutSteep = on
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_low_cut_slope", if (on) "24 dB/oct" else "12 dB/oct")
+    }
+
+    // ---- Voice suite setters (0 = off, 1..3 staged). The stage classes own
+    // their level as a volatile and self-apply parameter changes on the
+    // audio thread, mirroring SilenceSkippingProcessor.setLevel. ----
+    fun setDeEsserLevel(l: Int) {
+        if (l.coerceIn(0, 3) == deEsser.currentLevel()) return
+        deEsser.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_deesser", "L${deEsser.currentLevel()}")
+    }
+
+    fun setWarmthLevel(l: Int) {
+        if (l.coerceIn(0, 3) == saturator.currentLevel()) return
+        saturator.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_warmth", "L${saturator.currentLevel()}")
+    }
+
+    fun setLevelerLevel(l: Int) {
+        if (l.coerceIn(0, 3) == leveler.currentLevel()) return
+        leveler.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_leveler", "L${leveler.currentLevel()}")
+    }
+
+    fun setAirLevel(l: Int) {
+        if (l.coerceIn(0, 3) == airExciter.currentLevel()) return
+        airExciter.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_air", "L${airExciter.currentLevel()}")
+    }
+
     fun currentLowCutHz(): Float = lowCutHz
     fun currentHighCutHz(): Float = highCutHz
     fun currentTiltDb(): Float = tiltDb
+    fun currentLowCutSteep(): Boolean = lowCutSteep
+    fun currentDeEsserLevel(): Int = deEsser.currentLevel()
+    fun currentWarmthLevel(): Int = saturator.currentLevel()
+    fun currentLevelerLevel(): Int = leveler.currentLevel()
+    fun currentAirLevel(): Int = airExciter.currentLevel()
     fun setEnabled(on: Boolean) {
         enabled = on
         AudioChainTelemetry.enabled = on
@@ -262,9 +333,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
         for (ch in oldFilters) for (b in ch) b.reset()
         for (b in dcBlockers) b.reset()
         for (b in lowCutFilters) b.reset()
+        for (b in lowCutFilters2) b.reset()
         for (b in highCutFilters) b.reset()
         for (b in tiltLowFilters) b.reset()
         for (b in tiltHighFilters) b.reset()
+        deEsser.reset()
+        leveler.reset()
+        saturator.reset()
+        airExciter.reset()
         limiter.reset()
         oversampler.reset()
         firEq.reset()
@@ -336,6 +412,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (dcBlocker) return false
         if (gainDb != 0f) return false
         if (toneActive()) return false
+        if (voiceActive()) return false
         val current = bands
         for (b in current) if (b.gainDb != 0f) return false
         return true
@@ -344,6 +421,13 @@ class EqAudioProcessor : BaseAudioProcessor() {
     /** True when any tone filter (low-cut / high-cut / tilt) is engaged. */
     private fun toneActive(): Boolean =
         lowCutHz > 0f || highCutHz > 0f || tiltDb != 0f
+
+    /** True when any voice-suite stage is engaged — the DSP path must run
+     *  so the stages actually process (same rationale as the DC-blocker
+     *  check above). */
+    private fun voiceActive(): Boolean =
+        deEsser.currentLevel() > 0 || leveler.currentLevel() > 0 ||
+            saturator.currentLevel() > 0 || airExciter.currentLevel() > 0
 
     fun currentBands(): List<EqBand> = bands
     fun currentGainDb(): Float = gainDb
@@ -372,10 +456,17 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // dirty and let ensureToneCoefficients reconfigure on the first
         // buffer at the new rate.
         lowCutFilters = Array(channelCount) { Biquad() }
+        lowCutFilters2 = Array(channelCount) { Biquad() }
         highCutFilters = Array(channelCount) { Biquad() }
         tiltLowFilters = Array(channelCount) { Biquad() }
         tiltHighFilters = Array(channelCount) { Biquad() }
         toneDirty = true
+        // Voice suite: de-esser + leveler at 1x, saturator + air at the 2x
+        // oversampled rate (they run inside the oversampling envelope).
+        deEsser.configure(sampleRate, channelCount)
+        leveler.configure(sampleRate, channelCount)
+        saturator.configure(2 * sampleRate, channelCount)
+        airExciter.configure(2 * sampleRate, channelCount)
         // Oversampler: 2x polyphase up/down. FIR coefficients depend only on
         // the FIR design parameters (length, cutoff, β), not on sample rate,
         // so configure here only allocates per-channel delay lines.
@@ -395,6 +486,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
         lim0Frame = DoubleArray(channelCount)
         lim1Frame = DoubleArray(channelCount)
         firPop = DoubleArray(channelCount)
+        framePre = DoubleArray(channelCount)
         // FIR EQ: allocate per-channel state + synthesize the initial kernel
         // from the current bands at the current phase mode. Cheap to keep
         // configured even when phase mode is PURE_IIR — the kernel sits
@@ -457,9 +549,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
         oldFilters = emptyArray()
         dcBlockers = emptyArray()
         lowCutFilters = emptyArray()
+        lowCutFilters2 = emptyArray()
         highCutFilters = emptyArray()
         tiltLowFilters = emptyArray()
         tiltHighFilters = emptyArray()
+        deEsser.reset()
+        leveler.reset()
+        saturator.reset()
+        airExciter.reset()
         // Limiter + oversampler buffers freed via reset; configure will
         // reallocate next time.
         limiter.reset()
@@ -475,6 +572,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
         lim0Frame = DoubleArray(0)
         lim1Frame = DoubleArray(0)
         firPop = DoubleArray(0)
+        framePre = DoubleArray(0)
     }
 
     private fun ensureCoefficients() {
@@ -528,9 +626,18 @@ class EqAudioProcessor : BaseAudioProcessor() {
         val lc = lowCutHz
         val hc = highCutHz
         val tilt = tiltDb
+        val steep = lowCutSteep
         for (ch in 0 until channelCount) {
-            if (lc > 0f) lowCutFilters[ch].setHighpass(sampleRate, lc)
-            else lowCutFilters[ch].setIdentity()
+            if (lc > 0f) {
+                lowCutFilters[ch].setHighpass(sampleRate, lc)
+                // Second identical section when steep: two cascaded Q=0.707
+                // Butterworth HPs = 4th-order Linkwitz-Riley, 24 dB/oct.
+                if (steep) lowCutFilters2[ch].setHighpass(sampleRate, lc)
+                else lowCutFilters2[ch].setIdentity()
+            } else {
+                lowCutFilters[ch].setIdentity()
+                lowCutFilters2[ch].setIdentity()
+            }
             if (hc > 0f) highCutFilters[ch].setLowpass(sampleRate, hc)
             else highCutFilters[ch].setIdentity()
             if (tilt != 0f) {
@@ -541,12 +648,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
                 tiltHighFilters[ch].setIdentity()
             }
         }
+        steepActive = steep && lc > 0f
         toneDirty = false
     }
 
     /** Run one sample of channel [ch] through the tone-filter stage. */
     private fun processTone(ch: Int, x: Double): Double {
         var y = lowCutFilters[ch].process(x)
+        if (steepActive) y = lowCutFilters2[ch].process(y)
         y = highCutFilters[ch].process(y)
         y = tiltLowFilters[ch].process(y)
         y = tiltHighFilters[ch].process(y)
@@ -657,6 +766,10 @@ class EqAudioProcessor : BaseAudioProcessor() {
         val applyDcBlocker = dcBlocker
         val applyTone = toneActive()
         if (applyTone) ensureToneCoefficients()
+        val applyLeveler = leveler.currentLevel() > 0
+        val applyDeEsser = deEsser.currentLevel() > 0
+        val applyWarmth = saturator.currentLevel() > 0
+        val applyAir = airExciter.currentLevel() > 0
 
         for (frame in 0 until frameCount) {
             // Compute per-frame fade weights once; reuse across channels in
@@ -674,20 +787,29 @@ class EqAudioProcessor : BaseAudioProcessor() {
                 wNew = 1.0; wOld = 0.0
             }
 
-            // Pass 1: run each channel through DC blocker + biquad chain +
-            // (cross-fade if active) + gain. Result lands in [frameInput] for
-            // the limiter to consume as a whole frame (it needs ALL channels
-            // for linked-stereo peak detection).
+            // Pass 0: decode + DC blocker + tone into [framePre] — the voice
+            // stages (leveler ride, de-esser detection) are linked across
+            // channels, so they need the WHOLE frame before the EQ runs.
             for (ch in 0 until channelCount) {
                 val sampleI = src.short.toInt()
                 var x = sampleI * driveScale
-
                 if (applyDcBlocker) {
                     x = dcBlockers[ch].process(x)
                 }
                 if (applyTone) {
                     x = processTone(ch, x)
                 }
+                framePre[ch] = x
+            }
+            if (applyLeveler) leveler.processFrame(framePre)
+            if (applyDeEsser) deEsser.processFrame(framePre)
+
+            // Pass 1: run each channel through the biquad chain +
+            // (cross-fade if active) + gain. Result lands in [frameInput] for
+            // the limiter to consume as a whole frame (it needs ALL channels
+            // for linked-stereo peak detection).
+            for (ch in 0 until channelCount) {
+                val x = framePre[ch]
 
                 // Run NEW chain. Always — even during fade, we still need
                 // the live filters' state to advance (so when the fade ends
@@ -736,6 +858,18 @@ class EqAudioProcessor : BaseAudioProcessor() {
             // First ~16 ms after every flush is silent priming output (FIR
             // delay lines + LA buffer ramp up from zeros). Inaudible.
             oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+            // Nonlinear voice stages run at 2x, pre-limiter: their harmonics
+            // sit below the 2x Nyquist and the downsampler strips anything
+            // above the source band. Warmth first, then Air, so the exciter
+            // works on the saturated (final) tonality.
+            if (applyWarmth) {
+                saturator.processFrame(up0Frame)
+                saturator.processFrame(up1Frame)
+            }
+            if (applyAir) {
+                airExciter.processFrame(up0Frame)
+                airExciter.processFrame(up1Frame)
+            }
             limiter.processFrame(up0Frame, lim0Frame)
             limiter.processFrame(up1Frame, lim1Frame)
             oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -764,6 +898,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
             if (fading) fadeRemaining--
         }
         out.flip()
+
+        // Voice-suite meters — once per buffer is plenty for the 250 ms
+        // diagnostics poll, and keeps the volatile writes out of the frame
+        // loop.
+        AudioChainTelemetry.deEsserGainLin = if (applyDeEsser) deEsser.lastGainLin else 1.0
+        AudioChainTelemetry.levelerGainLin = if (applyLeveler) leveler.lastGainLin else 1.0
 
         // Push wallclock + audio-time to telemetry. Audio time is derived from
         // frameCount + sampleRate; processing time is the elapsed nanos since
@@ -805,11 +945,17 @@ class EqAudioProcessor : BaseAudioProcessor() {
         val applyDcBlocker = dcBlocker
         val applyTone = toneActive()
         if (applyTone) ensureToneCoefficients()
+        val applyLeveler = leveler.currentLevel() > 0
+        val applyDeEsser = deEsser.currentLevel() > 0
+        val applyWarmth = saturator.currentLevel() > 0
+        val applyAir = airExciter.currentLevel() > 0
 
         // Pass 1: read the whole input buffer through the DC blocker + tone
-        // filters into the FIR EQ. Per-channel accumulators inside [firEq]
-        // hold partial blocks across queueInput calls; complete blocks
-        // (BLOCK_SIZE samples per channel) trigger the UPC convolution.
+        // filters + voice stages (leveler ride, de-esser — same pre-EQ
+        // placement as the PURE_IIR path) into the FIR EQ. Per-channel
+        // accumulators inside [firEq] hold partial blocks across queueInput
+        // calls; complete blocks (BLOCK_SIZE samples per channel) trigger
+        // the UPC convolution.
         for (frame in 0 until frameCount) {
             for (ch in 0 until channelCount) {
                 val sampleI = src.short.toInt()
@@ -818,8 +964,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
                 if (applyTone) x = processTone(ch, x)
                 frameInput[ch] = x
             }
+            if (applyLeveler) leveler.processFrame(frameInput)
+            if (applyDeEsser) deEsser.processFrame(frameInput)
             firEq.pushFrame(frameInput)
         }
+        AudioChainTelemetry.deEsserGainLin = if (applyDeEsser) deEsser.lastGainLin else 1.0
+        AudioChainTelemetry.levelerGainLin = if (applyLeveler) leveler.lastGainLin else 1.0
 
         // Pass 2: how many output frames are ready? May be 0 (FIR EQ still
         // accumulating its first block after a mode switch / flush /
@@ -845,9 +995,17 @@ class EqAudioProcessor : BaseAudioProcessor() {
             AudioChainTelemetry.pushInputSample(inFramePeak)
 
             // Same post-gain chain as the PURE_IIR path: 2x upsample,
-            // limiter at 2x, 2x downsample, gated TPDF dither, int16
-            // truncation. Reusing the existing scratch arrays.
+            // Warmth + Air at 2x, limiter at 2x, 2x downsample, gated TPDF
+            // dither, int16 truncation. Reusing the existing scratch arrays.
             oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+            if (applyWarmth) {
+                saturator.processFrame(up0Frame)
+                saturator.processFrame(up1Frame)
+            }
+            if (applyAir) {
+                airExciter.processFrame(up0Frame)
+                airExciter.processFrame(up1Frame)
+            }
             limiter.processFrame(up0Frame, lim0Frame)
             limiter.processFrame(up1Frame, lim1Frame)
             oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -901,6 +1059,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
 
         val gainLinear = 10.0.pow(gainDb / 20.0)
         val invDrive = 32767.0
+        // Warmth/Air must keep running through the drain: the FIR engine
+        // buffers up to ~70 ms of REAL program audio upstream of the 2x
+        // nonlinear stages, and the upsampler's own delay lines always hold
+        // a pre-Warmth slice — draining without the stages would emit the
+        // final moments of every track dry (an audible level/tone step at
+        // track end with Warmth engaged).
+        val applyWarmth = saturator.currentLevel() > 0
+        val applyAir = airExciter.currentLevel() > 0
         // Post-gain chain delay at 1x rate. Common to both phase modes:
         // limiter.drainFrameCount is in 2x-rate frames (LA window in 2x
         // samples); divide by 2 for 1x equivalent. Add the oversampler's
@@ -935,6 +1101,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
                     frameInput[ch] = firPop[ch] * gainLinear
                 }
                 oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+                if (applyWarmth) {
+                    saturator.processFrame(up0Frame)
+                    saturator.processFrame(up1Frame)
+                }
+                if (applyAir) {
+                    airExciter.processFrame(up0Frame)
+                    airExciter.processFrame(up1Frame)
+                }
                 limiter.processFrame(up0Frame, lim0Frame)
                 limiter.processFrame(up1Frame, lim1Frame)
                 oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -945,10 +1119,20 @@ class EqAudioProcessor : BaseAudioProcessor() {
                     out.putShort(outI.toShort())
                 }
             }
-            // Stage 2: zero-input drain of the post-gain chain.
+            // Stage 2: zero-input drain of the post-gain chain. The
+            // upsampler's delay lines still hold pre-Warmth audio, so the
+            // nonlinear stages stay in the loop here too.
             for (ch in 0 until channelCount) frameInput[ch] = 0.0
             for (frame in 0 until postGainDrain) {
                 oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+                if (applyWarmth) {
+                    saturator.processFrame(up0Frame)
+                    saturator.processFrame(up1Frame)
+                }
+                if (applyAir) {
+                    airExciter.processFrame(up0Frame)
+                    airExciter.processFrame(up1Frame)
+                }
                 limiter.processFrame(up0Frame, lim0Frame)
                 limiter.processFrame(up1Frame, lim1Frame)
                 oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -976,6 +1160,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
             // Same chain as the queueInput hot path, just with zero input.
             // Each call reads one stale frame off the back of the chain.
             oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+            if (applyWarmth) {
+                saturator.processFrame(up0Frame)
+                saturator.processFrame(up1Frame)
+            }
+            if (applyAir) {
+                airExciter.processFrame(up0Frame)
+                airExciter.processFrame(up1Frame)
+            }
             limiter.processFrame(up0Frame, lim0Frame)
             limiter.processFrame(up1Frame, lim1Frame)
             oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)

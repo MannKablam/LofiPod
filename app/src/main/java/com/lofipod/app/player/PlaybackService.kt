@@ -346,6 +346,14 @@ class PlaybackService : MediaSessionService() {
             sharedEq.setLowCutHz(settings.toneLowCutHz.first())
             sharedEq.setHighCutHz(settings.toneHighCutHz.first())
             sharedEq.setTiltDb(settings.toneTiltDb.first())
+            sharedEq.setLowCutSteep(settings.toneLowCutSteep.first())
+
+            // Voice suite (v0.11) — global staged effects, same persistence
+            // model as the tone filters.
+            sharedEq.setDeEsserLevel(settings.voiceDeEsserLevel.first())
+            sharedEq.setWarmthLevel(settings.voiceWarmthLevel.first())
+            sharedEq.setLevelerLevel(settings.voiceLevelerLevel.first())
+            sharedEq.setAirLevel(settings.voiceAirLevel.first())
 
             // Master "Audio enhancement" enable. PlayerController.applyEqOverrideFor
             // re-evaluates this on every track transition and ANDs it with the

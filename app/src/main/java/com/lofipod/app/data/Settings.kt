@@ -245,6 +245,52 @@ class Settings(private val context: Context) {
         context.dataStore.edit { it[KEY_TONE_HIGH_CUT_HZ] = v }
     }
 
+    /**
+     * 24 dB/oct low-cut slope toggle (LR4 — two cascaded Butterworth
+     * sections). Only audible while [toneLowCutHz] > 0. Default off = the
+     * original 12 dB/oct single section.
+     */
+    val toneLowCutSteep: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_TONE_LOW_CUT_STEEP] ?: false }
+
+    suspend fun setToneLowCutSteep(v: Boolean) {
+        context.dataStore.edit { it[KEY_TONE_LOW_CUT_STEEP] = v }
+    }
+
+    /**
+     * Voice-suite stage levels (0 = off, 1..3 staged), all default off.
+     * De-esser (sibilance tamer), Warmth (tube saturation), Leveler
+     * (slow gain rider), Air (top-octave exciter). Global like the tone
+     * filters; rehydrated by PlaybackService at boot.
+     */
+    val voiceDeEsserLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_DEESSER] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceDeEsserLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_DEESSER] = level.coerceIn(0, 3) }
+    }
+
+    val voiceWarmthLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_WARMTH] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceWarmthLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_WARMTH] = level.coerceIn(0, 3) }
+    }
+
+    val voiceLevelerLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_LEVELER] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceLevelerLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_LEVELER] = level.coerceIn(0, 3) }
+    }
+
+    val voiceAirLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_AIR] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceAirLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_AIR] = level.coerceIn(0, 3) }
+    }
+
     val toneTiltDb: Flow<Float> =
         context.dataStore.data.map { (it[KEY_TONE_TILT_DB] ?: 0f).coerceIn(-6f, 6f) }
 
@@ -509,6 +555,16 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.floatPreferencesKey("tone_high_cut_hz")
         private val KEY_TONE_TILT_DB =
             androidx.datastore.preferences.core.floatPreferencesKey("tone_tilt_db")
+        private val KEY_TONE_LOW_CUT_STEEP =
+            androidx.datastore.preferences.core.booleanPreferencesKey("tone_low_cut_steep")
+        private val KEY_VOICE_DEESSER =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_deesser_level")
+        private val KEY_VOICE_WARMTH =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_warmth_level")
+        private val KEY_VOICE_LEVELER =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_leveler_level")
+        private val KEY_VOICE_AIR =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_air_level")
         private val KEY_PHASE_MODE_LINEAR =
             androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
         private val KEY_PHASE_MODE =

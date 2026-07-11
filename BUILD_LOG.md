@@ -2,6 +2,93 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.22 (pending tag) — Voice suite: de-esser, warmth, leveler, air + tone-filter refinements (2026-07-11)
+
+Premium "studio suite" pass on the audio engine — four new staged voice
+effects in the RX/Nectar/Ozone vein, plus refinements to the v0.10.20
+tone-filter stage. All new stages are global (like the tone filters),
+staged off/L1-L3 via the same StagedLevelButton language as skip-silence,
+persisted in DataStore, rehydrated at service boot, covered by both
+"Reset audio to defaults" paths, and identical across all four phase
+modes. Off = bit-identical passthrough (all four are folded into
+isPassthroughEffective).
+
+### Voice suite (new EqScreen section, below Tone filters)
+
+- **De-esser** (`DeEsser.kt`) — split-band sibilance tamer. Level-
+  independent detector: fast linked-channel envelopes of the >5.6 kHz
+  sidechain vs the full band; when the sibilance band rises within
+  margin (3/6/9 dB by level) of the full-band level, the high band is
+  compressed back at 1 dB/dB, capped at 4/7/10 dB. Reduction applies
+  only above the complementary split (`low + (x-low)*gain`), so it's
+  transparent between esses. Zero latency, pre-EQ.
+- **Warmth** (`Saturator.kt`) — tube-style soft saturation:
+  `tanh(drive*(x + even*x^2))`, peak-normalized, dry/wet mixed
+  (drive 1.6/2.6/4.0). Runs INSIDE the chain's existing 2x oversampling
+  envelope (upsample -> warmth -> air -> limiter -> downsample), so
+  harmonics land below the 2x Nyquist and the downsampler's anti-alias
+  FIR removes anything above the source band — no aliasing, zero added
+  latency, no extra oversampler. Per-channel 8 Hz DC trap on the wet
+  path kills the x^2 rectification offset.
+- **Leveler** (`Leveler.kt`) — slow vocal rider toward ~-20 dBFS:
+  ±4/7/10 dB range, gain slews at single-digit dB/sec (down ~3x faster
+  than up), FREEZES below -50 dBFS so pauses and noise floors never get
+  ridden up, 300 ms warmup hold after every flush. Word-level dynamics
+  untouched; only episode-scale loudness drift is flattened. Pre-EQ,
+  upstream of the de-esser.
+- **Air** (`AirExciter.kt`) — top-octave exciter: complementary split at
+  7.2 kHz, high band through a unity-normalized tanh, mixed back at
+  0.14/0.25/0.38. Small signals get a clean ~1-3 dB lift; louder highs
+  sprout low-order harmonics ("detail," not plain treble). Also inside
+  the 2x envelope; sits after Warmth and downstream of the de-esser so
+  tamed sibilance isn't re-excited.
+
+Chain order is now: DC blocker -> tone filters -> Leveler -> De-esser ->
+EQ (IIR or FIR) -> gain -> 2x { Warmth -> Air -> limiter } -> dither.
+The IIR hot loop gained a pass-0 (decode whole frame first) because the
+leveler/de-esser detectors are linked across channels; the FIR path
+already frame-batched. Diagnostics: live `deesser_GR` / `leveler_gain`
+readouts + voice-suite levels in the chain spec (AudioChainTelemetry
+gained two mirrors, updated once per buffer).
+
+### Tone-filter refinements
+
+- **24 dB/oct low-cut slope option** — second cascaded Butterworth
+  section (= 4th-order Linkwitz-Riley) behind a 12/24 chip pair that
+  appears while a low cut is engaged. Default stays 12.
+- **High-cut options extended** with 14 kHz and 16 kHz chips (gentler
+  hiss shaving than the old 12 k ceiling); the chip row is now
+  horizontally scrollable so six chips fit narrow screens.
+- **Settings-screen "Reset audio to defaults" gap fixed** — it now
+  resets the DC blocker, tone filters and voice suite like the
+  Audio-diagnostics reset always did (previously those survived a
+  "reset to defaults", which was a lie of omission).
+
+### Post-review hardening (3-angle DSP/UI/perf review before commit)
+
+- **Warmth normalization bug (caught in review):** the first cut
+  normalized the waveshaper by peak (`/tanh(d)`), whose small-signal
+  gain is `d/tanh(d)` — a +2/+6/+11 dB loudness boost by level that
+  would have parked the limiter in constant gain reduction. Now
+  slope-normalized (`/d`): program level passes at unity, only peaks
+  round off — actual tube behavior, loudness-neutral.
+- **EOS drain now runs Warmth/Air** (all three drain loops): the FIR
+  engine buffers up to ~70 ms of real audio UPSTREAM of the 2x stages,
+  so draining without them emitted the end of every track dry.
+- Leveler target recalibrated -20 → -16 dBFS (peak-envelope reference
+  reads several dB above RMS; -20 pulled well-mastered content
+  audibly quieter instead of being transparent).
+- Voice-suite buttons: `next` level computed from the live processor
+  (not the DataStore mirror, which lags a round-trip — rapid taps were
+  dropping cycles), and `collectAsState(initial=)` seeds from the live
+  level so the buttons don't flash "off" on screen entry.
+- Accepted trade-offs from review: the IIR hot loop's new two-pass
+  shape costs ~0.03% CPU even with voice stages off (kept — fusing
+  back would duplicate the crossfade block); 24 dB/oct slope choice is
+  remembered across low-cut off/on (a preference, not a bug); de-esser
+  band-vs-band detector can miss a sibilant masked by a loud vowel
+  (inherent to the level-independent design).
+
 ## v0.10.21 (pending tag) — Pause-skip, promotion notes, quick-scroll, playback-order fixes (2026-07-11)
 
 Five asks in one pass: a new transport control, notes-system integration

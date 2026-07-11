@@ -57,6 +57,11 @@ object AudioChainTelemetry {
     @Volatile var ditherActive: Boolean = false
     /** True when the audio chain master switch is on. */
     @Volatile var enabled: Boolean = false
+    /** De-esser high-band gain (linear; 1.0 = no reduction). Updated once
+     *  per buffer by EqAudioProcessor while the stage is active. */
+    @Volatile var deEsserGainLin: Double = 1.0
+    /** Leveler ride gain (linear; 1.0 = unity). Once per buffer. */
+    @Volatile var levelerGainLin: Double = 1.0
 
     // Decay coefficients for peak meters (computed lazily on first configure).
     private var peakDecayCoef: Double = 1.0
