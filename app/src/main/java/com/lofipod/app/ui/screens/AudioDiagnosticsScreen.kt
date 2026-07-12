@@ -483,6 +483,8 @@ private data class TelemetrySnapshot(
     val enabled: Boolean,
     val deEsserGainLin: Double,
     val levelerGainLin: Double,
+    val warmthActivity: Double,
+    val airActivity: Double,
     val configures: Int,
     val flushes: Int,
     val crossFades: Int,
@@ -524,6 +526,8 @@ private data class TelemetrySnapshot(
                 enabled = enabled,
                 deEsserGainLin = deEsserGainLin,
                 levelerGainLin = levelerGainLin,
+                warmthActivity = warmthActivity,
+                airActivity = airActivity,
                 configures = configureCount(),
                 flushes = flushCount(),
                 crossFades = crossFadeCount(),
@@ -623,6 +627,10 @@ private fun formatLive(s: TelemetrySnapshot): String = buildString {
     // Both read 0.00 while their stage is off (gain mirror rests at 1.0).
     append("  deesser_GR       = ${"%5.2f".format(20.0 * log10(s.deEsserGainLin.coerceAtLeast(1e-6)))} dB\n")
     append("  leveler_gain     = ${"%+5.2f".format(20.0 * log10(s.levelerGainLin.coerceAtLeast(1e-6)))} dB\n")
+    // Warmth/Air wet-signal activity (decayed peak of what each stage adds),
+    // in dBFS. Reads -inf while the stage is off (mirror rests at 0.0).
+    append("  warmth_act       = ${linearToDb(s.warmthActivity)}\n")
+    append("  air_act          = ${linearToDb(s.airActivity)}\n")
     append("  flags            = ")
     val flags = buildList {
         if (s.passthrough) add("passthrough")

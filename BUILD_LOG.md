@@ -2,6 +2,36 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.28 (pending tag) — Voice-suite activity visualizer (2026-07-12)
+
+The four voice stages are deliberately subtle, so it was never clear from
+listening whether they were actually doing anything. Now you can see it:
+
+- **EQ screen: live activity row** under the Voice suite buttons — four
+  mini-meters on the existing 250 ms telemetry tick. De-esser shows
+  high-band gain reduction (0..-10 dB, fills during sibilance, error
+  color). Leveler shows ride gain as a diverging bar (-10..+10 dB around
+  a center tick). Warmth and Air show the level of the wet signal each
+  stage is mixing in (-50..-10 dBFS fill range). A stage that's off reads
+  "off"; on-but-idle reads empty/"idle" — visually distinct.
+- **New activity meters in Saturator + AirExciter** — decayed peak
+  (~0.4 s half-life) of |wet - dry| actually applied, accumulated as
+  plain audio-thread state in the 2x hot loop (one subtract/abs/compare
+  per sample, no volatile writes there) and mirrored once per buffer by
+  EqAudioProcessor into two new AudioChainTelemetry fields
+  (warmthActivity / airActivity), matching the deEsser/leveler mirrors.
+- **All DSP-stopping transitions now park the four voice mirrors at
+  idle** (new AudioChainTelemetry.parkVoiceMirrorsIdle(), called from
+  chainReset/onReset/passthrough-enter) — previously the deesser/leveler
+  mirrors held their last DSP-buffer values forever if the chain dropped
+  to passthrough mid-word or a flush wasn't followed by another buffer
+  (pause after seek, stop at track end). In the FIR path the new
+  warmth/air mirrors publish after Pass 2 (where those stages run), so
+  they're never one buffer stale and a 0-to-on toggle can't leak the
+  pre-toggle envelope peak.
+- **Diagnostics Live section** gains warmth_act / air_act dBFS lines next
+  to deesser_GR / leveler_gain.
+
 ## v0.10.27 — Bug-hunt sweep over v0.10.21–v0.10.26 (2026-07-11)
 
 Dedicated 4-angle hunt (audio-chain integration, player state machine,

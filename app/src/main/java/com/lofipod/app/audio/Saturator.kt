@@ -1,5 +1,7 @@
 package com.lofipod.app.audio
 
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.tanh
 
 /**
@@ -40,6 +42,23 @@ class Saturator {
     private var channelCount = 0
     private var dcTraps: Array<DcBlocker> = emptyArray()
 
+    /**
+     * Activity meter: decayed peak of |wet - dry| actually mixed into the
+     * output (linear amplitude, linked across channels). This is the
+     * magnitude of the change the stage is making to the signal — 0.0 when
+     * idle or bypassed, rising as program peaks push into the tanh curve.
+     *
+     * Plain field, NOT volatile: it's written per sample inside the 2x hot
+     * loop, where a volatile write per frame would be a needless fence.
+     * EqAudioProcessor reads it on the same audio thread once per buffer
+     * and mirrors it into [AudioChainTelemetry.warmthActivity] for the UI.
+     */
+    private var activityEnv = 0.0
+    private var activityDecay = 1.0
+
+    /** Audio-thread read of the activity envelope (see [activityEnv]). */
+    fun currentActivityLin(): Double = activityEnv
+
     private var appliedLevel = -1
     private var drive = 1.0
     private var invDrive = 1.0
@@ -59,12 +78,18 @@ class Saturator {
     fun configure(sampleRate2x: Int, channelCount: Int) {
         this.channelCount = channelCount
         dcTraps = Array(channelCount) { DcBlocker().apply { configure(sampleRate2x, 8.0f) } }
+        // ~0.4 s half-life on the activity envelope so brief hits stay
+        // visible at the UI's 250 ms poll without smearing into a constant.
+        activityDecay = if (sampleRate2x > 0) {
+            exp(-ln(2.0) / (sampleRate2x * ACTIVITY_HALFLIFE_SEC))
+        } else 1.0
         appliedLevel = -1
         reset()
     }
 
     fun reset() {
         for (t in dcTraps) t.reset()
+        activityEnv = 0.0
     }
 
     /** In-place, one 2x-rate frame. Call only when [currentLevel] > 0. */
@@ -86,11 +111,24 @@ class Saturator {
             mix = m
             appliedLevel = l
         }
+        var deltaPeak = 0.0
         for (ch in 0 until channelCount) {
             val x = frame[ch]
             var wet = tanh(drive * (x + even * x * x)) * invDrive
             wet = dcTraps[ch].process(wet)
-            frame[ch] = x + (wet - x) * mix
+            val delta = (wet - x) * mix
+            frame[ch] = x + delta
+            val a = if (delta >= 0) delta else -delta
+            if (a > deltaPeak) deltaPeak = a
         }
+        // Activity: peak-follow the applied wet-dry delta, linked across
+        // channels — ONE decay step per 2x frame (a per-channel step would
+        // compound, halving the half-life on stereo).
+        val act = activityEnv
+        activityEnv = if (deltaPeak > act) deltaPeak else act * activityDecay
+    }
+
+    companion object {
+        private const val ACTIVITY_HALFLIFE_SEC = 0.4
     }
 }

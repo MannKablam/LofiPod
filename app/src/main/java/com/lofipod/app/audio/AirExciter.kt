@@ -1,5 +1,7 @@
 package com.lofipod.app.audio
 
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.tanh
 
 /**
@@ -30,6 +32,20 @@ class AirExciter {
     private var channelCount = 0
     private var splitLp: Array<Biquad> = emptyArray()
 
+    /**
+     * Activity meter: decayed peak of the excitement term actually added to
+     * the output (linear amplitude, linked across channels) — 0.0 when idle,
+     * rising with top-octave program energy. Plain field written per sample
+     * in the 2x hot loop (a volatile write there would be a needless fence);
+     * EqAudioProcessor reads it on the same audio thread once per buffer and
+     * mirrors it into [AudioChainTelemetry.airActivity] for the UI.
+     */
+    private var activityEnv = 0.0
+    private var activityDecay = 1.0
+
+    /** Audio-thread read of the activity envelope (see [activityEnv]). */
+    fun currentActivityLin(): Double = activityEnv
+
     private var appliedLevel = -1
     private var mix = 0.0
 
@@ -46,12 +62,18 @@ class AirExciter {
     fun configure(sampleRate2x: Int, channelCount: Int) {
         this.channelCount = channelCount
         splitLp = Array(channelCount) { Biquad().apply { setLowpass(sampleRate2x, SPLIT_HZ) } }
+        // ~0.4 s half-life on the activity envelope so brief hits stay
+        // visible at the UI's 250 ms poll without smearing into a constant.
+        activityDecay = if (sampleRate2x > 0) {
+            exp(-ln(2.0) / (sampleRate2x * ACTIVITY_HALFLIFE_SEC))
+        } else 1.0
         appliedLevel = -1
         reset()
     }
 
     fun reset() {
         for (b in splitLp) b.reset()
+        activityEnv = 0.0
     }
 
     /** In-place, one 2x-rate frame. Call only when [currentLevel] > 0. */
@@ -69,13 +91,22 @@ class AirExciter {
             }
             appliedLevel = l
         }
+        var addedPeak = 0.0
         for (ch in 0 until channelCount) {
             val x = frame[ch]
             val high = x - splitLp[ch].process(x)
             // tanh(k*h)/k ≈ h for small h (clean lift), saturates for large
             // h (harmonics). INV_K normalizes the small-signal gain to 1.
-            frame[ch] = x + mix * tanh(DRIVE_K * high) * INV_K
+            val added = mix * tanh(DRIVE_K * high) * INV_K
+            frame[ch] = x + added
+            val a = if (added >= 0) added else -added
+            if (a > addedPeak) addedPeak = a
         }
+        // Activity: peak-follow the added excitement term, linked across
+        // channels — ONE decay step per 2x frame (a per-channel step would
+        // compound, halving the half-life on stereo).
+        val act = activityEnv
+        activityEnv = if (addedPeak > act) addedPeak else act * activityDecay
     }
 
     companion object {
@@ -83,5 +114,6 @@ class AirExciter {
         private const val SPLIT_HZ = 7_200f
         private const val DRIVE_K = 2.2
         private const val INV_K = 1.0 / DRIVE_K
+        private const val ACTIVITY_HALFLIFE_SEC = 0.4
     }
 }

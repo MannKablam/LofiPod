@@ -62,6 +62,26 @@ object AudioChainTelemetry {
     @Volatile var deEsserGainLin: Double = 1.0
     /** Leveler ride gain (linear; 1.0 = unity). Once per buffer. */
     @Volatile var levelerGainLin: Double = 1.0
+    /** Warmth (saturator) activity: decayed peak of |wet - dry| actually
+     *  mixed in, linear amplitude. 0.0 = idle/bypassed. Once per buffer. */
+    @Volatile var warmthActivity: Double = 0.0
+    /** Air (exciter) activity: decayed peak of the added excitement term,
+     *  linear amplitude. 0.0 = idle/bypassed. Once per buffer. */
+    @Volatile var airActivity: Double = 0.0
+
+    /**
+     * Park all four voice-suite mirrors at their idle values. The per-buffer
+     * mirrors in EqAudioProcessor only run on the DSP path, so every
+     * transition that stops DSP buffers from flowing (flush/seek, processor
+     * reset, passthrough enter) must park these explicitly or the UI meters
+     * freeze on the last DSP-buffer values indefinitely.
+     */
+    internal fun parkVoiceMirrorsIdle() {
+        deEsserGainLin = 1.0
+        levelerGainLin = 1.0
+        warmthActivity = 0.0
+        airActivity = 0.0
+    }
 
     // Decay coefficients for peak meters (computed lazily on first configure).
     private var peakDecayCoef: Double = 1.0

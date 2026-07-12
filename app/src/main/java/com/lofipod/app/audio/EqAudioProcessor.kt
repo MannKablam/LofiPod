@@ -357,6 +357,11 @@ class EqAudioProcessor : BaseAudioProcessor() {
         leveler.reset()
         saturator.reset()
         airExciter.reset()
+        // The voice stages' meter state just went idle; park the UI-facing
+        // mirrors to match, or a flush with no follow-up DSP buffer (pause
+        // after seek, stop at track end) leaves the meters frozen on stale
+        // pre-flush values.
+        AudioChainTelemetry.parkVoiceMirrorsIdle()
         limiter.reset()
         oversampler.reset()
         firEq.reset()
@@ -579,6 +584,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
         leveler.reset()
         saturator.reset()
         airExciter.reset()
+        AudioChainTelemetry.parkVoiceMirrorsIdle()
         // Limiter + oversampler buffers freed via reset; configure will
         // reallocate next time.
         limiter.reset()
@@ -735,6 +741,11 @@ class EqAudioProcessor : BaseAudioProcessor() {
             if (!AudioChainTelemetry.passthrough) {
                 AudioChainTelemetry.passthrough = true
                 AudioChainTelemetry.logEvent("passthrough", "enter")
+                // The DSP path never runs in passthrough, so the voice-suite
+                // mirrors would otherwise hold their last DSP-buffer values
+                // forever (e.g. chain disabled mid-sibilant). Park them at
+                // idle once, on the transition.
+                AudioChainTelemetry.parkVoiceMirrorsIdle()
             }
             AudioChainTelemetry.incPassthroughBuffers()
             if (channelCount > 0) {
@@ -943,6 +954,10 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // loop.
         AudioChainTelemetry.deEsserGainLin = if (applyDeEsser) deEsser.lastGainLin else 1.0
         AudioChainTelemetry.levelerGainLin = if (applyLeveler) leveler.lastGainLin else 1.0
+        AudioChainTelemetry.warmthActivity =
+            if (applyWarmth) saturator.currentActivityLin() else 0.0
+        AudioChainTelemetry.airActivity =
+            if (applyAir) airExciter.currentActivityLin() else 0.0
 
         // Push wallclock + audio-time to telemetry. Audio time is derived from
         // frameCount + sampleRate; processing time is the elapsed nanos since
@@ -1063,6 +1078,18 @@ class EqAudioProcessor : BaseAudioProcessor() {
             AudioChainTelemetry.ditherActive = ditherEnabled
         }
         out.flip()
+
+        // Warmth/Air mirrors AFTER Pass 2, where those stages actually ran —
+        // mirroring up top with deEsser/leveler (which run in Pass 1) would
+        // publish a one-buffer-stale envelope, and on the first buffer after
+        // a 0→on toggle would leak the pre-toggle peak (pendingReset is only
+        // consumed inside processFrame). Zero-output buffers skip this via
+        // the early return above; the envelope doesn't advance without
+        // processFrame, so the last published value stays accurate.
+        AudioChainTelemetry.warmthActivity =
+            if (applyWarmth) saturator.currentActivityLin() else 0.0
+        AudioChainTelemetry.airActivity =
+            if (applyAir) airExciter.currentActivityLin() else 0.0
     }
 
     /**

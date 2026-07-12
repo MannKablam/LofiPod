@@ -105,6 +105,19 @@ fun EqScreen(
             AudioChainTelemetry.reductionDb,
         )
     }
+    // Voice-suite activity snapshot, same tick. De-esser/Leveler are gain
+    // mirrors (1.0 = idle); Warmth/Air are wet-signal activity envelopes
+    // (0.0 = idle). All four rest at idle when their stage is off or the
+    // chain is in passthrough — EqAudioProcessor's per-buffer mirror
+    // guarantees it.
+    val voiceSnap = remember(meterTick) {
+        VoiceMeterSnap(
+            deEsserGainLin = AudioChainTelemetry.deEsserGainLin,
+            levelerGainLin = AudioChainTelemetry.levelerGainLin,
+            warmthActivity = AudioChainTelemetry.warmthActivity,
+            airActivity = AudioChainTelemetry.airActivity,
+        )
+    }
 
     // EQ state model (v0.6.12 reshape):
     //   - There is NO global EQ. Each podcast owns its own tuning, stored
@@ -564,6 +577,57 @@ fun EqScreen(
                     modifier = Modifier.weight(1f),
                 )
             }
+            Spacer(Modifier.height(10.dp))
+
+            // ---- Voice suite live activity ----
+            // Four mini-meters answering "is this stage actually doing
+            // anything right now?" — the stages are deliberately subtle, so
+            // ears alone can't always tell. De-esser: high-band gain
+            // reduction (fills during sibilance). Leveler: ride gain,
+            // diverging from center (right = boosting, left = taming).
+            // Warmth/Air: level of the wet signal each stage is mixing in.
+            // Meters read "off" when the stage is off and sit idle in
+            // passthrough. Same 250 ms tick as the Levels row below.
+            Row(modifier = Modifier.fillMaxWidth()) {
+                VoiceActivityMeter(
+                    label = "De-esser",
+                    db = 20.0 * log10(voiceSnap.deEsserGainLin.coerceAtLeast(1e-6)),
+                    kind = VoiceMeterKind.REDUCTION,
+                    active = voiceDeEsser > 0,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                VoiceActivityMeter(
+                    label = "Warmth",
+                    db = activityToDb(voiceSnap.warmthActivity),
+                    kind = VoiceMeterKind.ACTIVITY,
+                    active = voiceWarmth > 0,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                VoiceActivityMeter(
+                    label = "Leveler",
+                    db = 20.0 * log10(voiceSnap.levelerGainLin.coerceAtLeast(1e-6)),
+                    kind = VoiceMeterKind.RIDE,
+                    active = voiceLeveler > 0,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                VoiceActivityMeter(
+                    label = "Air",
+                    db = activityToDb(voiceSnap.airActivity),
+                    kind = VoiceMeterKind.ACTIVITY,
+                    active = voiceAir > 0,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Live activity: De-esser and Leveler in dB of gain change, " +
+                    "Warmth and Air as the level of what they add.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(16.dp))
 
             // ---- Phase mode (v0.9.5 four-mode lineup) ----
@@ -1542,6 +1606,128 @@ private fun LevelMeter(
 /** Linear-amplitude peak (0..1) → dBFS, with a -60 dB floor for log10(0). */
 private fun peakToDb(peak: Double): Double =
     if (peak < 1e-6) -60.0 else 20.0 * log10(peak)
+
+/**
+ * One 250 ms-tick snapshot of the four voice-suite telemetry mirrors, so the
+ * four meters render one consistent moment (same rationale as [meterSnap]'s
+ * Triple for the Levels row).
+ */
+private data class VoiceMeterSnap(
+    val deEsserGainLin: Double,
+    val levelerGainLin: Double,
+    val warmthActivity: Double,
+    val airActivity: Double,
+)
+
+/** Wet-activity envelope (linear) → dBFS with a low floor; the ACTIVITY
+ *  meter treats anything under its visible range as idle. */
+private fun activityToDb(act: Double): Double =
+    if (act < 1e-6) -120.0 else 20.0 * log10(act)
+
+private enum class VoiceMeterKind {
+    /** Downward gain change, 0..-10 dB (de-esser GR). Fills as GR deepens. */
+    REDUCTION,
+    /** Bidirectional ride gain, -10..+10 dB (leveler). Diverges from center. */
+    RIDE,
+    /** Wet-signal level, dBFS (warmth/air). The audible range for these
+     *  stages' contributions on speech is roughly -50..-10 dBFS, so that's
+     *  the fill range — quieter than -50 reads as idle. */
+    ACTIVITY,
+}
+
+/**
+ * Mini activity meter for one voice-suite stage — same label/bar/value
+ * layout as [LevelMeter], sized for a four-across row. When [active] is
+ * false (stage level 0) the bar stays empty and the value reads "off", so
+ * "off" and "on but idle" are visually distinct.
+ */
+@Composable
+private fun VoiceActivityMeter(
+    label: String,
+    db: Double,
+    kind: VoiceMeterKind,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(modifier = modifier) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(2.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(colors.surfaceVariant)
+        ) {
+            if (kind == VoiceMeterKind.RIDE) {
+                // Diverging bar: fill grows rightward from center for boost,
+                // leftward for attenuation, against a faint center tick.
+                val frac = if (active) (db / 10.0).coerceIn(-1.0, 1.0).toFloat() else 0f
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterEnd) {
+                        if (frac < 0f) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(-frac)
+                                    .fillMaxHeight()
+                                    .background(colors.primary)
+                            )
+                        }
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+                        if (frac > 0f) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(frac)
+                                    .fillMaxHeight()
+                                    .background(colors.primary)
+                            )
+                        }
+                    }
+                }
+                Box(
+                    Modifier
+                        .align(Alignment.Center)
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(colors.onSurfaceVariant.copy(alpha = 0.6f))
+                )
+            } else {
+                val (fraction, fillColor) = when (kind) {
+                    // 0 dB GR = empty; -10 dB (the de-esser's max) = full.
+                    VoiceMeterKind.REDUCTION ->
+                        (-db / 10.0).coerceIn(0.0, 1.0).toFloat() to colors.error
+                    // -50..-10 dBFS wet level → 0..1 fill.
+                    else ->
+                        ((db + 50.0) / 40.0).coerceIn(0.0, 1.0).toFloat() to colors.primary
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth(if (active) fraction else 0f)
+                        .fillMaxHeight()
+                        .background(fillColor)
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            when {
+                !active -> "off"
+                kind == VoiceMeterKind.REDUCTION -> "%.1f dB".format(db)
+                kind == VoiceMeterKind.RIDE -> "%+.1f dB".format(db)
+                db <= -50.0 -> "idle"
+                else -> "%.0f dB".format(db)
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant,
+        )
+    }
+}
 
 /**
  * Reverse-derive which preset (if any) the EQ is currently set to by comparing
