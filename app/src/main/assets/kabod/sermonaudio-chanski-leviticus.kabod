@@ -9,19 +9,20 @@
     <kabod:packId>sermonaudio-chanski-leviticus</kabod:packId>
     <kabod:archived>true</kabod:archived>
     <kabod:speaker>Mark Chanski</kabod:speaker>
+    <kabod:speakerBio>Pastor of Harbor Reformed Baptist Church, Holland, Michigan since 1994; author of Manly Dominion, Womanly Dominion, and Encouragement: Adrenaline for the Soul; hermeneutics instructor at Reformed Baptist Seminary.</kabod:speakerBio>
     <kabod:bookOfBible>Leviticus</kabod:bookOfBible>
     <kabod:sourceSite>https://www.sermonaudio.com/series/38602</kabod:sourceSite>
     <kabod:seriesStart>1994-08-21</kabod:seriesStart>
     <kabod:seriesEnd>1995-12-17</kabod:seriesEnd>
     <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
-    <kabod:packVersion>1</kabod:packVersion>
-    <kabod:packRevisionDate>2026-05-14</kabod:packRevisionDate>
+    <kabod:packVersion>2</kabod:packVersion>
+    <kabod:packRevisionDate>2026-07-11</kabod:packRevisionDate>
     <kabod:church>Harbor Reformed Baptist Church</kabod:church>
     <kabod:churchLocation>Holland, Michigan, USA</kabod:churchLocation>
     <kabod:partTotal>37</kabod:partTotal>
     <kabod:advertisedTotal>37</kabod:advertisedTotal>
     <kabod:audioHost>cloud.sermonaudio.com</kabod:audioHost>
-    <kabod:contentNotes>Per-sermon scripture refs are mapped from the verse-by-verse cadence (37 sermons across Leviticus 1–27); the source page does not annotate individual passages. Sermon #36 is annotated as 'Tithing' (Lev 27); #37 is 'Conclusion'.</kabod:contentNotes>
+    <kabod:contentNotes>v2 (2026-07-11): scripture refs re-based on SermonAudio's own per-sermon Bible-text annotations (v1 inferred them from preaching cadence and ran 1-2 chapters behind through the mid-series). Policy: where SermonAudio annotates a passage it is adopted (raw value preserved per item in sourceBibleText); where it tags book-only, the chapter is interpolated from the surrounding annotated sermons; where it has no tag, the ref derives from the sermon title. Two source-tag oddities are reconciled as spans rather than silently overruled: #8 'Strange Fire' is tagged Lev 9:1-10 though Nadab and Abihu is 10:1 (displayed 9-10), and #14 'Laws Concerning Leprosy #1' is tagged Lev 14 though the leprosy laws begin at 13 (displayed 13-14). Chapters 6-7 have no dedicated sermon in the source's tagging. 37 sermons total, matching SermonAudio series 38602 exactly (IDs, dates, order, durations; verified 2026-07-11). Source title of #36 is misspelled 'Levititus' on SermonAudio; pack titles are normalized. The 1994 uploads are low-bitrate (~16 kbps) source transfers; the 1995 uploads are higher quality.</kabod:contentNotes>
     <item>
       <title>#1: Introduction to Leviticus</title>
       <pubDate>Sun, 21 Aug 1994 00:00:00 GMT</pubDate>
@@ -32,6 +33,7 @@
       <kabod:partNumber>1</kabod:partNumber>
       <kabod:scripture>Leviticus 1</kabod:scripture>
       <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="1" endV="17"/>
+      <kabod:sourceBibleText>Leviticus 1</kabod:sourceBibleText>
     </item>
     <item>
       <title>#2: Burnt Offering</title>
@@ -43,6 +45,7 @@
       <kabod:partNumber>2</kabod:partNumber>
       <kabod:scripture>Leviticus 1</kabod:scripture>
       <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="1" endV="17"/>
+      <kabod:sourceBibleText>Leviticus 1</kabod:sourceBibleText>
     </item>
     <item>
       <title>#3: Grain Offering</title>
@@ -54,6 +57,7 @@
       <kabod:partNumber>3</kabod:partNumber>
       <kabod:scripture>Leviticus 2</kabod:scripture>
       <kabod:scriptureRef book="Leviticus" startCh="2" startV="1" endCh="2" endV="16"/>
+      <kabod:sourceBibleText>Leviticus 2</kabod:sourceBibleText>
     </item>
     <item>
       <title>#4: Peace Offering</title>
@@ -75,6 +79,7 @@
       <kabod:partNumber>5</kabod:partNumber>
       <kabod:scripture>Leviticus 4</kabod:scripture>
       <kabod:scriptureRef book="Leviticus" startCh="4" startV="1" endCh="4" endV="35"/>
+      <kabod:sourceBibleText>Leviticus 4</kabod:sourceBibleText>
     </item>
     <item>
       <title>#6: Guilt Offering</title>
@@ -86,6 +91,7 @@
       <kabod:partNumber>6</kabod:partNumber>
       <kabod:scripture>Leviticus 5</kabod:scripture>
       <kabod:scriptureRef book="Leviticus" startCh="5" startV="1" endCh="5" endV="19"/>
+      <kabod:sourceBibleText>Leviticus 5</kabod:sourceBibleText>
     </item>
     <item>
       <title>#7: Ordination of Priests</title>
@@ -97,6 +103,7 @@
       <kabod:partNumber>7</kabod:partNumber>
       <kabod:scripture>Leviticus 8</kabod:scripture>
       <kabod:scriptureRef book="Leviticus" startCh="8" startV="1" endCh="8" endV="36"/>
+      <kabod:sourceBibleText>Leviticus 8</kabod:sourceBibleText>
     </item>
     <item>
       <title>#8: Strange Fire</title>
@@ -106,8 +113,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1130030222.mp3" type="audio/mpeg" length="8865199"/>
       <itunes:duration>1:13:52</itunes:duration>
       <kabod:partNumber>8</kabod:partNumber>
-      <kabod:scripture>Leviticus 10</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="10" startV="1" endCh="10" endV="20"/>
+      <kabod:scripture>Leviticus 9–10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="9" startV="1" endCh="10" endV="20"/>
+      <kabod:sourceBibleText>Leviticus 9:1-10</kabod:sourceBibleText>
     </item>
     <item>
       <title>#9: The Regulative Principle</title>
@@ -117,8 +125,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/11300301441.mp3" type="audio/mpeg" length="8826175"/>
       <itunes:duration>1:13:33</itunes:duration>
       <kabod:partNumber>9</kabod:partNumber>
-      <kabod:scripture>Leviticus 10</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="10" startV="1" endCh="10" endV="20"/>
+      <kabod:scripture>Leviticus 9–10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="9" startV="22" endCh="10" endV="20"/>
+      <kabod:sourceBibleText>Leviticus 9:22</kabod:sourceBibleText>
     </item>
     <item>
       <title>#10: Earthly and Heavenly Priesthood</title>
@@ -128,8 +137,8 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/122103164614.mp3" type="audio/mpeg" length="8065423"/>
       <itunes:duration>1:07:12</itunes:duration>
       <kabod:partNumber>10</kabod:partNumber>
-      <kabod:scripture>Leviticus 8</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="8" startV="1" endCh="8" endV="36"/>
+      <kabod:scripture>Leviticus 8–10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="8" startV="1" endCh="10" endV="20"/>
     </item>
     <item>
       <title>#11: Clean and Unclean Animals</title>
@@ -150,8 +159,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/122103164925.mp3" type="audio/mpeg" length="8227855"/>
       <itunes:duration>1:08:33</itunes:duration>
       <kabod:partNumber>12</kabod:partNumber>
-      <kabod:scripture>Leviticus 11</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="11" startV="1" endCh="11" endV="47"/>
+      <kabod:scripture>Leviticus 11–12</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="11" startV="1" endCh="12" endV="8"/>
+      <kabod:sourceBibleText>Leviticus 12</kabod:sourceBibleText>
     </item>
     <item>
       <title>#13: Laws Concerning Birth</title>
@@ -172,8 +182,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/111041483.mp3" type="audio/mpeg" length="8272999"/>
       <itunes:duration>1:08:56</itunes:duration>
       <kabod:partNumber>14</kabod:partNumber>
-      <kabod:scripture>Leviticus 13</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="13" startV="1" endCh="13" endV="59"/>
+      <kabod:scripture>Leviticus 13–14</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="13" startV="1" endCh="14" endV="57"/>
+      <kabod:sourceBibleText>Leviticus 14</kabod:sourceBibleText>
     </item>
     <item>
       <title>#15: Leviticus #15</title>
@@ -182,8 +193,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/827122050456.mp3" type="audio/mpeg" length="31438679"/>
       <itunes:duration>1:05:25</itunes:duration>
       <kabod:partNumber>15</kabod:partNumber>
-      <kabod:scripture>Leviticus 13</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="13" startV="1" endCh="13" endV="59"/>
+      <kabod:scripture>Leviticus 14</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="14" startV="1" endCh="14" endV="57"/>
+      <kabod:sourceBibleText>Leviticus 14</kabod:sourceBibleText>
     </item>
     <item>
       <title>#16: Leviticus #16</title>
@@ -192,8 +204,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/8271221170.mp3" type="audio/mpeg" length="34629380"/>
       <itunes:duration>1:12:04</itunes:duration>
       <kabod:partNumber>16</kabod:partNumber>
-      <kabod:scripture>Leviticus 14</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="14" startV="1" endCh="14" endV="57"/>
+      <kabod:scripture>Leviticus 15</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="15" startV="1" endCh="15" endV="33"/>
+      <kabod:sourceBibleText>Leviticus 15</kabod:sourceBibleText>
     </item>
     <item>
       <title>#17: Leviticus #17</title>
@@ -202,8 +215,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/82812651383.mp3" type="audio/mpeg" length="34419355"/>
       <itunes:duration>1:11:38</itunes:duration>
       <kabod:partNumber>17</kabod:partNumber>
-      <kabod:scripture>Leviticus 14</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="14" startV="1" endCh="14" endV="57"/>
+      <kabod:scripture>Leviticus 16</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 16</kabod:sourceBibleText>
     </item>
     <item>
       <title>#18: Leviticus #18</title>
@@ -212,8 +226,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/8291264801.mp3" type="audio/mpeg" length="36568710"/>
       <itunes:duration>1:16:07</itunes:duration>
       <kabod:partNumber>18</kabod:partNumber>
-      <kabod:scripture>Leviticus 15</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="15" startV="1" endCh="15" endV="33"/>
+      <kabod:scripture>Leviticus 16</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 16</kabod:sourceBibleText>
     </item>
     <item>
       <title>#19: Leviticus #19</title>
@@ -222,8 +237,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112758270.mp3" type="audio/mpeg" length="34141203"/>
       <itunes:duration>1:11:03</itunes:duration>
       <kabod:partNumber>19</kabod:partNumber>
-      <kabod:scripture>Leviticus 16</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+      <kabod:scripture>Leviticus 17</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="17" startV="1" endCh="17" endV="16"/>
+      <kabod:sourceBibleText>Leviticus 17</kabod:sourceBibleText>
     </item>
     <item>
       <title>#20: Leviticus #20</title>
@@ -232,8 +248,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121526240.mp3" type="audio/mpeg" length="34719659"/>
       <itunes:duration>1:12:16</itunes:duration>
       <kabod:partNumber>20</kabod:partNumber>
-      <kabod:scripture>Leviticus 16</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+      <kabod:scripture>Leviticus 18</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="18" startV="1" endCh="18" endV="30"/>
+      <kabod:sourceBibleText>Leviticus 18</kabod:sourceBibleText>
     </item>
     <item>
       <title>#21: Leviticus #21</title>
@@ -242,8 +259,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121527212.mp3" type="audio/mpeg" length="36058800"/>
       <itunes:duration>1:15:03</itunes:duration>
       <kabod:partNumber>21</kabod:partNumber>
-      <kabod:scripture>Leviticus 17</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="17" startV="1" endCh="17" endV="16"/>
+      <kabod:scripture>Leviticus 18–19</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="18" startV="1" endCh="19" endV="37"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
     </item>
     <item>
       <title>#22: Leviticus #22</title>
@@ -252,8 +270,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112152854.mp3" type="audio/mpeg" length="34360632"/>
       <itunes:duration>1:11:31</itunes:duration>
       <kabod:partNumber>22</kabod:partNumber>
-      <kabod:scripture>Leviticus 18</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="18" startV="1" endCh="18" endV="30"/>
+      <kabod:scripture>Leviticus 19</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="19" startV="1" endCh="19" endV="37"/>
+      <kabod:sourceBibleText>Leviticus 19</kabod:sourceBibleText>
     </item>
     <item>
       <title>#23: Leviticus #23</title>
@@ -262,8 +281,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121528326.mp3" type="audio/mpeg" length="38052465"/>
       <itunes:duration>1:19:12</itunes:duration>
       <kabod:partNumber>23</kabod:partNumber>
-      <kabod:scripture>Leviticus 19</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="19" startV="1" endCh="19" endV="37"/>
+      <kabod:scripture>Leviticus 20</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="20" startV="1" endCh="20" endV="27"/>
+      <kabod:sourceBibleText>Leviticus 20</kabod:sourceBibleText>
     </item>
     <item>
       <title>#24: Leviticus #24</title>
@@ -272,8 +292,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112152950.mp3" type="audio/mpeg" length="34572537"/>
       <itunes:duration>1:11:57</itunes:duration>
       <kabod:partNumber>24</kabod:partNumber>
-      <kabod:scripture>Leviticus 19</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="19" startV="1" endCh="19" endV="37"/>
+      <kabod:scripture>Leviticus 21</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="21" startV="1" endCh="21" endV="24"/>
+      <kabod:sourceBibleText>Leviticus 21</kabod:sourceBibleText>
     </item>
     <item>
       <title>#25: Leviticus #25</title>
@@ -282,8 +303,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121532530.mp3" type="audio/mpeg" length="37918928"/>
       <itunes:duration>1:18:56</itunes:duration>
       <kabod:partNumber>25</kabod:partNumber>
-      <kabod:scripture>Leviticus 20</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="20" startV="1" endCh="20" endV="27"/>
+      <kabod:scripture>Leviticus 22</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="22" startV="1" endCh="22" endV="33"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
     </item>
     <item>
       <title>#26: Leviticus #26</title>
@@ -292,8 +314,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121533242.mp3" type="audio/mpeg" length="36457951"/>
       <itunes:duration>1:15:53</itunes:duration>
       <kabod:partNumber>26</kabod:partNumber>
-      <kabod:scripture>Leviticus 21</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="21" startV="1" endCh="21" endV="24"/>
+      <kabod:scripture>Leviticus 23</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="23" endV="44"/>
+      <kabod:sourceBibleText>Leviticus 23</kabod:sourceBibleText>
     </item>
     <item>
       <title>#27: Leviticus #27</title>
@@ -302,8 +325,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121533504.mp3" type="audio/mpeg" length="36731296"/>
       <itunes:duration>1:16:27</itunes:duration>
       <kabod:partNumber>27</kabod:partNumber>
-      <kabod:scripture>Leviticus 22</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="22" startV="1" endCh="22" endV="33"/>
+      <kabod:scripture>Leviticus 23</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="23" endV="44"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
     </item>
     <item>
       <title>#28: Leviticus #28</title>
@@ -312,8 +336,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121534406.mp3" type="audio/mpeg" length="33806627"/>
       <itunes:duration>1:10:21</itunes:duration>
       <kabod:partNumber>28</kabod:partNumber>
-      <kabod:scripture>Leviticus 23</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="23" endV="44"/>
+      <kabod:scripture>Leviticus 24</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="24" startV="1" endCh="24" endV="23"/>
+      <kabod:sourceBibleText>Leviticus 24</kabod:sourceBibleText>
     </item>
     <item>
       <title>#29: Leviticus #29</title>
@@ -322,8 +347,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121535118.mp3" type="audio/mpeg" length="32279613"/>
       <itunes:duration>1:07:11</itunes:duration>
       <kabod:partNumber>29</kabod:partNumber>
-      <kabod:scripture>Leviticus 23</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="23" endV="44"/>
+      <kabod:scripture>Leviticus 25</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+      <kabod:sourceBibleText>Leviticus 25</kabod:sourceBibleText>
     </item>
     <item>
       <title>#30: The Year of Jubilee: The Ram's Horn!</title>
@@ -333,8 +359,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1240322011.mp3" type="audio/mpeg" length="33848423"/>
       <itunes:duration>1:10:27</itunes:duration>
       <kabod:partNumber>30</kabod:partNumber>
-      <kabod:scripture>Leviticus 25</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+      <kabod:scripture>Leviticus 25:47–55</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="47" endCh="25" endV="55"/>
+      <kabod:sourceBibleText>Leviticus 25:47-55</kabod:sourceBibleText>
     </item>
     <item>
       <title>#31: Leviticus #31</title>
@@ -343,8 +370,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/911215385610.mp3" type="audio/mpeg" length="34077674"/>
       <itunes:duration>1:10:55</itunes:duration>
       <kabod:partNumber>31</kabod:partNumber>
-      <kabod:scripture>Leviticus 24</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="24" startV="1" endCh="24" endV="23"/>
+      <kabod:scripture>Leviticus 25</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+      <kabod:sourceBibleText>Leviticus 25</kabod:sourceBibleText>
     </item>
     <item>
       <title>#32: Leviticus #32</title>
@@ -353,8 +381,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121541141.mp3" type="audio/mpeg" length="33225246"/>
       <itunes:duration>1:09:09</itunes:duration>
       <kabod:partNumber>32</kabod:partNumber>
-      <kabod:scripture>Leviticus 25</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+      <kabod:scripture>Leviticus 25–26</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="26" endV="46"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
     </item>
     <item>
       <title>#33: Leviticus #33</title>
@@ -363,8 +392,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121541513.mp3" type="audio/mpeg" length="33678314"/>
       <itunes:duration>1:10:05</itunes:duration>
       <kabod:partNumber>33</kabod:partNumber>
-      <kabod:scripture>Leviticus 25</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+      <kabod:scripture>Leviticus 26</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="26" startV="1" endCh="26" endV="46"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
     </item>
     <item>
       <title>#34: Leviticus #34</title>
@@ -375,6 +405,7 @@
       <kabod:partNumber>34</kabod:partNumber>
       <kabod:scripture>Leviticus 26</kabod:scripture>
       <kabod:scriptureRef book="Leviticus" startCh="26" startV="1" endCh="26" endV="46"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
     </item>
     <item>
       <title>#35: Leviticus #35</title>
@@ -383,8 +414,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112164445.mp3" type="audio/mpeg" length="32633834"/>
       <itunes:duration>1:07:55</itunes:duration>
       <kabod:partNumber>35</kabod:partNumber>
-      <kabod:scripture>Leviticus 26</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="26" startV="1" endCh="26" endV="46"/>
+      <kabod:scripture>Leviticus 27</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="27" startV="1" endCh="27" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 27</kabod:sourceBibleText>
     </item>
     <item>
       <title>#36: Tithing</title>
@@ -394,8 +426,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/119031125.mp3" type="audio/mpeg" length="32443244"/>
       <itunes:duration>1:07:31</itunes:duration>
       <kabod:partNumber>36</kabod:partNumber>
-      <kabod:scripture>Leviticus 27</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="27" startV="1" endCh="27" endV="34"/>
+      <kabod:scripture>Leviticus 27:26–33</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="27" startV="26" endCh="27" endV="33"/>
+      <kabod:sourceBibleText>Leviticus 27:26-33</kabod:sourceBibleText>
     </item>
     <item>
       <title>#37: Conclusion</title>
@@ -404,8 +437,9 @@
       <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121621270.mp3" type="audio/mpeg" length="32176377"/>
       <itunes:duration>1:06:58</itunes:duration>
       <kabod:partNumber>37</kabod:partNumber>
-      <kabod:scripture>Leviticus 27</kabod:scripture>
-      <kabod:scriptureRef book="Leviticus" startCh="27" startV="1" endCh="27" endV="34"/>
+      <kabod:scripture>Leviticus 27:34</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="27" startV="34" endCh="27" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 27:34</kabod:sourceBibleText>
     </item>
   </channel>
 </rss>

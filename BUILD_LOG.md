@@ -2,6 +2,46 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.24 (pending tag) — Chanski Leviticus pack v2: refs re-based on SermonAudio (2026-07-11)
+
+Audit of the Mark Chanski Leviticus pack against SermonAudio series
+38602 (the source of truth), same rigor as the Romans audit:
+
+- **Structure: exact match.** 37 sermons on SermonAudio; our 37 IDs,
+  dates (including the doubled 1994-09-25 for #4/#5), order, and
+  durations all agree. All audio URLs verified live
+  (cloud.sermonaudio.com, HEAD 200 spot checks).
+- **Scripture refs: v1 was wrong and is now fixed.** v1 inferred every
+  passage from preaching cadence ("the source page does not annotate
+  individual passages") — but SermonAudio's per-SERMON pages do carry a
+  Bible-text field, and against it our mid-series inference ran 1-2
+  chapters behind (18 conflicts, #8 through #35). v2 policy: adopt
+  SermonAudio's annotation verbatim where present (raw value preserved
+  per item in a new sourceBibleText field — parser-safe, schema-v2
+  additive); interpolate from surrounding annotated sermons where the
+  tag is book-only (#21, #25, #27, #32-34); derive from unambiguous
+  titles where SermonAudio has no tag (#4 Peace Offering → Lev 3, #11
+  Clean/Unclean → Lev 11, #13 Birth → Lev 12). Two source-tag oddities
+  reconciled as spans instead of silently overruled: #8 "Strange Fire"
+  (SA says 9:1-10; Nadab and Abihu is 10:1 → displayed 9–10) and #14
+  "Leprosy #1" (SA says 14; the laws start at 13 → displayed 13–14).
+  The v1 "chapter 6-7-9 gaps + #30 out of order" artifacts dissolve
+  under the corrected mapping (9 is covered by #8/#9; #29-31 are all
+  Lev 25 around the Jubilee sermon; 6-7 genuinely have no dedicated
+  sermon in the source's tagging).
+- **Enrichment:** channel gains kabod:speakerBio (pastor of Harbor
+  Reformed Baptist Church, Holland MI since 1994; author of Manly
+  Dominion / Womanly Dominion / Encouragement; hermeneutics instructor
+  at Reformed Baptist Seminary — from his SermonAudio speaker page);
+  contentNotes rewritten with the full mapping policy + audit trail;
+  packVersion 2. Church name confirmed as SermonAudio lists it
+  ("Harbor Reformed Baptist Church"). No new per-item descriptions
+  exist at the source (SA's blurbs match the ones we already carry).
+  Titles kept normalized (SA's own are inconsistent, including a
+  'Levititus' typo on #36).
+- Existing installs pick up the corrected refs on next launch —
+  installBundled always re-upserts episode_kabod rows.
+
 ## v0.10.23 (pending tag) — Device files, gold Kabod card, pack curation + audit, sources viewer, BMC (2026-07-11)
 
 ### Device files (new source)
