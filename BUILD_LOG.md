@@ -2,7 +2,7 @@
 
 Running notes on what's changed and why. Newest at top.
 
-## v0.10.27 (pending tag) — Bug-hunt sweep over v0.10.21–v0.10.26 (2026-07-11)
+## v0.10.27 — Bug-hunt sweep over v0.10.21–v0.10.26 (2026-07-11)
 
 Dedicated 4-angle hunt (audio-chain integration, player state machine,
 UI/persistence, fresh-eyes full-diff) plus Android Lint over everything
@@ -50,7 +50,7 @@ FirEq.release-kills-synthesis-scope flagged as a pre-existing latent
 (predates this work, needs its own investigation). Lint: all findings
 in touched files are the pre-existing UnstableApi/house-pattern noise.
 
-## v0.10.26 (pending tag) — Study sheets, structured scrubber, sleep timer, chapters, description search (2026-07-11)
+## v0.10.26 (shipped in v0.10.27) — Study sheets, structured scrubber, sleep timer, chapters, description search (2026-07-11)
 
 The "study instrument" batch — planned by three parallel design agents,
 coded one feature at a time, 2-angle reviewed before commit.
@@ -125,7 +125,7 @@ own size; sleep-timer contract violations fixed (see above); heat
 recorder mutex-serialized (overlapping IO ticks could cross-contaminate
 episode rows across a transition).
 
-## v0.10.25 (pending tag) — Bulk unplayed/queue, smart resume, mark-a-moment, transcript search (2026-07-11)
+## v0.10.25 (shipped in v0.10.27) — Bulk unplayed/queue, smart resume, mark-a-moment, transcript search (2026-07-11)
 
 Quality-of-life batch + the first "next plane" feature (transcript
 search). Note: bulk mark-PLAYED already existed (selection-mode
@@ -160,7 +160,7 @@ check-circle icon, v0.10.15); this round adds its missing counterparts.
   needle. Accepted: SQL LIKE wildcard needles (%/_) over-match then
   drop — quirky but harmless.
 
-## v0.10.24 (pending tag) — Chanski Leviticus pack v2: refs re-based on SermonAudio (2026-07-11)
+## v0.10.24 (shipped in v0.10.27) — Chanski Leviticus pack v2: refs re-based on SermonAudio (2026-07-11)
 
 Audit of the Mark Chanski Leviticus pack against SermonAudio series
 38602 (the source of truth), same rigor as the Romans audit:
@@ -200,7 +200,7 @@ Audit of the Mark Chanski Leviticus pack against SermonAudio series
 - Existing installs pick up the corrected refs on next launch —
   installBundled always re-upserts episode_kabod rows.
 
-## v0.10.23 (pending tag) — Device files, gold Kabod card, pack curation + audit, sources viewer, BMC (2026-07-11)
+## v0.10.23 (shipped in v0.10.27) — Device files, gold Kabod card, pack curation + audit, sources viewer, BMC (2026-07-11)
 
 ### Device files (new source)
 
@@ -281,7 +281,7 @@ episodes screen as before.
   glyph as part of the ported brand style — the one deliberate
   exception to the no-emoji UI rule.
 
-## v0.10.22 (pending tag) — Voice suite: de-esser, warmth, leveler, air + tone-filter refinements (2026-07-11)
+## v0.10.22 (shipped in v0.10.27) — Voice suite: de-esser, warmth, leveler, air + tone-filter refinements (2026-07-11)
 
 Premium "studio suite" pass on the audio engine — four new staged voice
 effects in the RX/Nectar/Ozone vein, plus refinements to the v0.10.20
@@ -368,7 +368,7 @@ gained two mirrors, updated once per buffer).
   band-vs-band detector can miss a sibilant masked by a loud vowel
   (inherent to the level-independent design).
 
-## v0.10.21 (pending tag) — Pause-skip, promotion notes, quick-scroll, playback-order fixes (2026-07-11)
+## v0.10.21 (shipped in v0.10.27) — Pause-skip, promotion notes, quick-scroll, playback-order fixes (2026-07-11)
 
 Five asks in one pass: a new transport control, notes-system integration
 for promotions, list ergonomics, and a sweep of playback-consistency bugs
