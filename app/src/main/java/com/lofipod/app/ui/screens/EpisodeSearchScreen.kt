@@ -24,6 +24,7 @@ import com.lofipod.app.R
 import com.lofipod.app.data.model.Episode
 import com.lofipod.app.data.model.Podcast
 import com.lofipod.app.player.PlayerController
+import com.lofipod.app.util.stripHtmlToPlainText
 
 /**
  * Live search across all cached episode titles. Results show podcast title +
@@ -51,11 +52,32 @@ fun EpisodeSearchScreen(
     val allPods = remember { app.repo.allCached() }
     val totalEpisodeCount = remember(allPods) { allPods.sumOf { it.episodes.size } }
 
-    val results: List<Match> = remember(query, allPods) {
+    // Description index (v0.11): guid -> stripped, lowercased description.
+    // Built once per cache snapshot off the main thread — running the
+    // strip-HTML chain over thousands of descriptions per keystroke would
+    // jank typing. Until it lands (well under a second), search is
+    // title-only, gracefully.
+    var descIndex by remember(allPods) { mutableStateOf<Map<String, String>?>(null) }
+    LaunchedEffect(allPods) {
+        descIndex = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            buildMap {
+                for (pod in allPods) for (ep in pod.episodes) {
+                    ep.description
+                        ?.stripHtmlToPlainText()
+                        ?.lowercase()
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { put(ep.guid, it) }
+                }
+            }
+        }
+    }
+
+    val results: List<Match> = remember(query, allPods, descIndex) {
         if (query.isBlank()) emptyList()
         else {
             val needle = query.trim().lowercase()
             buildList {
+                // Pass 1: title matches — never crowded out of the cap.
                 for (pod in allPods) {
                     for (ep in pod.episodes) {
                         if (ep.title.lowercase().contains(needle)) {
@@ -63,6 +85,18 @@ fun EpisodeSearchScreen(
                             // Cap so a wildcard-ish search doesn't render
                             // hundreds of rows. 200 is plenty for a-needle-
                             // in-the-feed-canon use case.
+                            if (size >= 200) return@buildList
+                        }
+                    }
+                }
+                // Pass 2: description matches for episodes whose title
+                // didn't already hit. Same combined cap.
+                val index = descIndex ?: return@buildList
+                for (pod in allPods) {
+                    for (ep in pod.episodes) {
+                        if (ep.title.lowercase().contains(needle)) continue
+                        if (index[ep.guid]?.contains(needle) == true) {
+                            add(Match(pod, ep, inDescription = true))
                             if (size >= 200) return@buildList
                         }
                     }
@@ -239,6 +273,13 @@ private fun ResultCard(
                     maxLines = 1
                 )
                 Text(highlighted, style = MaterialTheme.typography.titleSmall, maxLines = 3)
+                if (match.inDescription) {
+                    Text(
+                        "in description",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Spacer(Modifier.width(8.dp))
             Icon(
@@ -295,7 +336,11 @@ private fun highlightedTitle(
     }
 }
 
-private data class Match(val podcast: Podcast, val episode: Episode)
+private data class Match(
+    val podcast: Podcast,
+    val episode: Episode,
+    val inDescription: Boolean = false,
+)
 
 private data class TranscriptHit(
     val guid: String,

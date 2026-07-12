@@ -65,8 +65,21 @@ class PauseTapProcessor : BaseAudioProcessor() {
 
     private class Pause(val startMs: Long, val endMs: Long)
 
+    /** Immutable public view of a recorded pause, media-time ms. */
+    data class PauseSpan(val startMs: Long, val endMs: Long)
+
     private val lock = Any()
     private val pauses = ArrayDeque<Pause>()
+
+    /**
+     * Snapshot of every recorded pause for the CURRENT media item —
+     * unordered, possibly containing duplicates (re-decoded regions
+     * re-record; harmless for rendering). Only covers regions the decoder
+     * has visited this session, so scrubber ticks appear progressively.
+     * Cheap copy under the lock; call at UI cadence, never per frame.
+     */
+    fun snapshotPauses(): List<PauseSpan> =
+        synchronized(lock) { pauses.map { PauseSpan(it.startMs, it.endMs) } }
 
     fun setSensitivity(s: Int) {
         val clamped = s.coerceIn(1, 5)

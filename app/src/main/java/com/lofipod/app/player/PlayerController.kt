@@ -65,6 +65,11 @@ class PlayerController(private val context: Context) {
             com.lofipod.app.data.Settings(context.applicationContext)
                 .smartResumeEnabled.collect { smartResumeEnabled = it }
         }
+        // Chapters arrive from the service side whenever tracks change;
+        // re-push so late-arriving chapters refresh PlayerState.
+        scope.launch {
+            ChapterBridge.chapters.collect { pushState() }
+        }
     }
 
     private val dao: EpisodeStateDao
@@ -124,6 +129,23 @@ class PlayerController(private val context: Context) {
     private val _autoplayTimer = MutableStateFlow<AutoplayTimerState?>(null)
     val autoplayTimer: StateFlow<AutoplayTimerState?> = _autoplayTimer.asStateFlow()
     private var autoplayTimerJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Sleep timer (v0.11). Minutes mode counts wall-clock from arming;
+     * EndOfEpisode recomputes remaining media time each tick (so seeks
+     * self-correct and episode transitions re-anchor). The final
+     * [SLEEP_FADE_MS] fade steps [EqAudioProcessor.setSleepFade] along a
+     * half-cosine every [SLEEP_FADE_TICK_MS]. Manual pause cancels the
+     * timer and restores full volume (an explicit pause means the user
+     * is awake; a hidden timer firing later would surprise).
+     *
+     * Known limitation, accepted for v1: the job lives in the activity-
+     * owned controller scope — swiping the app from recents while the
+     * service keeps playing kills the timer.
+     */
+    private val _sleepTimer = MutableStateFlow<SleepTimerState?>(null)
+    val sleepTimer: StateFlow<SleepTimerState?> = _sleepTimer.asStateFlow()
+    private var sleepTimerJob: kotlinx.coroutines.Job? = null
 
     /**
      * One-shot transient messages from the player layer that the UI
@@ -445,6 +467,9 @@ class PlayerController(private val context: Context) {
     }
 
     fun release() {
+        // Sleep timer dies with the controller; leave the chain at full
+        // volume for whatever plays next session.
+        cancelSleepTimer()
         AutoplayConfirmBridge.unbind(this)
         // Both removeListener and release wrapped in try/catch. Media3's
         // MediaControllerImplBase.release internally calls ContextImpl.
@@ -549,6 +574,16 @@ class PlayerController(private val context: Context) {
             }
             pushState()
             if (playbackState == Player.STATE_ENDED) {
+                // Sleep timer wins over every advance strategy: an
+                // end-of-episode timer, or ANY timer already mid-fade,
+                // means the listener asked playback to stop here — starting
+                // the next episode would defeat the entire feature.
+                val st = _sleepTimer.value
+                if (st != null && (st.mode == SleepTimerMode.EndOfEpisode || st.fading)) {
+                    sleepTimerJob?.cancel()
+                    fireSleepPause(flush = false)
+                    return
+                }
                 // Remove the just-finished episode from the queue and auto-advance.
                 // If canon-order autoplay is enabled and this episode has a
                 // detected scripture ref, prefer the next sermon in canon
@@ -722,7 +757,11 @@ class PlayerController(private val context: Context) {
                 currentEpisodeGuid = item?.mediaId,
                 currentFeedUrl = feedUrl,
                 currentMediaScheme = scheme,
-                speed = c.playbackParameters.speed
+                speed = c.playbackParameters.speed,
+                chapters = ChapterBridge.chapters.value
+                    ?.takeIf { it.mediaId == item?.mediaId }
+                    ?.chapters
+                    ?: emptyList()
             )
         }
     }
@@ -1058,8 +1097,10 @@ class PlayerController(private val context: Context) {
             // confirmation timer. The user must confirm continuation by
             // tapping the morphed play button or pressing play/pause on a
             // BT/vehicle transport — otherwise we auto-pause to avoid
-            // unattended indefinite playback.
-            if (wasAutoplay) {
+            // unattended indefinite playback. Suppressed while a sleep
+            // timer is armed: beeping "are you awake?" at someone who has
+            // deliberately scheduled sleep is redundant and hostile.
+            if (wasAutoplay && _sleepTimer.value == null) {
                 maybeStartAutoplayTimer(ep.guid)
             }
         }
@@ -1307,7 +1348,13 @@ class PlayerController(private val context: Context) {
             return
         }
         when {
-            c.isPlaying -> c.pause()
+            // Route through the pause() wrapper so an explicit pause tears
+            // down BOTH timers (autoplay-confirm + sleep). The bare
+            // c.pause() this used to be silently left a sleep timer
+            // counting wall-clock through the pause — it would then fade
+            // and "fire" against a paused chain, and a resume in the final
+            // window came back near-silent.
+            c.isPlaying -> pause()
             c.playbackState == Player.STATE_IDLE -> {
                 if (c.currentMediaItem == null) {
                     _transientMessages.tryEmit("No episode loaded — pick one from the catalog.")
@@ -1394,7 +1441,130 @@ class PlayerController(private val context: Context) {
         autoplayTimerJob?.cancel()
         autoplayTimerJob = null
         _autoplayTimer.value = null
+        // Same reasoning for the sleep timer: an explicit pause means the
+        // user is awake. Cancel + restore full volume; re-arming is one tap.
+        cancelSleepTimer()
         controller?.pause()
+    }
+
+    // ---------- Sleep timer ----------
+
+    fun startSleepTimer(mode: SleepTimerMode) {
+        // A live autoplay-confirm window is redundant once sleep is
+        // scheduled — treat arming as the "I'm here" confirmation.
+        if (_autoplayTimer.value != null) confirmAutoplayContinuation()
+        sleepTimerJob?.cancel()
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val endAt = (mode as? SleepTimerMode.Minutes)
+            ?.let { startedAt + it.minutes * 60_000L }
+        _sleepTimer.value = SleepTimerState(
+            mode = mode,
+            startedAtElapsedMs = startedAt,
+            endAtElapsedMs = endAt,
+        )
+        com.lofipod.app.audio.AudioChainTelemetry.logEvent(
+            "sleep_timer",
+            when (mode) {
+                is SleepTimerMode.Minutes -> "armed ${mode.minutes}m"
+                SleepTimerMode.EndOfEpisode -> "armed end-of-episode"
+            },
+        )
+        sleepTimerJob = scope.launch {
+            while (true) {
+                val st = _sleepTimer.value ?: return@launch
+                val wallRemaining = when (val m = st.mode) {
+                    is SleepTimerMode.Minutes ->
+                        (st.endAtElapsedMs ?: 0L) - android.os.SystemClock.elapsedRealtime()
+                    SleepTimerMode.EndOfEpisode -> {
+                        val c = controller
+                        val dur = durationMs()
+                        if (c == null || dur <= 0) {
+                            // Duration unknown (pre-READY) — no fade basis
+                            // yet; check again next tick.
+                            kotlinx.coroutines.delay(SLEEP_FADE_TICK_MS)
+                            continue
+                        }
+                        val speed = c.playbackParameters.speed.toDouble()
+                            .coerceAtLeast(0.25)
+                        ((dur - c.currentPosition) / speed).toLong()
+                    }
+                }
+                // Pauses that bypass our wrapper (audio-focus loss, BT,
+                // notification) leave the timer armed but must not fade or
+                // fire against a silent chain. Wall-clock keeps counting;
+                // if it expires while paused, stand down quietly — playback
+                // is already stopped, which is all the timer promises.
+                val playing = controller?.isPlaying == true
+                when {
+                    wallRemaining <= SLEEP_FADE_TICK_MS -> {
+                        if (playing) {
+                            fireSleepPause()
+                        } else {
+                            _sleepTimer.value = null
+                            sleepTimerJob = null
+                            PlaybackService.sharedEq.setSleepFade(1.0)
+                            com.lofipod.app.audio.AudioChainTelemetry.logEvent(
+                                "sleep_timer", "expired while paused — stood down"
+                            )
+                        }
+                        return@launch
+                    }
+                    !playing -> {
+                        if (st.fading) {
+                            PlaybackService.sharedEq.setSleepFade(1.0)
+                            _sleepTimer.value = st.copy(fading = false)
+                        }
+                    }
+                    wallRemaining <= SLEEP_FADE_MS -> {
+                        // Recomputed from remaining each tick (not a
+                        // monotonic decrement) so a seek backward out of an
+                        // end-of-episode fade window restores gain.
+                        val progress = 1.0 - wallRemaining.toDouble() / SLEEP_FADE_MS
+                        PlaybackService.sharedEq.setSleepFade(
+                            0.5 + 0.5 * kotlin.math.cos(Math.PI * progress)
+                        )
+                        if (!st.fading) _sleepTimer.value = st.copy(fading = true)
+                    }
+                    else -> {
+                        if (st.fading) {
+                            // Seeked back out of the window: full volume.
+                            PlaybackService.sharedEq.setSleepFade(1.0)
+                            _sleepTimer.value = st.copy(fading = false)
+                        }
+                    }
+                }
+                kotlinx.coroutines.delay(SLEEP_FADE_TICK_MS)
+            }
+        }
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        if (_sleepTimer.value != null) {
+            _sleepTimer.value = null
+            com.lofipod.app.audio.AudioChainTelemetry.logEvent("sleep_timer", "cancelled")
+        }
+        PlaybackService.sharedEq.setSleepFade(1.0)
+    }
+
+    /**
+     * The sleep auto-pause. Order matters: pre-clear the state (no
+     * intercept path may misread this pause), pause, RESET the fade so a
+     * manual resume is full volume, then flush — the enlarged sink buffer
+     * holds up to ~3s of already-faded PCM, and without the flush a quick
+     * resume replays seconds of near-silence.
+     */
+    private fun fireSleepPause(flush: Boolean = true) {
+        _sleepTimer.value = null
+        sleepTimerJob = null
+        controller?.pause()
+        PlaybackService.sharedEq.setSleepFade(1.0)
+        // No flush at natural STATE_ENDED: the fade already completed as
+        // the stream drained, and flushAudio's tiny backward seek would
+        // pull the player OUT of ENDED (breaking next-session semantics).
+        if (flush) flushAudio(50)
+        com.lofipod.app.audio.AudioChainTelemetry.logEvent("sleep_timer", "fired — paused")
     }
 
     /**
@@ -2497,6 +2667,11 @@ class PlayerController(private val context: Context) {
         const val AUTOPLAY_CONFIRM_SECOND_BEEP_MS = 120_000L
         const val AUTOPLAY_CONFIRM_THIRD_BEEP_MS = 180_000L
         const val AUTOPLAY_CONFIRM_TOTAL_MS = 190_000L
+
+        /** Sleep-timer fade window + tick. 30s half-cosine at 4Hz steps —
+         *  ~0.23 dB max per-step delta mid-fade, inaudible on speech. */
+        const val SLEEP_FADE_MS = 30_000L
+        const val SLEEP_FADE_TICK_MS = 250L
     }
 }
 
@@ -2508,6 +2683,22 @@ class PlayerController(private val context: Context) {
  * [startedAtElapsedMs] — pulling once per frame inside Compose is cheaper than
  * having the controller emit a tick per second.
  */
+/** What ends playback: a wall-clock countdown or the current episode. */
+sealed interface SleepTimerMode {
+    data class Minutes(val minutes: Int) : SleepTimerMode
+    data object EndOfEpisode : SleepTimerMode
+}
+
+data class SleepTimerState(
+    val mode: SleepTimerMode,
+    val startedAtElapsedMs: Long,
+    /** Absolute elapsedRealtime deadline; null for EndOfEpisode (computed
+     *  live from the player each tick). UI derives the countdown from
+     *  this — same doctrine as [AutoplayTimerState]. */
+    val endAtElapsedMs: Long?,
+    val fading: Boolean = false,
+)
+
 data class AutoplayTimerState(
     val episodeGuid: String,
     val startedAtElapsedMs: Long,
@@ -2545,6 +2736,9 @@ data class PlayerState(
     val currentArtist: String? = null,
     val currentArtworkUri: String? = null,
     val currentEpisodeGuid: String? = null,
+    /** Embedded ID3 chapters of the current item (empty when none). Read
+     *  service-side via [ChapterBridge] — see its docstring for why. */
+    val chapters: List<PodChapter> = emptyList(),
     /**
      * Feed URL of the currently-loaded episode, when known. Used by the
      * UI's back-from-Player handler to route the user to the matching

@@ -2,6 +2,81 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.26 (pending tag) — Study sheets, structured scrubber, sleep timer, chapters, description search (2026-07-11)
+
+The "study instrument" batch — planned by three parallel design agents,
+coded one feature at a time, 2-angle reviewed before commit.
+
+### Study sheets (share/StudySheet.kt, StudySheetUi.kt)
+
+One tap (share icon on the Notes screen top bar + the Player Notes tab)
+exports a markdown study sheet: title/speaker/date/scripture header,
+the user's notes in POSITION order with timestamps, and — when a
+transcript is cached — optional inclusion modes chosen in a dialog:
+notes only / notes + cited paragraphs / notes + full transcript
+(citations by paragraph number in full mode). Paragraph matching is a
+proportional position estimate (transcripts carry no timestamps) and
+says so, per-citation and in the footer. Shared via the existing
+FileProvider (new study_sheets cache-path) with EXTRA_TEXT fallback
+under 200KB (Binder limit guard). Device files degrade to title+notes.
+
+### Structured scrubber (StructuredScrubber.kt + episode_heat)
+
+The Player's Slider is replaced (live mode; preview keeps a read-only
+Slider) by a 48dp-touch/30dp-visual track with three layers:
+- REPLAY HEATMAP: new episode_heat table (200 CSV buckets/episode, DB
+  v17→v18 migration), incremented by the service's 10s save ticker
+  (listen ticks only; mutex-serialized), sqrt-normalized color overlay,
+  live-updating via Room Flow.
+- PAUSE TICKS: PauseTapProcessor gained snapshotPauses(); paragraph
+  boundaries render as ticks (progressively, as decoded this session).
+- SCRIPTURE MARKERS: chapter:verse landmarks from the CACHED transcript
+  (never fetches): written citations via ScriptureTagger.findAllRefs +
+  spoken "chapter nineteen, verse two" phrasing via the new
+  SpokenScriptureExtractor (number-words to 99, book-scoped via kabod
+  metadata, rolling last-chapter for bare "verse N"). Paragraph-
+  proportional positions — landmarks, not dividers; tap seeks + shows
+  a label bubble; capped at 40, cross-book refs excluded when the
+  episode's book is known.
+Drag scrubs (seek fires on release only), tap seeks, marker taps win
+within 16dp.
+
+### Sleep timer (fade via EqAudioProcessor.setSleepFade)
+
+Player overflow → 15/30/45/60 min or End of episode. Final 30s is a
+half-cosine fade stepped at 4Hz through a new sleepFadeLinear volatile,
+folded into ALL output paths — the three DSP gain sites AND the
+bit-exact passthrough copy loop (per-episode EQ-disable bypasses the
+DSP path entirely, so the fold alone would have missed it). On fire:
+pause, fade reset to 1.0, pipeline flush (skipped at natural episode
+end so ENDED state survives). End-of-episode mode recomputes remaining
+each tick (seeks self-correct, speed-aware); it also suppresses
+auto-advance, and arming suppresses the autoplay-confirm beeps.
+Manual pause cancels the timer (togglePlay now routes through the
+pause() wrapper — review caught it bypassing); non-wrapper pauses
+(audio focus, BT) hold the fade and stand down quietly if the timer
+expires while paused. Countdown chip next to the speed chip.
+
+### Chapters + description search
+
+- ID3 CHAP chapters: read SERVICE-side from the real player's track
+  formats (Format.metadata doesn't survive MediaController marshaling)
+  via the new ChapterBridge; surfaced in PlayerState.chapters and
+  rendered as a tappable list in the Details tab. ≥2 chapters required
+  (degenerate single-CHAP encoders ignored). MP3/ID3 only by design.
+- Search now also matches episode DESCRIPTIONS: stripped + lowercased
+  index built once per cache snapshot off-main (new util/Html.kt
+  stripHtmlToPlainText — the extracted third copy of the strip chain),
+  two-pass so title hits never lose cap space, "in description" badge.
+
+### Post-review fixes (2-angle)
+
+Scrubber thumb no longer snaps to the playhead mid-drag (dragFrac was
+cleared by every position poll); gesture math uses the pointer scope's
+own size; sleep-timer contract violations fixed (see above); heat
+recorder mutex-serialized (overlapping IO ticks could cross-contaminate
+episode rows across a transition).
+
 ## v0.10.25 (pending tag) — Bulk unplayed/queue, smart resume, mark-a-moment, transcript search (2026-07-11)
 
 Quality-of-life batch + the first "next plane" feature (transcript

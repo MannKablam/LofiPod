@@ -44,6 +44,12 @@ fun NotesScreen(
     var editEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var deleteEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var resumeAfterDialog by remember { mutableStateOf(false) }
+    var studySheetGuid by remember { mutableStateOf<String?>(null) }
+
+    StudySheetDialogHost(
+        episodeGuid = studySheetGuid,
+        onDone = { studySheetGuid = null },
+    )
 
     fun openAdd() {
         if (pauseOnNote && controller.state.value.isPlaying) {
@@ -76,6 +82,17 @@ fun NotesScreen(
                     }
                 },
                 actions = {
+                    // Study sheet export — the whole point of taking notes.
+                    // Disabled until there's at least one note to export.
+                    IconButton(
+                        onClick = { studySheetGuid = episodeGuid },
+                        enabled = entries.isNotEmpty(),
+                    ) {
+                        Icon(
+                            painterResource(R.drawable.share_24),
+                            contentDescription = "Share study sheet"
+                        )
+                    }
                     IconButton(onClick = ::openAdd) {
                         Icon(painterResource(R.drawable.add_24), contentDescription = "Add note")
                     }

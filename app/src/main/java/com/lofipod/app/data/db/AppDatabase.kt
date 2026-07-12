@@ -472,9 +472,10 @@ interface LofiDownloadDao {
         EpisodeTranscriptEntity::class,
         AutoDownloadEntity::class,
         EpisodeScriptureEntity::class,
-        LofiDownloadEntity::class
+        LofiDownloadEntity::class,
+        EpisodeHeatEntity::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -491,6 +492,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun autoDownloadDao(): AutoDownloadDao
     abstract fun episodeScriptureDao(): EpisodeScriptureDao
     abstract fun lofiDownloadDao(): LofiDownloadDao
+    abstract fun episodeHeatDao(): EpisodeHeatDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -843,6 +845,28 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v17 → v18: episode_heat table — per-episode listen-intensity
+         * buckets (200 CSV ints) powering the structured scrubber's
+         * replay heatmap. Populated by PlaybackService's 10s save ticker;
+         * empty on migration (no historical per-position data exists to
+         * backfill). Derived analytics — excluded from Backup.kt's
+         * curated export set on purpose.
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_heat (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        bucketsCsv TEXT NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
          * v15 → v16: add lofi_download table. The OkHttp-based downloader's
          * persistent state — replaces Media3's StandaloneDatabaseProvider +
          * DownloadIndex which we ditched in v0.6.9 after four versions of
@@ -946,7 +970,8 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_9_10), timed(MIGRATION_10_11),
                         timed(MIGRATION_11_12), timed(MIGRATION_12_13),
                         timed(MIGRATION_13_14), timed(MIGRATION_14_15),
-                        timed(MIGRATION_15_16), timed(MIGRATION_16_17)
+                        timed(MIGRATION_15_16), timed(MIGRATION_16_17),
+                        timed(MIGRATION_17_18)
                     )
                     .build().also { instance = it }
             }

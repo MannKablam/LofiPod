@@ -42,6 +42,11 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var saveTickerJob: Job? = null
+    // Replay-heatmap write-side. Lazy: touching the DB in field init would
+    // race Room's create path on cold start; first use is a ticker tick.
+    private val heatRecorder by lazy {
+        com.lofipod.app.data.EpisodeHeatRecorder((application as LofiPodApp).db)
+    }
 
     /**
      * Held while the player is actively playing. Acquiring a PARTIAL_WAKE_LOCK
@@ -238,6 +243,46 @@ class PlaybackService : MediaSessionService() {
                 // New item ⇒ old pauses are meaningless.
                 sharedPauseTap.clearPauses()
                 sharedPauseTap.postAnchor(player.currentPosition)
+                // Never show stale chapters against the wrong episode.
+                ChapterBridge.chapters.value = null
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                // ID3 CHAP frames ride the audio track's Format.metadata on
+                // progressive MP3. Read them HERE (the real player) — the
+                // MediaController side never sees Format.metadata (dropped
+                // in binder marshaling). See ChapterBridge.
+                val found = mutableListOf<PodChapter>()
+                for (group in tracks.groups) {
+                    if (group.type != C.TRACK_TYPE_AUDIO) continue
+                    for (i in 0 until group.length) {
+                        val md = group.getTrackFormat(i).metadata ?: continue
+                        for (e in 0 until md.length()) {
+                            val entry = md.get(e)
+                            if (entry is androidx.media3.extractor.metadata.id3.ChapterFrame) {
+                                var title: String? = null
+                                for (s in 0 until entry.subFrameCount) {
+                                    val sub = entry.getSubFrame(s)
+                                    if (sub is androidx.media3.extractor.metadata.id3.TextInformationFrame &&
+                                        sub.id == "TIT2"
+                                    ) {
+                                        title = sub.values.firstOrNull()
+                                        break
+                                    }
+                                }
+                                val startMs = entry.startTimeMs.toLong()
+                                if (startMs >= 0) found.add(PodChapter(title, startMs))
+                            }
+                        }
+                    }
+                }
+                // Guard against degenerate single-CHAP encoders: one chapter
+                // spanning the whole file is noise, not navigation.
+                if (found.size >= 2) {
+                    val id = player.currentMediaItem?.mediaId ?: return
+                    ChapterBridge.chapters.value =
+                        ChapterPayload(id, found.sortedBy { it.startMs })
+                }
             }
 
             override fun onPositionDiscontinuity(
@@ -516,6 +561,13 @@ class PlaybackService : MediaSessionService() {
             val dao = (application as LofiPodApp).db.episodeStateDao()
             if (dao.get(id) != null) {
                 dao.updatePosition(id, pos, dur, now, listenDelta)
+            }
+            // Replay heatmap: only real listen ticks accrue heat —
+            // listenDelta == 0 is a save-on-pause/destroy snapshot where no
+            // time elapsed under this bucket. Raw player position on
+            // purpose (heat is persistence-domain, like updatePosition).
+            if (listenDelta > 0) {
+                heatRecorder.tick(id, pos, dur)
             }
         }
     }

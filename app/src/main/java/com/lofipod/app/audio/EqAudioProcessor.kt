@@ -201,6 +201,22 @@ class EqAudioProcessor : BaseAudioProcessor() {
     }
     fun setGainDb(db: Float) { gainDb = db.coerceIn(-12f, 12f) }
 
+    /**
+     * Sleep-timer fade multiplier (1.0 = none). Owned by the sleep timer
+     * in PlayerController, which steps it along a half-cosine every 250ms
+     * during the final fade window and RESETS it to 1.0 on pause/cancel.
+     * Deliberately a dumb multiplier here — no ramp state, no curve.
+     * Applied in every output path INCLUDING the bit-exact passthrough
+     * copy (per-episode "Disable EQ" short-circuits before
+     * isPassthroughEffective, so the DSP-path fold alone would silently
+     * skip fading on EQ-disabled episodes).
+     */
+    @Volatile private var sleepFadeLinear: Double = 1.0
+    fun setSleepFade(fade: Double) {
+        sleepFadeLinear = fade.coerceIn(0.0, 1.0)
+    }
+    fun currentSleepFade(): Double = sleepFadeLinear
+
     /** Low-cut (high-pass) corner in Hz; 0 disables. Takes effect next buffer. */
     fun setLowCutHz(hz: Float) {
         val v = if (hz <= 0f) 0f else hz.coerceIn(20f, 300f)
@@ -413,6 +429,10 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (gainDb != 0f) return false
         if (toneActive()) return false
         if (voiceActive()) return false
+        // Mid-fade the chain is audibly attenuating — not passthrough.
+        // (The passthrough copy loop ALSO multiplies the fade, covering
+        // the !enabled gate that short-circuits before this check.)
+        if (sleepFadeLinear != 1.0) return false
         val current = bands
         for (b in current) if (b.gainDb != 0f) return false
         return true
@@ -692,8 +712,19 @@ class EqAudioProcessor : BaseAudioProcessor() {
             val src = inputBuffer.order(ByteOrder.nativeOrder())
             val byteCount = src.remaining()
             val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
-            while (src.hasRemaining()) {
-                out.putShort(src.short)
+            // Sleep fade applies even on the bit-exact path — one snapshot
+            // per buffer, one multiply per short when engaged. fade==1.0
+            // keeps the copy bit-identical (no float round-trip).
+            val fade = sleepFadeLinear
+            if (fade == 1.0) {
+                while (src.hasRemaining()) {
+                    out.putShort(src.short)
+                }
+            } else {
+                while (src.hasRemaining()) {
+                    val v = (src.short * fade).toInt().coerceIn(-32768, 32767)
+                    out.putShort(v.toShort())
+                }
             }
             out.flip()
             // Telemetry: mark this buffer as a passthrough hit. The transition
@@ -757,7 +788,9 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // look-ahead limiter → dither → int16. See Biquad.kt for why precision
         // matters at the low end (31/62 Hz); Limiter.kt for why a real limiter
         // replaces the tanh waveshaper that lived here pre-Phase A5.
-        val gainLinear = 10.0.pow(gainDb / 20.0)
+        // Sleep fade folds into the per-buffer gain snapshot — the timer
+        // steps the volatile at 250ms, well above buffer cadence.
+        val gainLinear = 10.0.pow(gainDb / 20.0) * sleepFadeLinear
         val driveScale = 1.0 / 32768.0
         val invDrive = 32767.0
 
@@ -941,7 +974,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
         val src = inputBuffer.order(ByteOrder.nativeOrder())
         val driveScale = 1.0 / 32768.0
         val invDrive = 32767.0
-        val gainLinear = 10.0.pow(gainDb / 20.0)
+        val gainLinear = 10.0.pow(gainDb / 20.0) * sleepFadeLinear
         val applyDcBlocker = dcBlocker
         val applyTone = toneActive()
         if (applyTone) ensureToneCoefficients()
@@ -1057,7 +1090,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
         }
         AudioChainTelemetry.incDrains()
 
-        val gainLinear = 10.0.pow(gainDb / 20.0)
+        val gainLinear = 10.0.pow(gainDb / 20.0) * sleepFadeLinear
         val invDrive = 32767.0
         // Warmth/Air must keep running through the drain: the FIR engine
         // buffers up to ~70 ms of REAL program audio upstream of the 2x

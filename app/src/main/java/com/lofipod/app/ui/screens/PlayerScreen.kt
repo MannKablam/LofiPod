@@ -2,6 +2,7 @@ package com.lofipod.app.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -140,8 +141,13 @@ fun PlayerScreen(
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
     val autoplayTimer by controller.autoplayTimer.collectAsState()
+    val sleepTimerState by controller.sleepTimer.collectAsState()
+    var sleepDialogOpen by remember { mutableStateOf(false) }
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
+    var scrubberPauses by remember {
+        mutableStateOf<List<com.lofipod.app.audio.PauseTapProcessor.PauseSpan>>(emptyList())
+    }
 
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -241,8 +247,31 @@ fun PlayerScreen(
         while (true) {
             positionMs = controller.currentPositionMs()
             durationMs = controller.durationMs()
+            // Scrubber pause ticks ride the same 500ms cadence — a cheap
+            // synchronized copy of the tap's ring, never per-frame.
+            scrubberPauses = com.lofipod.app.player.PlaybackService
+                .sharedPauseTap.snapshotPauses()
             delay(500)
         }
+    }
+
+    // Structured-scrubber data layers (live playback only).
+    // Heat: observe the episode's bucket row — Room re-emits on each 10s
+    // ticker upsert so the just-listened region brightens live.
+    val heatBuckets by remember(state.currentEpisodeGuid) {
+        val g = state.currentEpisodeGuid
+        if (g == null) kotlinx.coroutines.flow.flowOf<IntArray?>(null)
+        else app.db.episodeHeatDao().observe(g)
+            .map { row -> row?.let { com.lofipod.app.data.EpisodeHeatRecorder.decode(it.bucketsCsv) } }
+    }.collectAsState(initial = null)
+    // Scripture markers: one-shot per episode, cached-transcript-only (no
+    // network — transcripts arrive when the user opens the Transcript tab).
+    var scrubberMarkers by remember(state.currentEpisodeGuid) {
+        mutableStateOf<List<ScrubberMarker>>(emptyList())
+    }
+    LaunchedEffect(state.currentEpisodeGuid) {
+        val g = state.currentEpisodeGuid ?: return@LaunchedEffect
+        scrubberMarkers = withContext(Dispatchers.IO) { buildScriptureMarkers(app, g) }
     }
 
     // Re-snapshot the saved position into the displayed values whenever
@@ -501,6 +530,19 @@ fun PlayerScreen(
                                 leadingIcon = { Icon(painterResource(R.drawable.share_24), null) }
                             )
                             DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (sleepTimerState != null) "Sleep timer (on)"
+                                        else "Sleep timer"
+                                    )
+                                },
+                                enabled = !isPreview,
+                                onClick = { menuExpanded = false; sleepDialogOpen = true },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.hourglass_empty_24), null)
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Settings") },
                                 onClick = { menuExpanded = false; onOpenSettings() },
                                 leadingIcon = { Icon(painterResource(R.drawable.settings_24), null) }
@@ -634,20 +676,28 @@ fun PlayerScreen(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                val frac = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
-                Slider(
-                    value = frac.coerceIn(0f, 1f),
-                    onValueChange = { v ->
-                        // Preview slider is read-only — no seek target to apply
-                        // to since nothing is playing. The saved position from
-                        // episode_state is shown for context only.
-                        if (!isPreview && durationMs > 0) {
-                            controller.seekTo((v * durationMs).toLong())
-                        }
-                    },
-                    enabled = !isPreview,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (isPreview) {
+                    // Preview keeps the plain read-only Slider — no live
+                    // pause data, no heat accruing, nothing to structure.
+                    // The saved position from episode_state is context only.
+                    val frac = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
+                    Slider(
+                        value = frac.coerceIn(0f, 1f),
+                        onValueChange = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    StructuredScrubber(
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        heatBuckets = heatBuckets,
+                        pauses = scrubberPauses,
+                        markers = scrubberMarkers,
+                        onSeek = { controller.seekTo(it) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Row(Modifier.fillMaxWidth()) {
                     Text(formatTime(positionMs), style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.weight(1f))
@@ -843,6 +893,34 @@ fun PlayerScreen(
                             speed = state.speed,
                             onPick = { controller.setSpeed(it) }
                         )
+                        // Active sleep-timer readout. Recomposition rides
+                        // the 500ms position poll while playing (the only
+                        // time a timer can be live — manual pause cancels
+                        // it), so the countdown stays fresh without its
+                        // own ticker. Tap to adjust/turn off.
+                        sleepTimerState?.let { st ->
+                            val label = when (st.mode) {
+                                is com.lofipod.app.player.SleepTimerMode.Minutes -> {
+                                    val rem = ((st.endAtElapsedMs ?: 0L) -
+                                        android.os.SystemClock.elapsedRealtime())
+                                        .coerceAtLeast(0L)
+                                    "Sleep %d:%02d".format(rem / 60_000, (rem % 60_000) / 1000)
+                                }
+                                com.lofipod.app.player.SleepTimerMode.EndOfEpisode ->
+                                    "Sleep: end of episode"
+                            }
+                            AssistChip(
+                                onClick = { sleepDialogOpen = true },
+                                label = {
+                                    Text(
+                                        label,
+                                        color = if (st.fading) MaterialTheme.colorScheme.primary
+                                        else LocalContentColor.current,
+                                    )
+                                },
+                                modifier = Modifier.align(Alignment.CenterStart),
+                            )
+                        }
                         if (showFlushButton) {
                             IconButton(
                                 onClick = { controller.flushAudio() },
@@ -872,6 +950,47 @@ fun PlayerScreen(
                 modifier = Modifier.weight(1f).fillMaxWidth()
             )
         }
+    }
+
+    if (sleepDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { sleepDialogOpen = false },
+            title = { Text("Sleep timer") },
+            text = {
+                Column {
+                    Text(
+                        "Playback fades out over the last 30 seconds, then " +
+                            "pauses. Resume is always full volume.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    listOf(15, 30, 45, 60).forEach { min ->
+                        TextButton(onClick = {
+                            controller.startSleepTimer(
+                                com.lofipod.app.player.SleepTimerMode.Minutes(min)
+                            )
+                            sleepDialogOpen = false
+                        }) { Text("$min minutes") }
+                    }
+                    TextButton(onClick = {
+                        controller.startSleepTimer(
+                            com.lofipod.app.player.SleepTimerMode.EndOfEpisode
+                        )
+                        sleepDialogOpen = false
+                    }) { Text("End of episode") }
+                    if (sleepTimerState != null) {
+                        TextButton(onClick = {
+                            controller.cancelSleepTimer()
+                            sleepDialogOpen = false
+                        }) { Text("Turn off") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { sleepDialogOpen = false }) { Text("Cancel") }
+            },
+        )
     }
 
     if (pauseSkipDialogOpen) {
@@ -1161,6 +1280,12 @@ private fun NotesTab(
     var editEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var deleteEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var resumeAfterDialog by remember { mutableStateOf(false) }
+    var studySheetGuid by remember { mutableStateOf<String?>(null) }
+
+    StudySheetDialogHost(
+        episodeGuid = studySheetGuid,
+        onDone = { studySheetGuid = null },
+    )
 
     fun pauseIfWanted() {
         if (pauseOnNote && controller.state.value.isPlaying) {
@@ -1204,6 +1329,17 @@ private fun NotesTab(
                         else LocalContentColor.current,
                 modifier = Modifier.weight(1f)
             )
+            // Study sheet export — enabled once there are notes to export.
+            IconButton(
+                onClick = { studySheetGuid = episodeGuid },
+                enabled = entries.isNotEmpty(),
+            ) {
+                Icon(
+                    painterResource(R.drawable.share_24),
+                    contentDescription = "Share study sheet",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             // "Add note" needs a live playback position to anchor against.
             // In preview the button is disabled — past notes still surface
             // below and remain tappable to jump-and-play.
@@ -1382,6 +1518,37 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
+            }
+        }
+
+        // Embedded ID3 chapters (v0.11), when the CURRENT item carries
+        // them and this Details tab is showing that item. Tap to seek —
+        // controller.seekTo is latency-compensated.
+        val liveState by controller.state.collectAsState()
+        if (liveState.currentEpisodeGuid == episodeGuid && liveState.chapters.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text("Chapters", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            liveState.chapters.forEachIndexed { i, chp ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { controller.seekTo(chp.startMs) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        formatTime(chp.startMs),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        chp.title ?: "Chapter ${i + 1}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                    )
+                }
             }
         }
 
