@@ -14,13 +14,18 @@ Single user.
 - **`main`** — updated **only on minor-version bumps** (e.g. 0.3.x → 0.4.0).
   Represents the stable release line.
 
-**Default rule: commit + push to `dev`, then cut the next patch tag so the
-build reaches the device.** Tagging is NOT optional cleanup — the in-app
-updater only sees tagged GitHub Releases, so an untagged commit on `dev`
-never ships to the phone (this is how the user actually receives updates).
-After landing a meaningful change, tag `v<next-patch>` and push the tag (see
-below). Don't touch `main` unless the user explicitly says "minor bump";
-`main` only catches up at minor-bump time via a deliberate merge.
+**Default rule: commit + push to `dev`. Do NOT tag.** Ongoing commits on
+`dev` are just changes to the app — hardly distinct versions, not releases.
+Keep development going untagged until the user decides a build is ready for
+the device.
+
+**Tag ONLY when the user says "ship it."** That phrase is the explicit signal
+that the current build is intended to hit the device: cut the next patch tag
+`v<next-patch>` and push it (see below). The in-app updater only sees tagged
+GitHub Releases, so the tag is what actually delivers the build to the phone.
+Without "ship it," leave it on `dev`. Don't touch `main` unless the user
+explicitly says "minor bump"; `main` only catches up at minor-bump time via a
+deliberate merge.
 
 ## Shipping a patch release
 
@@ -35,8 +40,7 @@ Tag push triggers `.github/workflows/release.yml`, which builds a signed APK,
 generates `latest.json`, and creates a GitHub Release. The in-app updater
 (Settings → Updates) picks it up at the next 23:59 nightly check, or on demand
 via the "Check now" button. Releases are the visible delivery surface; commits
-on `dev` are the source — which is why every landed change gets a tag, not
-just occasional ones.
+on `dev` are the source. Tagging happens on "ship it," not automatically.
 
 ## Versioning
 
