@@ -47,6 +47,26 @@ class PlayerController(private val context: Context) {
     private var controller: MediaController? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    // ---- Smart resume (v0.11) ----
+    // On resume, step back proportionally to how long the listener was
+    // away so the thread of the sermon is re-established without manual
+    // rewinding: nothing under 15s, ~3s after a minute, up to ~45s after
+    // a day. In-session pauses are tracked via onIsPlayingChanged (covers
+    // UI, notification, BT and focus-loss pauses alike); cross-session
+    // resumes derive the gap from episode_state.lastPlayedMillis in
+    // [playEpisode]. Toggleable in Settings (default on).
+    private var pausedAtWallClockMs = 0L
+    private var pausedGuid: String? = null
+    @Volatile private var smartResumeEnabled = true
+
+    init {
+        scope.launch {
+            com.lofipod.app.data.Settings(context.applicationContext)
+                .smartResumeEnabled.collect { smartResumeEnabled = it }
+        }
+    }
+
     private val dao: EpisodeStateDao
         get() = (context.applicationContext as LofiPodApp).db.episodeStateDao()
     private val checkpointDao: PlaybackCheckpointDao
@@ -495,6 +515,13 @@ class PlayerController(private val context: Context) {
             if (isPlaying) {
                 lastForwardProgressPosMs = controller?.currentPosition ?: 0L
                 lastForwardProgressAtMs = System.currentTimeMillis()
+            } else {
+                // Smart resume: remember when (and for which episode) audio
+                // stopped. Listener-level so pauses from the notification,
+                // Bluetooth, and audio-focus loss count too — not just the
+                // in-app pause button.
+                pausedAtWallClockMs = System.currentTimeMillis()
+                pausedGuid = controller?.currentMediaItem?.mediaId
             }
         }
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -817,7 +844,18 @@ class PlayerController(private val context: Context) {
                         checkpointDao.pruneToCount(CHECKPOINT_CAP)
                     }
                     val dur = existing.durationMs
-                    if (dur > 0 && existing.positionMs >= dur - 5_000) 0L else existing.positionMs
+                    val base =
+                        if (dur > 0 && existing.positionMs >= dur - 5_000) 0L
+                        else existing.positionMs
+                    // Smart resume across sessions: the same back-step curve
+                    // the in-session resume uses, keyed off how long ago the
+                    // position was last saved. forcedStartMs jumps (notes,
+                    // checkpoints) bypass this via the `?:` below — a jump
+                    // target is exact by definition.
+                    if (base > 0 && smartResumeEnabled && existing.lastPlayedMillis > 0) {
+                        val awayMs = System.currentTimeMillis() - existing.lastPlayedMillis
+                        (base - smartResumeBackStepMs(awayMs)).coerceAtLeast(0L)
+                    } else base
                 }
             }
 
@@ -1291,7 +1329,10 @@ class PlayerController(private val context: Context) {
                 )
                 c.play()  // keeps playWhenReady=true; harmless in BUFFERING.
             }
-            else -> c.play()
+            else -> {
+                applySmartResumeBackStep(c)
+                c.play()
+            }
         }
     }
 
@@ -1299,11 +1340,52 @@ class PlayerController(private val context: Context) {
         val c = controller ?: return
         // Same recovery logic as togglePlay's play branch — a bare
         // `c.play()` is a no-op in IDLE / ENDED.
+        //
+        // Deliberately NO smart-resume back-step here: play() is the
+        // programmatic resume (note-dialog close, internal flows) where
+        // the listener never left — rewinding after they just spent 30s
+        // typing a note would desync playback from the moment they
+        // marked. The back-step belongs to togglePlay, the explicit
+        // "I'm back" tap. Consume the pause stamp so a LATER togglePlay
+        // doesn't back-step for a pause window the user sat through.
+        pausedAtWallClockMs = 0L
         when (c.playbackState) {
             Player.STATE_IDLE -> { c.prepare(); c.play() }
             Player.STATE_ENDED -> { c.seekTo(0); c.play() }
             else -> c.play()
         }
+    }
+
+    /**
+     * Back-step curve for smart resume: how much lead-in to replay after
+     * being away for [elapsedMs]. Tuned for spoken word — enough to
+     * re-establish the sentence/argument, never so much it feels like a
+     * rewind. Under 15s away costs nothing (quick pauses stay exact).
+     */
+    private fun smartResumeBackStepMs(elapsedMs: Long): Long = when {
+        elapsedMs < 15_000L -> 0L
+        elapsedMs < 60_000L -> 3_000L
+        elapsedMs < 10 * 60_000L -> 8_000L
+        elapsedMs < 60 * 60_000L -> 15_000L
+        elapsedMs < 8 * 60 * 60_000L -> 30_000L
+        else -> 45_000L
+    }
+
+    /**
+     * Apply the smart-resume back-step for an in-session resume of the
+     * SAME episode that was paused. One-shot: the recorded pause time is
+     * consumed so repeated play taps don't stack rewinds.
+     */
+    private fun applySmartResumeBackStep(c: MediaController) {
+        if (!smartResumeEnabled) return
+        if (pausedAtWallClockMs <= 0L) return
+        val guid = c.currentMediaItem?.mediaId
+        val elapsed = System.currentTimeMillis() - pausedAtWallClockMs
+        pausedAtWallClockMs = 0L
+        if (guid == null || guid != pausedGuid) return
+        val step = smartResumeBackStepMs(elapsed)
+        if (step <= 0L) return
+        c.seekTo((c.currentPosition - step).coerceAtLeast(0L))
     }
     fun pause() {
         // Explicit pause cancels any active autoplay-confirmation window —

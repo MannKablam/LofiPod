@@ -401,6 +401,39 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
+                    // Mark this moment (v0.11): one tap drops a timestamped
+                    // note with a canned body — no keyboard, designed for
+                    // driving/walking. Expand it later from the Notes tab
+                    // (it's an ordinary note: jumpable, editable, shareable).
+                    // Live playback only — a moment needs a playhead.
+                    if (!isPreview && state.currentEpisodeGuid != null) {
+                        IconButton(onClick = {
+                            val guid = state.currentEpisodeGuid ?: return@IconButton
+                            val posMs = controller.currentPositionMs()
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    app.db.episodeNoteEntryDao().upsert(
+                                        EpisodeNoteEntryEntity(
+                                            guid = guid,
+                                            createdAt = System.currentTimeMillis(),
+                                            playbackPosMs = posMs,
+                                            text = "Marked while listening",
+                                        )
+                                    )
+                                }
+                                snackbarHostState.showSnackbar(
+                                    "Moment marked at ${formatTime(posMs)}"
+                                )
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.note_add_24),
+                                contentDescription = "Mark this moment",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    }
                     // Home moved to navigationIcon slot (far left) in
                     // v0.10.15 — see the navigationIcon block above. The
                     // actions row now starts directly with My lists.

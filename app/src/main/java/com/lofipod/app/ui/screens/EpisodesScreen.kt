@@ -353,6 +353,101 @@ fun EpisodesScreen(
                                 modifier = Modifier.size(26.dp),
                             )
                         }
+                        // Overflow: the less-frequent bulk actions live in a
+                        // labeled menu — five bare icons would crowd a 360dp
+                        // top bar, and "mark unplayed" needs words to not be
+                        // mistaken for a rewind. Box wrapper anchors the menu
+                        // to this icon (matches the app's other overflows).
+                        var bulkMenuOpen by remember { mutableStateOf(false) }
+                        Box {
+                        IconButton(onClick = { bulkMenuOpen = true }) {
+                            Icon(
+                                painterResource(R.drawable.more_vert_24),
+                                contentDescription = "More bulk actions",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = bulkMenuOpen,
+                            onDismissRequest = { bulkMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Mark as unplayed") },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.replay_24), contentDescription = null)
+                                },
+                                onClick = {
+                                    bulkMenuOpen = false
+                                    val targets = selection.toList()
+                                    selection = emptySet()
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            val dao = app.db.episodeStateDao()
+                                            val now = System.currentTimeMillis()
+                                            for (g in targets) {
+                                                val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                                upsertState(app, ep, pod)
+                                                // Position back to zero; PRESERVE the
+                                                // known duration (updatePosition writes
+                                                // durationMs unconditionally, and the DB
+                                                // often knows a duration the UI-state
+                                                // map doesn't — zeroing it would break
+                                                // isPlayed/progress/auto-archive for
+                                                // this episode permanently).
+                                                val dbDur = dao.get(g)?.durationMs?.takeIf { it > 0 }
+                                                val dur = dbDur
+                                                    ?: episodeStates[g]?.durationMs?.takeIf { it > 0 }
+                                                    ?: ep.durationSeconds?.let { it * 1000L }
+                                                    ?: 0L
+                                                dao.updatePosition(
+                                                    guid = g,
+                                                    pos = 0L,
+                                                    dur = dur,
+                                                    now = now,
+                                                    listenDelta = 0L,
+                                                )
+                                            }
+                                        }
+                                        for (g in targets) {
+                                            val s = episodeStates[g] ?: EpisodeUiState()
+                                            episodeStates[g] = s.copy(positionMs = 0L)
+                                        }
+                                        snackbarHostState.showSnackbar("Marked ${targets.size} unplayed")
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Add to queue") },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.playlist_add_24), contentDescription = null)
+                                },
+                                onClick = {
+                                    bulkMenuOpen = false
+                                    val targets = selection.toList()
+                                    selection = emptySet()
+                                    scope.launch {
+                                        val p = pod ?: return@launch
+                                        var added = 0
+                                        val queued = queueSet
+                                        for (g in targets) {
+                                            if (g in queued) continue
+                                            val ep = p.episodes.find { it.guid == g } ?: continue
+                                            controller.enqueue(
+                                                ep,
+                                                podcastTitle = p.title,
+                                                podcastArt = p.artworkUrl,
+                                            )
+                                            added++
+                                        }
+                                        snackbarHostState.showSnackbar(
+                                            if (added == targets.size) "Queued $added"
+                                            else "Queued $added of ${targets.size} (rest already queued)"
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        }
                     }
                 )
             } else {

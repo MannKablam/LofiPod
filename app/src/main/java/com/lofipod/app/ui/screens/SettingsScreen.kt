@@ -66,6 +66,7 @@ fun SettingsScreen(
     val autoPlayNextInFeed by settings.autoPlayNextInFeed.collectAsState(initial = true)
     val autoplayConfirmEnabled by settings.autoplayConfirmEnabled.collectAsState(initial = true)
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
+    val smartResume by settings.smartResumeEnabled.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val textScale by settings.textScale.collectAsState(initial = 1.0f)
 
@@ -133,6 +134,15 @@ fun SettingsScreen(
                 subtitle = "Already-finished episodes stay visible (dimmed and " +
                     "struck through) instead of disappearing from the per-podcast list.",
                 onCheckedChange = { v -> scope.launch { settings.setShowPlayedInList(v) } }
+            )
+            SwitchRow(
+                checked = smartResume,
+                title = "Smart resume",
+                subtitle = "After a pause, playback steps back a little before " +
+                    "continuing — nothing for quick pauses, a few seconds after " +
+                    "minutes away, up to 45 seconds after a day — so the thread " +
+                    "of the message is re-established without manual rewinding.",
+                onCheckedChange = { v -> scope.launch { settings.setSmartResumeEnabled(v) } }
             )
 
             Spacer(Modifier.height(8.dp))

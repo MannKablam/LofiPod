@@ -500,6 +500,10 @@ private fun AppNav(
                     onBack = { smartBack(nav, "search") },
                     onOpenPlayer = {
                         nav.navigate("player") { launchSingleTop = true }
+                    },
+                    onOpenTranscript = { guid ->
+                        val encoded = URLEncoder.encode(guid, "UTF-8")
+                        nav.navigate("player/transcript/$encoded")
                     }
                 )
             }

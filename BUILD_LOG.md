@@ -2,6 +2,41 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.25 (pending tag) — Bulk unplayed/queue, smart resume, mark-a-moment, transcript search (2026-07-11)
+
+Quality-of-life batch + the first "next plane" feature (transcript
+search). Note: bulk mark-PLAYED already existed (selection-mode
+check-circle icon, v0.10.15); this round adds its missing counterparts.
+
+- **Bulk actions**: selection-mode top bar gains a labeled overflow menu
+  with "Mark as unplayed" (position→0, duration PRESERVED — read from
+  the DB, not the possibly-stale UI map) and "Add to queue" (skips
+  already-queued; snackbar counts).
+- **Smart resume** (Settings → Playback, default on): resuming after a
+  pause steps back by an away-time curve — nothing under 15s, 3s after
+  a minute, 8s/15s/30s at 10min/1h/8h, 45s beyond — in-session (pause
+  tracked at the listener level, so notification/BT/focus-loss pauses
+  count) AND across sessions (derived from lastPlayedMillis in
+  playEpisode). Note-jumps/checkpoint jumps stay exact (forcedStartMs
+  bypass), and programmatic play() resumes (note-dialog close) are
+  deliberately exact too — the back-step belongs to the explicit
+  resume tap only.
+- **Mark this moment**: one-tap note_add button in the player top bar
+  drops a "Marked while listening" note at the current position — no
+  keyboard, built for driving; expand it later from the Notes tab like
+  any note (jumpable, editable, shareable).
+- **Transcript search**: the Search screen now also searches INSIDE
+  every transcript ever fetched (Room LIKE over the stored paragraphs,
+  debounced 250ms, 3+ chars). Hits render under an "In transcripts"
+  header with a word-boundary snippet and term highlight; tap opens
+  the episode's transcript. Entirely on-device.
+- Post-review fixes: bulk mark-unplayed no longer zeroes a DB-known
+  duration (would have permanently broken isPlayed/auto-archive for
+  the row); play() back-step removed (note-dialog resume desync);
+  overflow menu Box-anchored; snippet highlight uses the trimmed
+  needle. Accepted: SQL LIKE wildcard needles (%/_) over-match then
+  drop — quirky but harmless.
+
 ## v0.10.24 (pending tag) — Chanski Leviticus pack v2: refs re-based on SermonAudio (2026-07-11)
 
 Audit of the Mark Chanski Leviticus pack against SermonAudio series

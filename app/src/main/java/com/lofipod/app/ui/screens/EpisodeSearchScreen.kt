@@ -40,6 +40,7 @@ fun EpisodeSearchScreen(
     controller: PlayerController,
     onBack: () -> Unit,
     onOpenPlayer: () -> Unit,
+    onOpenTranscript: (String) -> Unit = {},
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
     var query by remember { mutableStateOf("") }
@@ -66,6 +67,40 @@ fun EpisodeSearchScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // Transcript full-text search (v0.11). Hits the DB (unlike the title
+    // search) so it's debounced and gated to 3+ chars. Searches every
+    // transcript ever fetched — "where did he say <word>" across the whole
+    // listening history, entirely on-device.
+    val epByGuid = remember(allPods) {
+        buildMap {
+            for (pod in allPods) for (ep in pod.episodes) put(ep.guid, Match(pod, ep))
+        }
+    }
+    var transcriptHits by remember { mutableStateOf<List<TranscriptHit>>(emptyList()) }
+    LaunchedEffect(query) {
+        val needle = query.trim()
+        if (needle.length < 3) {
+            transcriptHits = emptyList()
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(250)  // debounce keystrokes before hitting Room
+        transcriptHits = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.db.episodeTranscriptDao().search(needle, limit = 40).mapNotNull { row ->
+                val snippet = transcriptSnippet(row.paragraphsJson, needle) ?: return@mapNotNull null
+                val match = epByGuid[row.guid]
+                val title = match?.episode?.title
+                    ?: app.db.episodeStateDao().get(row.guid)?.title
+                    ?: return@mapNotNull null
+                TranscriptHit(
+                    guid = row.guid,
+                    episodeTitle = title,
+                    podcastTitle = match?.podcast?.title,
+                    snippet = snippet,
+                )
             }
         }
     }
@@ -117,12 +152,14 @@ fun EpisodeSearchScreen(
                     "Type to search across $totalEpisodeCount cached episode${if (totalEpisodeCount == 1) "" else "s"}."
                 )
 
-                results.isEmpty() -> EmptyState("No matches.")
+                results.isEmpty() && transcriptHits.isEmpty() -> EmptyState("No matches.")
 
                 else -> {
                     Text(
-                        "${results.size} match${if (results.size == 1) "" else "es"}" +
-                            if (results.size >= 200) " (capped)" else "",
+                        "${results.size} title match${if (results.size == 1) "" else "es"}" +
+                            (if (results.size >= 200) " (capped)" else "") +
+                            (if (transcriptHits.isNotEmpty())
+                                "  ·  ${transcriptHits.size} in transcripts" else ""),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -148,6 +185,28 @@ fun EpisodeSearchScreen(
                                     onOpenPlayer()
                                 }
                             )
+                        }
+                        if (transcriptHits.isNotEmpty()) {
+                            item(key = "transcript-header") {
+                                Text(
+                                    "In transcripts",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                                )
+                            }
+                            items(transcriptHits, key = { "t:" + it.guid }) { hit ->
+                                TranscriptHitCard(
+                                    hit = hit,
+                                    // Trimmed needle — the DB search trims, so a
+                                    // trailing space in the box must not defeat
+                                    // the highlight.
+                                    highlighted = highlightedTitle(
+                                        hit.snippet, query.trim(), highlightBg, highlightFg
+                                    ),
+                                    onOpen = { onOpenTranscript(hit.guid) },
+                                )
+                            }
                         }
                     }
                 }
@@ -237,3 +296,70 @@ private fun highlightedTitle(
 }
 
 private data class Match(val podcast: Podcast, val episode: Episode)
+
+private data class TranscriptHit(
+    val guid: String,
+    val episodeTitle: String,
+    val podcastTitle: String?,
+    val snippet: String,
+)
+
+@Composable
+private fun TranscriptHitCard(
+    hit: TranscriptHit,
+    highlighted: AnnotatedString,
+    onOpen: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                hit.podcastTitle?.let { "$it  ·  ${hit.episodeTitle}" } ?: hit.episodeTitle,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(highlighted, style = MaterialTheme.typography.bodyMedium, maxLines = 4)
+        }
+    }
+}
+
+/**
+ * Pull a readable window around the first occurrence of [needle] in the
+ * stored transcript. Decodes the paragraphs JSON, finds the first matching
+ * paragraph, and trims to ~±70 chars around the hit on word boundaries.
+ * Returns null when the match only existed inside JSON escaping (rare) or
+ * decoding fails.
+ */
+private fun transcriptSnippet(paragraphsJson: String, needle: String): String? {
+    val paragraphs = try {
+        val arr = org.json.JSONArray(paragraphsJson)
+        (0 until arr.length()).map { arr.getString(it) }
+    } catch (_: Exception) {
+        return null
+    }
+    val target = needle.lowercase()
+    for (p in paragraphs) {
+        val idx = p.lowercase().indexOf(target)
+        if (idx < 0) continue
+        val start = (idx - 70).coerceAtLeast(0)
+        val end = (idx + needle.length + 70).coerceAtMost(p.length)
+        var snippet = p.substring(start, end)
+        // Trim to word boundaries so the ellipses don't split words.
+        if (start > 0) {
+            snippet = snippet.substringAfter(' ', snippet)
+            snippet = "…$snippet"
+        }
+        if (end < p.length) {
+            snippet = snippet.substringBeforeLast(' ', snippet)
+            snippet = "$snippet…"
+        }
+        return snippet
+    }
+    return null
+}
