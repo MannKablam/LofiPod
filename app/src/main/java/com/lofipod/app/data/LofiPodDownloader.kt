@@ -205,6 +205,12 @@ class LofiPodDownloader(
      * runs on [downloadScope].
      */
     fun start(ep: Episode) {
+        // Only http(s) enclosures are downloadable. Device files
+        // (content:// via SAF) are already local — every auto-download
+        // trigger in PlayerController funnels through here, and without
+        // this guard OkHttp's Request.Builder.url() throws on the scheme
+        // and pollutes the download table with a spurious FAILED row.
+        if (!ep.audioUrl.startsWith("http", ignoreCase = true)) return
         synchronized(activeJobsLock) {
             if (activeJobs[ep.guid]?.isActive == true) return
         }

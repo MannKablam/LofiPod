@@ -42,22 +42,14 @@ object Sources {
             feedUrl = "kabod://desiringgod-piper-romans",
             displayName = null  // pack file's own title wins
         ),
-        // Verse-by-verse Old-Testament expositions, ordered Pentateuch → Prophets,
-        // multi-preacher within each book.
-        SourceEntry(
-            feedUrl = "kabod://monergism-still-leviticus",
-            displayName = null
-        ),
+        // Verse-by-verse Old-Testament expositions, ordered Pentateuch →
+        // Prophets. One pack per book: the 2026-07 curation kept only Mark
+        // Chanski's Leviticus series and retired the William Still, Cities
+        // Church (Parnell) and Andy Davis Leviticus packs — see
+        // [com.lofipod.app.data.KabodAssetLoader.RETIRED_PACK_IDS] for the
+        // DB cleanup that removes them from existing installs.
         SourceEntry(
             feedUrl = "kabod://sermonaudio-chanski-leviticus",
-            displayName = null
-        ),
-        SourceEntry(
-            feedUrl = "kabod://citieschurch-parnell-leviticus",
-            displayName = null
-        ),
-        SourceEntry(
-            feedUrl = "kabod://twojourneys-davis-leviticus",
             displayName = null
         ),
         SourceEntry(

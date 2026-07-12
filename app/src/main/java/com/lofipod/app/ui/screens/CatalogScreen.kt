@@ -4,11 +4,14 @@ package com.lofipod.app.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.*
@@ -16,6 +19,8 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -54,6 +59,8 @@ fun CatalogScreen(
     onOpenHistory: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenCanonBrowse: () -> Unit,
+    onOpenKabodPacks: () -> Unit,
+    onOpenDeviceFiles: () -> Unit,
 ) {
     val vm: CatalogViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -82,7 +89,7 @@ fun CatalogScreen(
             }
             if (result != null) {
                 snackbarHostState.showSnackbar(
-                    "Imported \"${result.podcast.title}\" — ${result.podcast.episodes.size} entries"
+                    "Imported \"${result.podcast.title}\" — ${result.podcast.episodes.size} items"
                 )
                 vm.refresh()
             } else {
@@ -98,6 +105,17 @@ fun CatalogScreen(
     val visitsByFeed = remember(feedVisits) {
         feedVisits.associate { it.feedUrl to it.lastVisitedAt }
     }
+
+    // Device-files card state: the user's device name (their own setting
+    // when present, hardware model otherwise) + how many files they've
+    // added so the card subtitle reads at a glance.
+    val deviceName = remember {
+        android.provider.Settings.Global.getString(ctx.contentResolver, "device_name")
+            ?.takeIf { it.isNotBlank() } ?: android.os.Build.MODEL
+    }
+    val appSettings = remember { com.lofipod.app.data.Settings(app) }
+    val deviceFiles by appSettings.deviceFiles.collectAsState(initial = emptyList())
+    val deviceFileCount = deviceFiles.size
 
     // First-visit seeding: a podcast we've never seen a visit for gets a row
     // stamped to NOW so we don't lump every previously-released episode into
@@ -307,24 +325,33 @@ fun CatalogScreen(
                             contentPadding = PaddingValues(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                        // Kabod Packs render first — these are weighty, archived
-                        // bodies of work (verse-by-verse expositions, etc.) given
-                        // visual prominence by their distinguished card chrome.
-                        Sources.KABOD_PACKS.forEach { entry ->
-                            val pod = podsByUrl[entry.feedUrl]
-                            if (pod != null) {
-                                item(key = entry.feedUrl) {
-                                    val newCount = newEpisodesSince(
-                                        pod, visitsByFeed[entry.feedUrl]
-                                    )
-                                    KabodPackRow(
-                                        pod = pod,
-                                        artworkUrl = entry.customArtworkUrl ?: pod.artworkUrl,
-                                        newEpisodeCount = newCount,
-                                        onClick = { onPodcastClick(pod) }
-                                    )
-                                }
-                            }
+                        // Device card first — the user's own phone as a source.
+                        // Unique cool-slate chrome so it reads as hardware, not
+                        // another feed.
+                        item(key = "device://files") {
+                            DeviceCard(
+                                deviceName = deviceName,
+                                fileCount = deviceFileCount,
+                                onClick = onOpenDeviceFiles,
+                            )
+                        }
+                        // Kabod Packs, collapsed under one gold card (v0.11).
+                        // These are weighty, archived bodies of work; the
+                        // bullion-bar card carries the format's gravitas and
+                        // keeps the catalog top compact as packs accumulate.
+                        // Tap opens the pack list screen.
+                        item(key = "kabod://packs") {
+                            val packPods = Sources.KABOD_PACKS.mapNotNull { podsByUrl[it.feedUrl] }
+                            GoldKabodCard(
+                                packCount = packPods.size,
+                                itemCount = packPods.sumOf { it.episodes.size },
+                                newCount = Sources.KABOD_PACKS.sumOf { entry ->
+                                    podsByUrl[entry.feedUrl]?.let { pod ->
+                                        newEpisodesSince(pod, visitsByFeed[entry.feedUrl])
+                                    } ?: 0
+                                },
+                                onClick = onOpenKabodPacks,
+                            )
                         }
                         Sources.PODCASTS.forEach { catalogItem ->
                             when (catalogItem) {
@@ -600,11 +627,15 @@ private fun PodcastRow(
  *  - The Hebrew word כָּבוֹד ("kabod" — weight, glory, presence) in a chip
  *    floating in the upper-right corner. The word names the format and
  *    carries the gravitas the pastor's labor deserves.
- *  - "{author} · {N} entries" subtitle (vs RSS's "{N} episodes") since these
+ *  - "{author} · {N} items" subtitle (vs RSS's "{N} episodes") since these
  *    feeds are archived and the speaker identity is a primary identifier.
+ *
+ * Internal (not private) since v0.11: the catalog collapses the packs
+ * under [GoldKabodCard]; the individual rows now render on
+ * [KabodPacksScreen].
  */
 @Composable
-private fun KabodPackRow(
+internal fun KabodPackRow(
     pod: Podcast,
     artworkUrl: String?,
     newEpisodeCount: Int,
@@ -661,8 +692,8 @@ private fun KabodPackRow(
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 2
                     )
-                    val subtitle = pod.author?.let { "$it  ·  ${pod.episodes.size} entries" }
-                        ?: "${pod.episodes.size} entries"
+                    val subtitle = pod.author?.let { "$it  ·  ${pod.episodes.size} items" }
+                        ?: "${pod.episodes.size} items"
                     Text(
                         subtitle,
                         style = MaterialTheme.typography.bodySmall,
@@ -780,7 +811,7 @@ private fun GroupRow(
  * cheap but not free; one allocation beats one-per-recomposition of
  * the catalog).
  */
-private val stamHebrewFamily = FontFamily(
+internal val stamHebrewFamily = FontFamily(
     Font(R.font.stam_ashkenaz_clm),
 )
 
@@ -789,3 +820,177 @@ private val stamHebrewFamily = FontFamily(
 // the Stam Ashkenaz CLM font wired into the kabod chip's Text above
 // (stamHebrewFamily). Restore from git history (commit 95d03f1) if a
 // future re-design ever wants the Canvas-drawn path back.
+
+// ---- v0.11 catalog top cards -------------------------------------------
+
+// Bullion palette for the collapsed Kabod card. Anchored on the app's
+// de-facto brand gold (MostExcellentGold 0xFFD4A017 in MyListsScreen).
+private val GoldDeep = Color(0xFF8F6A10)
+private val GoldMid = Color(0xFFD4A017)
+private val GoldBright = Color(0xFFF3CE5E)
+private val GoldInk = Color(0xFF3A2B04)
+
+/**
+ * The collapsed Kabod card — one gold card standing in for every bundled
+ * pack. Deliberately theme-independent: bullion gold in all five themes,
+ * with the same Stam-script כבוד the individual pack chips carry, sized
+ * up to be the card's identity rather than a corner badge. A small stack
+ * of gold ingots on the left sells the "bars of gold" read without any
+ * imagery beyond gradient rectangles.
+ */
+@Composable
+internal fun GoldKabodCard(
+    packCount: Int,
+    itemCount: Int,
+    newCount: Int,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        border = BorderStroke(1.5.dp, GoldDeep),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(GoldDeep, GoldMid, GoldBright, GoldMid, GoldDeep)
+                    )
+                )
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Ingot stack: two bars below, one bridging on top.
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    GoldIngot(width = 30.dp)
+                    GoldIngot(width = 42.dp)
+                    GoldIngot(width = 54.dp)
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "כבוד",
+                        fontSize = 34.sp,
+                        fontFamily = stamHebrewFamily,
+                        color = GoldInk,
+                    )
+                    Text(
+                        // Counts come from the in-memory feed cache, which
+                        // hydrates after the cold-start refresh — until then
+                        // don't advertise "0 packs · 0 items" on the most
+                        // prominent card in the app.
+                        if (packCount > 0)
+                            "Kabod packs  ·  $packCount packs  ·  $itemCount items"
+                        else "Kabod packs",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GoldInk.copy(alpha = 0.85f),
+                    )
+                }
+                if (newCount > 0) {
+                    Surface(
+                        color = GoldInk,
+                        contentColor = GoldBright,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            "$newCount new",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One bullion bar: bright top-lit gradient with a darker edge. */
+@Composable
+private fun GoldIngot(width: androidx.compose.ui.unit.Dp) {
+    Box(
+        Modifier
+            .width(width)
+            .height(11.dp)
+            .background(
+                Brush.verticalGradient(listOf(GoldBright, GoldMid, GoldDeep)),
+                shape = RoundedCornerShape(2.dp),
+            )
+            .border(0.5.dp, GoldDeep.copy(alpha = 0.8f), RoundedCornerShape(2.dp))
+    )
+}
+
+// Cool-slate palette for the device card — deliberately the tonal
+// opposite of the gold card so the two special sources at the catalog
+// top read as different materials: warm bullion vs brushed steel.
+private val SlateDeep = Color(0xFF1F2733)
+private val SlateMid = Color(0xFF303C4E)
+private val SlateEdge = Color(0xFF54677F)
+private val SlateText = Color(0xFFE8EEF6)
+private val SlateAccent = Color(0xFF9FC2E8)
+
+/**
+ * The user's device as a source — pinned above everything. Shows the
+ * device's own name (the user-assigned one when set, hardware model
+ * otherwise) with a phone glyph; tap opens the Device files screen where
+ * local audio files can be added and played.
+ */
+@Composable
+internal fun DeviceCard(
+    deviceName: String,
+    fileCount: Int,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        border = BorderStroke(1.5.dp, SlateEdge),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(SlateMid, SlateDeep)))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = SlateDeep,
+                    contentColor = SlateAccent,
+                    border = BorderStroke(1.dp, SlateEdge),
+                    modifier = Modifier.size(44.dp),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.smartphone_24),
+                        contentDescription = null,
+                        modifier = Modifier.padding(9.dp),
+                    )
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        deviceName,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = SlateText,
+                        maxLines = 1,
+                    )
+                    Text(
+                        if (fileCount > 0) "This device  ·  $fileCount files"
+                        else "This device  ·  play your own audio files",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateAccent.copy(alpha = 0.85f),
+                    )
+                }
+            }
+        }
+    }
+}

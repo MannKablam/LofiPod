@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
@@ -41,6 +42,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Public BMC link — same account as the Kontx app's support button. */
+private const val BUY_ME_COFFEE_URL = "https://buymeacoffee.com/dev.laroix"
+
 @Composable
 fun SettingsScreen(
     controller: PlayerController,
@@ -50,6 +54,7 @@ fun SettingsScreen(
     onOpenLofiNotes: () -> Unit = {},
     onOpenAppDiagnostics: () -> Unit = {},
     onOpenTextSettings: () -> Unit = {},
+    onOpenSources: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -254,6 +259,40 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(20.dp))
+            // Buy-Me-a-Coffee support button, ported style-for-style from
+            // Kontx's Settings (same URL, BMC brand-yellow outlined button).
+            SectionHeader("Support the developer")
+            Text(
+                "LofiPod is free and ad-free. A small tip keeps new versions coming.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    val intent = android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(BUY_ME_COFFEE_URL)
+                    )
+                    ctx.startActivity(intent)
+                },
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = Color(0xFFFFDD57)
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp, Color(0xFFFFDD57).copy(alpha = 0.5f)
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "To keep updates flowing: ☕ Buy me a coffee",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("About")
             Text(
                 "LofiPod — a personal-canon podcast app. Backups + restore live " +
@@ -263,6 +302,10 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onOpenSources) {
+                Text("View sources document (read-only)")
+            }
             Spacer(Modifier.height(12.dp))
             Text(
                 "Open-source audio libraries: " +

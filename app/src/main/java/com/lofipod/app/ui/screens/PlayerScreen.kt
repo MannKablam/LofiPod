@@ -563,7 +563,10 @@ fun PlayerScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
                     )
-                    if (displayedGuid != null) {
+                    // Device files (guid == their content:// URI) are already
+                    // local — the downloader ignores them by design, so the
+                    // button would be a dead control. Hide it instead.
+                    if (displayedGuid != null && !displayedGuid.startsWith("content://")) {
                         val download = downloadsByGuid[displayedGuid]
                         DownloadButton(
                             download = download,
@@ -1356,7 +1359,13 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
         Spacer(Modifier.height(12.dp))
         if (ep == null) {
             Text(
-                "Episode metadata is not in the cache. Open this feed in Catalog to refresh.",
+                // Device files have no feed — "refresh the feed" is a
+                // nonsense instruction for them. guid == content:// URI
+                // identifies them cheaply here.
+                if (episodeGuid.startsWith("content://"))
+                    "A file from this device — no feed metadata to show."
+                else
+                    "Episode metadata is not in the cache. Open this feed in Catalog to refresh.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

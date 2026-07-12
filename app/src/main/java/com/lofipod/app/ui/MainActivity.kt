@@ -193,6 +193,8 @@ private val NESTED_PARENTS = mapOf(
     // single canonical parent.
     "appDiagnostics" to "settings",
     "notes/{guid}" to "notesBrowser",
+    // Sources viewer is only reachable from Settings' About section.
+    "sources" to "settings",
 )
 
 /**
@@ -262,6 +264,18 @@ private fun feedAwareBackFromPlayer(nav: NavController, currentFeedUrl: String?)
             "from=player feed=(unknown) — using smartBack (legacy MediaItem or pre-sync state)",
         )
         smartBack(nav, "player")
+        return
+    }
+    // Device files have no episodes screen — the synthetic device://files
+    // feed can never load there (EpisodesScreen would sit on "Loading
+    // feed…" forever). Their home is the Device files screen.
+    if (currentFeedUrl == com.lofipod.app.ui.screens.DEVICE_FEED_URL) {
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "back_nav_feed_aware",
+            "from=player feed=$currentFeedUrl (popping to catalog + deviceFiles)",
+        )
+        nav.popBackStack("catalog", inclusive = false)
+        nav.navigate("deviceFiles")
         return
     }
     com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
@@ -455,6 +469,28 @@ private fun AppNav(
                     onOpenHistory = { nav.navigate("history") },
                     onOpenSearch = { nav.navigate("search") },
                     onOpenCanonBrowse = { nav.navigate("canonBrowse") },
+                    onOpenKabodPacks = { nav.navigate("kabodPacks") },
+                    onOpenDeviceFiles = { nav.navigate("deviceFiles") },
+                )
+            }
+
+            composable("kabodPacks") {
+                KabodPacksScreen(
+                    onBack = { smartBack(nav, "kabodPacks") },
+                    onPackClick = { pod ->
+                        val encoded = URLEncoder.encode(pod.feedUrl, "UTF-8")
+                        nav.navigate("episodes/$encoded")
+                    },
+                )
+            }
+
+            composable("deviceFiles") {
+                DeviceFilesScreen(
+                    controller = controller,
+                    onBack = { smartBack(nav, "deviceFiles") },
+                    onOpenPlayer = {
+                        nav.navigate("player") { launchSingleTop = true }
+                    },
                 )
             }
 
@@ -575,7 +611,12 @@ private fun AppNav(
                     onOpenLofiNotes = { nav.navigate("lofiNotes") },
                     onOpenAppDiagnostics = { nav.navigate("appDiagnostics") },
                     onOpenTextSettings = { nav.navigate("textSettings") },
+                    onOpenSources = { nav.navigate("sources") },
                 )
+            }
+
+            composable("sources") {
+                SourcesScreen(onBack = { smartBack(nav, "sources") })
             }
 
             composable("audioDiagnostics") {

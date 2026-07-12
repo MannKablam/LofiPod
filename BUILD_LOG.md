@@ -2,6 +2,87 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.23 (pending tag) — Device files, gold Kabod card, pack curation + audit, sources viewer, BMC (2026-07-11)
+
+### Device files (new source)
+
+The user's phone is now a catalog source. A cool-slate "brushed steel"
+card pinned at the very top shows the device's own name (user-set name
+via Settings.Global "device_name", hardware model fallback) with a phone
+glyph; it opens the new Device files screen. Files are picked via SAF
+(OpenMultipleDocuments, audio/*), persisted as content:// URIs + display
+names in DataStore (JSON array — keeps insertion order) with persistable
+read grants, and play through the ordinary playEpisode path: synthetic
+Episode with guid = the content URI, feedUrl = device://files. That
+means resume positions, checkpoints, notes, EQ and the voice suite all
+work on device files for free. LofiPodDownloader.start now ignores
+non-http audio URLs so the auto-download machinery can't choke on
+content:// (previously it would have thrown inside OkHttp and left a
+spurious FAILED row).
+
+### Gold Kabod card ("bars of gold")
+
+The individual pack cards no longer stack up at the top of the catalog —
+one bullion-gold card (vertical gold gradient anchored on the app's
+MostExcellentGold, ingot-stack glyph, the same Stam-script kabod
+lettering as the pack chips at 34sp) now fronts for all of them, with
+"N packs · M items" and an aggregate new-count chip. Tapping opens the
+new Kabod packs screen, which renders the familiar KabodPackRow cards
+(now internal, shared with the catalog) and routes into the same
+episodes screen as before.
+
+### Pack curation + Romans audit
+
+- Leviticus curation per user direction: kept Mark Chanski's 37-part
+  series; deleted the William Still (23), Cities Church/Parnell (8) and
+  Andy Davis (1) packs — assets removed, Sources.KABOD_PACKS trimmed,
+  and a RETIRED_PACK_IDS cleanup in KabodAssetLoader.installBundled
+  purges kabod_pack / episode_kabod / podcast_source rows on existing
+  installs (explicit ID list so user-IMPORTED packs are never touched;
+  per-episode user data intentionally survives).
+- Piper Romans pack audited against desiringgod.org as source of truth:
+  a full 9-page pagination walk of the series listing yields exactly
+  225 sermons; the pack's 225 items match title-for-title and
+  date-for-date at every position (itemized diff, zero content
+  mismatches — the only variance is DG page slugs vs audio-file
+  slugs, which is DG's own naming, not drift). First/last sermons match
+  (1998-04-26 "The Author of the Greatest Letter Ever Written" →
+  2006-12-24 "Jesus Christ in the Book of Romans"), and the two v2
+  additions (#45 James excursus, #178 TCT vision-cast) are confirmed
+  present in DG's own series index. No pack changes needed.
+- Kabod vocabulary: user-facing "entries" renamed to "items" (catalog
+  card subtitle + import toast).
+
+### Post-review hardening (2-angle review before commit)
+
+- Back from the Player while a device file plays now returns to the
+  Device files screen — the feed-aware back handler was pushing an
+  episodes route for device://files that can never load (permanent
+  "Loading feed…" strand).
+- Removing a device file now releases its persisted SAF grant (Android
+  caps per-app grants; heavy churn would eventually make new picks fail
+  silently).
+- The Player's download button is hidden for device files (it was a
+  guaranteed no-op after the downloader's scheme guard); the Details
+  tab says "a file from this device" instead of telling the user to
+  refresh a nonexistent feed; the gold card shows no counts until the
+  cache hydrates instead of "0 packs · 0 items".
+- Accepted: stale queue entries from retired packs still play (https
+  URLs are real; only title/art are blank); Sources-viewer titles
+  resolve lazily from the cache.
+
+### Sources viewer + support
+
+- Settings → About gains "View sources document (read-only)": a new
+  Sources screen renders the compiled-in Sources canon (kabod packs +
+  podcast feeds with groups), selectable text, monospace URLs.
+- Settings gains a "Support the developer" section — the Buy-Me-a-Coffee
+  button ported style-for-style from Kontx (same buymeacoffee.com/
+  dev.laroix URL, BMC brand-yellow #FFDD57 outlined button, 10dp
+  corners, ACTION_VIEW). The button label keeps Kontx's coffee-cup
+  glyph as part of the ported brand style — the one deliberate
+  exception to the no-emoji UI rule.
+
 ## v0.10.22 (pending tag) — Voice suite: de-esser, warmth, leveler, air + tone-filter refinements (2026-07-11)
 
 Premium "studio suite" pass on the audio engine — four new staged voice

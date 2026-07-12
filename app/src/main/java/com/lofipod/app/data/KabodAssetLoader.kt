@@ -60,7 +60,35 @@ class KabodAssetLoader(
                 System.err.println("Kabod pack failed: $packPath -> ${e.message}")
             }
         }
+        removeRetiredPacks()
         installed
+    }
+
+    /**
+     * Purge DB rows for bundled packs that were retired from the app.
+     * [installBundled] only ever adds what it finds under `assets/kabod/`,
+     * so without this a pack whose asset was deleted in an update would
+     * linger in `kabod_pack` / `episode_kabod` / `podcast_source` forever
+     * and keep showing in the catalog with a feed that can no longer load.
+     *
+     * An explicit retired-ID list (rather than "delete anything without a
+     * matching asset") so user-IMPORTED packs — which live in the same
+     * tables but have no bundled asset by design — are never touched.
+     * Per-episode user data (episode_state, notes, checkpoints) is
+     * deliberately left in place; it's keyed by guid and harmless.
+     */
+    private suspend fun removeRetiredPacks() = withContext(Dispatchers.IO) {
+        val packDao = db.kabodPackDao()
+        for (packId in RETIRED_PACK_IDS) {
+            if (packDao.get(packId) == null) continue
+            packDao.remove(packId)
+            db.episodeKabodDao().removeForPack(packId)
+            db.podcastSourceDao().remove("kabod://$packId")
+            com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
+                identifier = "kabod_pack_retired",
+                detail = "Removed retired pack $packId from DB.",
+            )
+        }
     }
 
     /**
@@ -164,5 +192,23 @@ class KabodAssetLoader(
         upsertPack(rebound)
         parsedCache[realFeedUrl] = rebound
         rebound
+    }
+
+    companion object {
+        /**
+         * Bundled packs removed from the app. 2026-07 Leviticus curation:
+         * only Mark Chanski's series stays; the William Still, Cities
+         * Church (Parnell) and Andy Davis packs were retired along with
+         * their .kabod asset files and Sources.KABOD_PACKS entries.
+         * (No glob in this comment on purpose — Kotlin block comments
+         * nest, so a slash-star path pattern would swallow the rest of
+         * the file.) IDs stay on this list forever so any install that
+         * ever had them gets cleaned up on next launch.
+         */
+        val RETIRED_PACK_IDS = setOf(
+            "monergism-still-leviticus",
+            "citieschurch-parnell-leviticus",
+            "twojourneys-davis-leviticus",
+        )
     }
 }

@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore("lofipod_settings")
 
+/** One user-picked device audio file: SAF content:// URI + display name. */
+data class DeviceFileEntry(val uri: String, val name: String)
+
 class Settings(private val context: Context) {
 
     private val KEY_SOURCES_URI = stringPreferencesKey("sources_uri")
@@ -243,6 +246,80 @@ class Settings(private val context: Context) {
 
     suspend fun setToneHighCutHz(v: Float) {
         context.dataStore.edit { it[KEY_TONE_HIGH_CUT_HZ] = v }
+    }
+
+    /**
+     * User-picked device audio files (SAF content:// URIs + display names),
+     * in the order they were added. Stored as a JSON array of
+     * {"uri": ..., "name": ...} objects — a single string key keeps insertion
+     * order (DataStore's stringSet does not) and survives names containing
+     * any delimiter. The URIs are persisted alongside
+     * takePersistableUriPermission grants taken at pick time.
+     */
+    val deviceFiles: Flow<List<DeviceFileEntry>> =
+        context.dataStore.data.map { prefs ->
+            val raw = prefs[KEY_DEVICE_FILES] ?: return@map emptyList()
+            try {
+                val arr = org.json.JSONArray(raw)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    DeviceFileEntry(uri = o.getString("uri"), name = o.getString("name"))
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+    /** Append [entries], deduplicating by URI (re-picking a file is a no-op). */
+    suspend fun addDeviceFiles(entries: List<DeviceFileEntry>) {
+        if (entries.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val existing = try {
+                org.json.JSONArray(prefs[KEY_DEVICE_FILES] ?: "[]")
+            } catch (_: Exception) {
+                org.json.JSONArray()
+            }
+            val seen = mutableSetOf<String>()
+            for (i in 0 until existing.length()) {
+                seen.add(existing.getJSONObject(i).getString("uri"))
+            }
+            for (e in entries) {
+                if (e.uri in seen) continue
+                seen.add(e.uri)
+                existing.put(
+                    org.json.JSONObject().put("uri", e.uri).put("name", e.name)
+                )
+            }
+            prefs[KEY_DEVICE_FILES] = existing.toString()
+        }
+    }
+
+    suspend fun removeDeviceFile(uri: String) {
+        context.dataStore.edit { prefs ->
+            val existing = try {
+                org.json.JSONArray(prefs[KEY_DEVICE_FILES] ?: "[]")
+            } catch (_: Exception) {
+                org.json.JSONArray()
+            }
+            val kept = org.json.JSONArray()
+            for (i in 0 until existing.length()) {
+                val o = existing.getJSONObject(i)
+                if (o.getString("uri") != uri) kept.put(o)
+            }
+            prefs[KEY_DEVICE_FILES] = kept.toString()
+        }
+        // Release the persisted SAF grant taken at pick time. Android caps
+        // persisted URI permissions per app; without this, heavy add/remove
+        // churn eventually exhausts the cap and NEW picks start failing
+        // silently. Throws if the grant is already gone (revoked, provider
+        // uninstalled) — that's the desired end state, so swallow it.
+        try {
+            context.contentResolver.releasePersistableUriPermission(
+                android.net.Uri.parse(uri),
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (_: Exception) {
+        }
     }
 
     /**
@@ -565,6 +642,8 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("voice_leveler_level")
         private val KEY_VOICE_AIR =
             androidx.datastore.preferences.core.intPreferencesKey("voice_air_level")
+        private val KEY_DEVICE_FILES =
+            androidx.datastore.preferences.core.stringPreferencesKey("device_files_json")
         private val KEY_PHASE_MODE_LINEAR =
             androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
         private val KEY_PHASE_MODE =
