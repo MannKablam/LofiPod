@@ -574,6 +574,15 @@ class PlayerController(private val context: Context) {
             }
             pushState()
             if (playbackState == Player.STATE_ENDED) {
+                val finishedGuid = controller?.currentMediaItem?.mediaId
+                // Queue hygiene FIRST, regardless of which advance strategy
+                // (or sleep suppression) wins below: a played-to-completion
+                // episode must never replay from the queue. The canon path
+                // and the sleep-suppression return both used to skip the
+                // removal that only lived inside advanceToNextInQueue.
+                if (finishedGuid != null) {
+                    scope.launch(Dispatchers.IO) { queueDao.remove(finishedGuid) }
+                }
                 // Sleep timer wins over every advance strategy: an
                 // end-of-episode timer, or ANY timer already mid-fade,
                 // means the listener asked playback to stop here — starting
@@ -584,11 +593,16 @@ class PlayerController(private val context: Context) {
                     fireSleepPause(flush = false)
                     return
                 }
-                // Remove the just-finished episode from the queue and auto-advance.
-                // If canon-order autoplay is enabled and this episode has a
-                // detected scripture ref, prefer the next sermon in canon
-                // order over the standard queue/feed-next chain.
-                val finishedGuid = controller?.currentMediaItem?.mediaId
+                // A Minutes-mode fire can race the episode's natural end:
+                // fireSleepPause nulls the state, then this handler sees no
+                // timer and would advance right after the sleep pause.
+                if (android.os.SystemClock.elapsedRealtime() - sleepFiredAtElapsedMs < 2_000L) {
+                    return
+                }
+                // Auto-advance. If canon-order autoplay is enabled and this
+                // episode has a detected scripture ref, prefer the next
+                // sermon in canon order over the standard queue/feed-next
+                // chain.
                 scope.launch {
                     if (finishedGuid != null && tryAdvanceToNextInCanon(finishedGuid)) {
                         // Canon mode handled it; skip the standard advance.
@@ -1447,6 +1461,23 @@ class PlayerController(private val context: Context) {
         controller?.pause()
     }
 
+    /**
+     * Pause for a UI bracket that will programmatically resume (the
+     * pause-while-writing-a-note flow). Cancels the autoplay-confirm
+     * window (pre-existing semantics — interacting with notes proves the
+     * user is present) but PRESERVES an armed sleep timer: the bracket is
+     * not an "I'm done listening" statement, and play() never re-arms a
+     * timer, so routing this through [pause] silently disarmed sleep for
+     * anyone who jotted a note while falling asleep. The sleep tick loop
+     * already holds the fade while paused.
+     */
+    fun pauseTransient() {
+        autoplayTimerJob?.cancel()
+        autoplayTimerJob = null
+        _autoplayTimer.value = null
+        controller?.pause()
+    }
+
     // ---------- Sleep timer ----------
 
     fun startSleepTimer(mode: SleepTimerMode) {
@@ -1555,7 +1586,12 @@ class PlayerController(private val context: Context) {
      * holds up to ~3s of already-faded PCM, and without the flush a quick
      * resume replays seconds of near-silence.
      */
+    /** elapsedRealtime of the last sleep-pause fire — the STATE_ENDED
+     *  handler uses it to suppress an advance racing the fire. */
+    @Volatile private var sleepFiredAtElapsedMs = 0L
+
     private fun fireSleepPause(flush: Boolean = true) {
+        sleepFiredAtElapsedMs = android.os.SystemClock.elapsedRealtime()
         _sleepTimer.value = null
         sleepTimerJob = null
         controller?.pause()

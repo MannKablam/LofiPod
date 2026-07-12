@@ -267,6 +267,11 @@ object Backup {
         obj.optJSONArray("kabodPacks")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val k = arr.getJSONObject(i)
+                // Old backups can carry packs the app has since retired —
+                // restoring them would resurrect dead rows until the next
+                // launch's cleanup (and re-feed the scripture-index
+                // backfill in the meantime). Skip them at the door.
+                if (k.getString("packId") in KabodAssetLoader.RETIRED_PACK_IDS) continue
                 kabodPackDao.upsert(
                     KabodPackEntity(
                         packId = k.getString("packId"),
@@ -287,6 +292,8 @@ object Backup {
         obj.optJSONArray("episodeKabod")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val e = arr.getJSONObject(i)
+                // Same retired-pack guard as kabodPacks above.
+                if (e.getString("packId") in KabodAssetLoader.RETIRED_PACK_IDS) continue
                 episodeKabodDao.upsert(
                     EpisodeKabodEntity(
                         guid = e.getString("guid"),

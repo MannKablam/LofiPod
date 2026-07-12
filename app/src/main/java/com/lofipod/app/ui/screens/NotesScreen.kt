@@ -54,7 +54,9 @@ fun NotesScreen(
     fun openAdd() {
         if (pauseOnNote && controller.state.value.isPlaying) {
             resumeAfterDialog = true
-            controller.pause()
+            // Transient bracket, not an "I'm done" pause — preserves an
+            // armed sleep timer (play() below never re-arms one).
+            controller.pauseTransient()
         }
         addOpen = true
     }

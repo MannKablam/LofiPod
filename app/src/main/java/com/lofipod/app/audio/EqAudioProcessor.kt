@@ -429,10 +429,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (gainDb != 0f) return false
         if (toneActive()) return false
         if (voiceActive()) return false
-        // Mid-fade the chain is audibly attenuating — not passthrough.
-        // (The passthrough copy loop ALSO multiplies the fade, covering
-        // the !enabled gate that short-circuits before this check.)
-        if (sleepFadeLinear != 1.0) return false
+        // NOTE deliberately NO sleepFadeLinear clause here: the passthrough
+        // copy loop multiplies the fade itself, so a FLAT/0dB config can
+        // stay on the bit-copy path for the whole fade. Forcing the DSP
+        // path instead (an earlier revision did) made FIR-mode users eat a
+        // ~23ms convolver re-prime gap right at fade onset — an audible
+        // dropout exactly when the transition should be seamless.
         val current = bands
         for (b in current) if (b.gainDb != 0f) return false
         return true
@@ -747,10 +749,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (AudioChainTelemetry.passthrough) {
             AudioChainTelemetry.passthrough = false
             AudioChainTelemetry.logEvent("passthrough", "exit")
-            // FIR modes keep a stateful UPC FDL + output ring. Resuming after
-            // a passthrough window (e.g. release of Hold-to-A/B) without
-            // reset would emit pre-bypass audio before live audio caught up.
-            if (phaseMode != PhaseMode.PURE_IIR) firEq.reset()
+            // Full chain reset, not just firEq: EVERY stateful stage holds
+            // pre-bypass audio across a passthrough window — the
+            // oversampler's FIR delay lines and the limiter's ~5ms
+            // look-ahead would otherwise emit a fragment from before the
+            // window (an audible blip on Hold-to-A/B release). The FIR
+            // FDL/output-ring case this block originally handled is
+            // covered by chainReset too.
+            chainReset()
         }
         AudioChainTelemetry.incDspBuffers()
         AudioChainTelemetry.addFrames(frameCount)
@@ -1109,13 +1115,17 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (phaseMode != PhaseMode.PURE_IIR) {
             // FIR drain has two stages stacked back-to-back:
             //   1) push zero frames into firEq to flush any partial input-
-            //      accumulator block + the convolver's FDL contribution to
-            //      the algorithmic delay. Three BLOCK_SIZE chunks of zeros
-            //      covers a worst-case partial accumulator (BLOCK_SIZE-1
-            //      samples) + 2 chunks of group-delay flush + slack.
+            //      accumulator block + the convolver's FDL contribution.
+            //      FOUR blocks, not three: the 4096-tap kernel spans 4
+            //      partitions of 1024, and the last real block's
+            //      partition-3 contribution (taps 3072..4095 — the far
+            //      half of a LINEAR/MIXED symmetric kernel's post-peak
+            //      tail, ~23ms) only emerges after a 4th zero block.
+            //      Worst case: partial accumulator (BLOCK_SIZE-1) + 3
+            //      full partitions ≈ 4×BLOCK_SIZE.
             //   2) drain the post-gain chain (oversampler ↔ limiter) with
             //      zero input, same as the PURE_IIR drain below.
-            val zeroFramesIn = FirEq.BLOCK_SIZE * 3
+            val zeroFramesIn = FirEq.BLOCK_SIZE * 4
             for (ch in 0 until channelCount) frameInput[ch] = 0.0
             for (i in 0 until zeroFramesIn) firEq.pushFrame(frameInput)
             val firOut = firEq.outputFramesAvailable()

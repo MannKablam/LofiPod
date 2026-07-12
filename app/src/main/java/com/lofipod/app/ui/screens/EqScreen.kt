@@ -393,7 +393,11 @@ fun EqScreen(
             // section, the original) vs 24 dB/oct (LR4, two cascaded
             // sections) for stubborn rumble. Only shown while a low cut is
             // engaged; the toggle is meaningless at "Off".
-            val toneLowCutSteep by settings.toneLowCutSteep.collectAsState(initial = false)
+            // Initial from the live processor (matches the voice-suite
+            // controls) so a persisted 24 dB/oct doesn't flash "12" for the
+            // first frame while DataStore emits.
+            val toneLowCutSteep by settings.toneLowCutSteep
+                .collectAsState(initial = eq.currentLowCutSteep())
             if (toneLowCut > 0f) {
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

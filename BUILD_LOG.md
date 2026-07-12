@@ -2,6 +2,54 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.27 (pending tag) — Bug-hunt sweep over v0.10.21–v0.10.26 (2026-07-11)
+
+Dedicated 4-angle hunt (audio-chain integration, player state machine,
+UI/persistence, fresh-eyes full-diff) plus Android Lint over everything
+since v0.10.20. Eleven fixes:
+
+- **Note dialog no longer disarms the sleep timer** — the pause-while-
+  writing bracket routed through the timer-cancelling pause() wrapper;
+  new pauseTransient() preserves an armed timer (jotting a note while
+  falling asleep used to mean playback ran all night).
+- **Retired-pack scripture rows purged** — Canon Browse showed dead
+  verse coverage for the deleted Leviticus packs forever; cleanup now
+  removes their episode_scripture rows, and Backup restore skips
+  RETIRED_PACK_IDS instead of resurrecting them.
+- **Queue hygiene at STATE_ENDED hoisted** — canon-order advance and
+  sleep-timer suppression both skipped the queue removal that only
+  lived inside advanceToNextInQueue; finished episodes replayed from
+  the queue. Removal now happens first, regardless of strategy. Plus a
+  2s guard against a Minutes-fire racing the episode's natural end.
+- **Passthrough exit does a FULL chainReset** — only firEq was reset,
+  so the oversampler/limiter emitted a ~5ms fragment of pre-bypass
+  audio on Hold-to-A/B release.
+- **Sleep-fade passthrough clause REMOVED** — the copy loop already
+  fades, and forcing the DSP path gave FLAT+FIR users a ~23ms convolver
+  re-prime dropout at fade onset. (The passthrough-loop multiply is the
+  load-bearing fade path for FLAT configs now — keep it.)
+- **PauseTap anchor race fenced** — a stale never-adopted anchor post
+  (speed change) could be adopted after a later seek's flush, offsetting
+  every recorded pause; adoption now requires a post newer than the
+  flush-time generation.
+- **FIR EOS drain: 4 zero blocks, not 3** — the 4096-tap linear kernel
+  spans 4 partitions; 3 truncated the final ~23ms of every track in
+  LINEAR/MIXED modes.
+- Sleep chip moved to its own centered line (the end-of-episode label
+  overlaid the speed chip at 360dp); heatmap state resets on episode
+  transition (collectAsState retained the previous episode's heat);
+  steep-slope chip no longer flashes "12" on entry; scripture-marker
+  building wrapped so a pathological transcript degrades to no markers
+  instead of crashing.
+
+Accepted (documented): BT/notification pause keeps a Minutes timer
+armed (it stands down safely if it expires while paused); drain tail
+un-faded if a track ends mid-fade (~6ms, rare); promotion-note casing
+follows the app's promotion phrase; same-ms note-PK collision;
+FirEq.release-kills-synthesis-scope flagged as a pre-existing latent
+(predates this work, needs its own investigation). Lint: all findings
+in touched files are the pre-existing UnstableApi/house-pattern noise.
+
 ## v0.10.26 (pending tag) — Study sheets, structured scrubber, sleep timer, chapters, description search (2026-07-11)
 
 The "study instrument" batch — planned by three parallel design agents,

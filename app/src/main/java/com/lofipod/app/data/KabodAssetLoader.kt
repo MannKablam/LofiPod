@@ -81,12 +81,21 @@ class KabodAssetLoader(
         val packDao = db.kabodPackDao()
         for (packId in RETIRED_PACK_IDS) {
             if (packDao.get(packId) == null) continue
+            // Scripture-index rows FIRST (need episode_kabod to enumerate
+            // the guids before it's cleared). Without this, Canon Browse
+            // keeps showing the retired pack's verse coverage forever —
+            // dead entries whose kabod:// feed no longer exists — because
+            // ScriptureIndexer.backfillFromKabod had already copied every
+            // part into episode_scripture on earlier launches.
+            val guids = db.episodeKabodDao().getForPack(packId).map { it.guid }
+            for (g in guids) db.episodeScriptureDao().delete(g)
             packDao.remove(packId)
             db.episodeKabodDao().removeForPack(packId)
             db.podcastSourceDao().remove("kabod://$packId")
             com.lofipod.app.diagnostics.AppDiagnostics.recordOther(
                 identifier = "kabod_pack_retired",
-                detail = "Removed retired pack $packId from DB.",
+                detail = "Removed retired pack $packId from DB " +
+                    "(incl. ${guids.size} scripture-index rows).",
             )
         }
     }

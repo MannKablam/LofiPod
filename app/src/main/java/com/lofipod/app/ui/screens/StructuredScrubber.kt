@@ -268,7 +268,16 @@ fun StructuredScrubber(
  * Positions are paragraph-proportional ESTIMATES — the transcript has no
  * timestamps. Markers are landmarks, not chapter dividers.
  */
-suspend fun buildScriptureMarkers(app: LofiPodApp, guid: String): List<ScrubberMarker> {
+suspend fun buildScriptureMarkers(app: LofiPodApp, guid: String): List<ScrubberMarker> = try {
+    buildScriptureMarkersUnsafe(app, guid)
+} catch (_: Exception) {
+    // Markers are decoration; a pathological transcript (regex blowup,
+    // malformed JSON, DB hiccup) must degrade to "no markers", never
+    // crash the player.
+    emptyList()
+}
+
+private suspend fun buildScriptureMarkersUnsafe(app: LofiPodApp, guid: String): List<ScrubberMarker> {
     val row = app.db.episodeTranscriptDao().get(guid) ?: return emptyList()
     val paragraphs = try {
         val arr = org.json.JSONArray(row.paragraphsJson)

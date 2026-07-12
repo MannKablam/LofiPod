@@ -257,13 +257,20 @@ fun PlayerScreen(
 
     // Structured-scrubber data layers (live playback only).
     // Heat: observe the episode's bucket row — Room re-emits on each 10s
-    // ticker upsert so the just-listened region brightens live.
-    val heatBuckets by remember(state.currentEpisodeGuid) {
-        val g = state.currentEpisodeGuid
-        if (g == null) kotlinx.coroutines.flow.flowOf<IntArray?>(null)
-        else app.db.episodeHeatDao().observe(g)
-            .map { row -> row?.let { com.lofipod.app.data.EpisodeHeatRecorder.decode(it.bucketsCsv) } }
-    }.collectAsState(initial = null)
+    // ticker upsert so the just-listened region brightens live. Explicit
+    // state + collect (NOT flow.collectAsState): collectAsState keeps the
+    // previous VALUE across a flow swap, which painted the previous
+    // episode's heat on the new scrubber until Room's first emission.
+    // remember(guid) resets to null the moment the episode changes.
+    var heatBuckets by remember(state.currentEpisodeGuid) {
+        mutableStateOf<IntArray?>(null)
+    }
+    LaunchedEffect(state.currentEpisodeGuid) {
+        val g = state.currentEpisodeGuid ?: return@LaunchedEffect
+        app.db.episodeHeatDao().observe(g).collect { row ->
+            heatBuckets = row?.let { com.lofipod.app.data.EpisodeHeatRecorder.decode(it.bucketsCsv) }
+        }
+    }
     // Scripture markers: one-shot per episode, cached-transcript-only (no
     // network — transcripts arrive when the user opens the Transcript tab).
     var scrubberMarkers by remember(state.currentEpisodeGuid) {
@@ -893,34 +900,6 @@ fun PlayerScreen(
                             speed = state.speed,
                             onPick = { controller.setSpeed(it) }
                         )
-                        // Active sleep-timer readout. Recomposition rides
-                        // the 500ms position poll while playing (the only
-                        // time a timer can be live — manual pause cancels
-                        // it), so the countdown stays fresh without its
-                        // own ticker. Tap to adjust/turn off.
-                        sleepTimerState?.let { st ->
-                            val label = when (st.mode) {
-                                is com.lofipod.app.player.SleepTimerMode.Minutes -> {
-                                    val rem = ((st.endAtElapsedMs ?: 0L) -
-                                        android.os.SystemClock.elapsedRealtime())
-                                        .coerceAtLeast(0L)
-                                    "Sleep %d:%02d".format(rem / 60_000, (rem % 60_000) / 1000)
-                                }
-                                com.lofipod.app.player.SleepTimerMode.EndOfEpisode ->
-                                    "Sleep: end of episode"
-                            }
-                            AssistChip(
-                                onClick = { sleepDialogOpen = true },
-                                label = {
-                                    Text(
-                                        label,
-                                        color = if (st.fading) MaterialTheme.colorScheme.primary
-                                        else LocalContentColor.current,
-                                    )
-                                },
-                                modifier = Modifier.align(Alignment.CenterStart),
-                            )
-                        }
                         if (showFlushButton) {
                             IconButton(
                                 onClick = { controller.flushAudio() },
@@ -932,6 +911,36 @@ fun PlayerScreen(
                                 )
                             }
                         }
+                    }
+                    // Active sleep-timer readout — its OWN centered line, not
+                    // a CenterStart overlay in the SpeedChip box (the wide
+                    // "end of episode" label collided with the centered chip
+                    // on 360dp screens). Recomposition rides the 500ms
+                    // position poll while playing (the only time a timer can
+                    // be live — manual pause cancels it), so the countdown
+                    // stays fresh without its own ticker. Tap to adjust.
+                    sleepTimerState?.let { st ->
+                        Spacer(Modifier.height(4.dp))
+                        val label = when (st.mode) {
+                            is com.lofipod.app.player.SleepTimerMode.Minutes -> {
+                                val rem = ((st.endAtElapsedMs ?: 0L) -
+                                    android.os.SystemClock.elapsedRealtime())
+                                    .coerceAtLeast(0L)
+                                "Sleep %d:%02d".format(rem / 60_000, (rem % 60_000) / 1000)
+                            }
+                            com.lofipod.app.player.SleepTimerMode.EndOfEpisode ->
+                                "Sleep: end of episode"
+                        }
+                        AssistChip(
+                            onClick = { sleepDialogOpen = true },
+                            label = {
+                                Text(
+                                    label,
+                                    color = if (st.fading) MaterialTheme.colorScheme.primary
+                                    else LocalContentColor.current,
+                                )
+                            },
+                        )
                     }
                 }
             }
@@ -1290,7 +1299,9 @@ private fun NotesTab(
     fun pauseIfWanted() {
         if (pauseOnNote && controller.state.value.isPlaying) {
             resumeAfterDialog = true
-            controller.pause()
+            // Transient bracket, not an "I'm done" pause — preserves an
+            // armed sleep timer (closeDialog's play() never re-arms one).
+            controller.pauseTransient()
         }
     }
 

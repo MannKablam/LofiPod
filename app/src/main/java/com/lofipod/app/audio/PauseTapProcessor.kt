@@ -55,7 +55,11 @@ class PauseTapProcessor : BaseAudioProcessor() {
     /** False = a flush happened and no fresh anchor has been adopted yet. */
     private var anchored = false
     private var anchorMediaMs = 0L
-    private var adoptedAnchorGen = 0L
+    /** Generation fence captured AT flush time. Adoption requires a post
+     *  NEWER than the flush — a stale mailbox entry (e.g. a speed-change
+     *  post from before a seek, never adopted because we were anchored)
+     *  must not be mistaken for the post-flush position. */
+    private var flushGen = 0L
     /** Reusable per-frame scratch so the copy doesn't re-read the buffer. */
     private var frameScratch = ShortArray(0)
 
@@ -146,6 +150,12 @@ class PauseTapProcessor : BaseAudioProcessor() {
         framesSinceFlush = 0L
         quietRunFrames = 0L
         anchored = false
+        // Fence the mailbox: only posts arriving AFTER this flush qualify
+        // for adoption. If the correct post happens to land just before
+        // the flush (app-thread/audio-thread ordering is unguaranteed),
+        // we stay unanchored until the next post — typically the READY
+        // transition a moment later. Degrade, never mis-anchor.
+        flushGen = postedAnchorGen
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -153,9 +163,8 @@ class PauseTapProcessor : BaseAudioProcessor() {
         // anchor is the media position of frame 0 since the flush.
         if (!anchored) {
             val gen = postedAnchorGen
-            if (gen != adoptedAnchorGen) {
+            if (gen != flushGen) {
                 anchorMediaMs = postedAnchorMs
-                adoptedAnchorGen = gen
                 anchored = true
             }
         }
