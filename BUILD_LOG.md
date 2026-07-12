@@ -2,7 +2,7 @@
 
 Running notes on what's changed and why. Newest at top.
 
-## v0.10.28 (pending tag) — Voice-suite activity visualizer (2026-07-12)
+## v0.10.28 — Voice-suite activity visualizer (2026-07-12)
 
 The four voice stages are deliberately subtle, so it was never clear from
 listening whether they were actually doing anything. Now you can see it:
