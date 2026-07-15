@@ -473,9 +473,10 @@ interface LofiDownloadDao {
         AutoDownloadEntity::class,
         EpisodeScriptureEntity::class,
         LofiDownloadEntity::class,
-        EpisodeHeatEntity::class
+        EpisodeHeatEntity::class,
+        EpisodeAnalysisEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -493,6 +494,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun episodeScriptureDao(): EpisodeScriptureDao
     abstract fun lofiDownloadDao(): LofiDownloadDao
     abstract fun episodeHeatDao(): EpisodeHeatDao
+    abstract fun episodeAnalysisDao(): EpisodeAnalysisDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -867,6 +869,36 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v18 → v19: episode_analysis table — read-ahead scan results
+         * (full-file audible-pause spans + a 2000-bucket waveform
+         * envelope) produced offline by EpisodeAudioAnalyzer for the
+         * structured scrubber to draw. Rows appear lazily as episodes
+         * are displayed and only for scans that ran to completion, so
+         * the table starts empty. The envelope is a BLOB (one unsigned
+         * byte per bucket) rather than house-style CSV — at 2000 buckets
+         * CSV would triple the row for a payload nobody reads in a
+         * sqlite shell; pause spans stay CSV. Derived analytics —
+         * excluded from Backup.kt's curated export set, like
+         * episode_heat.
+         */
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_analysis (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        durationMs INTEGER NOT NULL,
+                        sensitivity INTEGER NOT NULL,
+                        pausesCsv TEXT NOT NULL,
+                        envelope BLOB NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
          * v15 → v16: add lofi_download table. The OkHttp-based downloader's
          * persistent state — replaces Media3's StandaloneDatabaseProvider +
          * DownloadIndex which we ditched in v0.6.9 after four versions of
@@ -971,7 +1003,7 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_11_12), timed(MIGRATION_12_13),
                         timed(MIGRATION_13_14), timed(MIGRATION_14_15),
                         timed(MIGRATION_15_16), timed(MIGRATION_16_17),
-                        timed(MIGRATION_17_18)
+                        timed(MIGRATION_17_18), timed(MIGRATION_18_19)
                     )
                     .build().also { instance = it }
             }

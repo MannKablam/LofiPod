@@ -40,11 +40,34 @@ import kotlinx.coroutines.withContext
 
 /**
  * Single point of access to the [MediaController].
- * Lifetimes: created when MainActivity starts, released when it stops.
+ *
+ * Lifetime: one process-scoped instance hangs off [LofiPodApp]; every
+ * MainActivity incarnation borrows it and calls [connect] again, which
+ * tolerates the repetition (see the reconnection contract there). The
+ * scope matters because playback bookkeeping lives in coroutines on
+ * [scope]: the STATE_ENDED autoplay advance, the confirmation countdown,
+ * the sleep timer. All of that must keep running when the ACTIVITY dies
+ * while PlaybackService plays on — swipe-from-recents mid-episode is the
+ * everyday case — so an activity-scoped controller (released in
+ * onDestroy) silently beheaded autoplay exactly when the listener wasn't
+ * looking at the screen. Process death is the effective teardown;
+ * [release] exists for any scope that genuinely ends but has no caller
+ * on the happy path.
  */
 class PlayerController(private val context: Context) {
 
     private var controller: MediaController? = null
+
+    /**
+     * In-flight [MediaController.Builder.buildAsync] handle. [connect]
+     * consults it so a connect that lands while a build is still
+     * resolving doesn't start a second one — both futures would
+     * complete, and the losing controller would leak fully bound with
+     * [listener] attached, doubling every player callback (a doubled
+     * STATE_ENDED advance skips an episode).
+     */
+    private var controllerFuture:
+        com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -139,9 +162,11 @@ class PlayerController(private val context: Context) {
      * timer and restores full volume (an explicit pause means the user
      * is awake; a hidden timer firing later would surprise).
      *
-     * Known limitation, accepted for v1: the job lives in the activity-
-     * owned controller scope — swiping the app from recents while the
-     * service keeps playing kills the timer.
+     * The job lives in the controller scope, which is process-lifetime:
+     * it rides out activity recreation and a swipe-from-recents while
+     * the service keeps playing. Process death still takes it — but
+     * process death takes the audio too, leaving the timer nothing to
+     * silence.
      */
     private val _sleepTimer = MutableStateFlow<SleepTimerState?>(null)
     val sleepTimer: StateFlow<SleepTimerState?> = _sleepTimer.asStateFlow()
@@ -253,11 +278,52 @@ class PlayerController(private val context: Context) {
     fun connect(onReady: () -> Unit) {
         // Pin this controller as the autoplay-confirm target for any
         // service-side media-button intercept (BT, vehicle, system-
-        // notification play/pause). Unpinned in [release].
+        // notification play/pause). Re-pinning the same instance on every
+        // activity recreation is a harmless overwrite; [release] unpins.
         AutoplayConfirmBridge.bind(this)
+        // Reconnection contract for the process-scoped instance: every
+        // MainActivity recreation lands here, usually against a controller
+        // that is alive and already synced with the session. Building a
+        // second MediaController in that state would leave the first one
+        // bound with [listener] still attached — every player callback
+        // doubled, and a doubled STATE_ENDED advance skips an episode. So a
+        // healthy connection short-circuits, and only a genuinely dead
+        // controller (the service side released the session) is torn down
+        // and rebuilt against the fresh one.
+        controller?.let { existing ->
+            if (existing.isConnected) {
+                onReady()
+                return
+            }
+            // Same defensive wraps as [release]: Media3 routes controller
+            // release through unbindService, which throws when the binding
+            // is already gone — and a husk this dead isn't worth crashing
+            // over.
+            try {
+                existing.removeListener(listener)
+            } catch (t: Throwable) {
+                android.util.Log.w(
+                    "LofiPodPlayer", "stale controller removeListener threw: ${t.message}"
+                )
+            }
+            try {
+                existing.release()
+            } catch (t: Throwable) {
+                android.util.Log.w(
+                    "LofiPodPlayer", "stale controller release threw: ${t.message}"
+                )
+            }
+            controller = null
+        }
+        // A build already resolving will publish [controller] and run its
+        // own onReady when the future fires; racing it with a second build
+        // is the double-listener hazard above. The dropped onReady is fine —
+        // the only caller passes a no-op.
+        if (controllerFuture?.isDone == false) return
         val tBuildController = System.nanoTime()
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
+        controllerFuture = future
         future.addListener({
             com.lofipod.app.diagnostics.StartupTimings.record(
                 "media_controller_connect", tBuildController,
@@ -466,6 +532,13 @@ class PlayerController(private val context: Context) {
         }
     }
 
+    /**
+     * Full teardown, the mirror of [connect]. Nothing on the process-
+     * scoped happy path calls this — the controller deliberately
+     * outlives every activity, and the process's death is the real
+     * release — but the sequence below remains the correct disposal for
+     * any scope that genuinely ends.
+     */
     fun release() {
         // Sleep timer dies with the controller; leave the chain at full
         // volume for whatever plays next session.
@@ -497,6 +570,7 @@ class PlayerController(private val context: Context) {
             )
         }
         controller = null
+        controllerFuture = null
         _pendingReturn.value = null
         pendingPlay = null
         autoplayTimerJob?.cancel()
@@ -845,8 +919,21 @@ class PlayerController(private val context: Context) {
                 val pos = c.currentPosition
                 val dur = c.duration.takeIf { it > 0 } ?: 0L
                 withContext(Dispatchers.IO) {
-                    if (dao.get(outgoingId) != null) {
-                        dao.updatePosition(outgoingId, pos, dur, System.currentTimeMillis(), 0L)
+                    val outgoing = dao.get(outgoingId)
+                    if (outgoing != null) {
+                        // Same duration-preserving rule as the service's
+                        // saveCurrent: a TIME_UNSET duration read (mapped to
+                        // 0 above) must not clobber a known durationMs — the
+                        // derived "played" predicate needs durationMs > 0,
+                        // so one zero write would un-mark a completed
+                        // episode.
+                        dao.updatePosition(
+                            outgoingId,
+                            pos,
+                            if (dur > 0) dur else outgoing.durationMs,
+                            System.currentTimeMillis(),
+                            0L,
+                        )
                     }
                     if (forcedStartMs == null && pos > 0) {
                         checkpointDao.insert(
@@ -1622,7 +1709,17 @@ class PlayerController(private val context: Context) {
             while (isActive) {
                 delay(STALL_POLL_INTERVAL_MS)
                 val c = controller ?: continue
-                if (!c.playWhenReady) {
+                // End-of-stream parks the player with its position pinned at
+                // the duration while playWhenReady can linger true (ExoPlayer
+                // never lowers it at ENDED; the service-side end-of-stream
+                // pause clears it, but this loop must not depend on that
+                // propagation winning a race). Every arm reads that pin as a
+                // stall — arm C in particular would eventually
+                // seekTo(duration - 100 ms), yanking the player back OUT of
+                // ENDED, replaying the tail, and re-running the whole
+                // STATE_ENDED branch in a loop. Treat ENDED exactly like a
+                // pause: reset baselines and sample nothing.
+                if (!c.playWhenReady || c.playbackState == Player.STATE_ENDED) {
                     // User paused. Reset both timers so a long pause doesn't
                     // pre-trip either watchdog arm on resume. Also drop the
                     // sticky ring buffer — a paused gap shouldn't count
@@ -2484,7 +2581,10 @@ class PlayerController(private val context: Context) {
         // user has the setting on.
         val settings = com.lofipod.app.data.Settings(app)
         val enabled = settings.autoPlayNextInFeed.first()
-        if (!enabled || excluding == null) return
+        if (!enabled || excluding == null) {
+            if (!enabled) recordAutoplayStop("autoPlayNextInFeed is off")
+            return
+        }
 
         // Kabod packs advance by PART ORDER, not pubDate. An exposition
         // series is authored as parts 1..N (possibly multi-preacher, where
@@ -2500,6 +2600,12 @@ class PlayerController(private val context: Context) {
             if (next != null) {
                 lastPlayWasAutoplay = true
                 playEpisode(next.episode, next.pack.title, next.pack.artworkUrl)
+            } else {
+                recordAutoplayStop(
+                    "end of kabod pack ${kabodMeta?.packId} " +
+                        "(or pack asset unreadable) after part ${kabodMeta?.partNumber}"
+                )
+                _transientMessages.tryEmit("Autoplay stopped: end of the pack.")
             }
             // End of the pack (or pack asset unreadable): stop rather than
             // falling through — the pubDate walk is never a valid order for
@@ -2509,8 +2615,28 @@ class PlayerController(private val context: Context) {
         }
 
         val finishedFeedUrl = withContext(Dispatchers.IO) { dao.get(excluding)?.feedUrl }
-            ?: return
-        val pod = app.repo.cached(finishedFeedUrl) ?: return
+            ?: run {
+                recordAutoplayStop("no episode_state row for finished guid $excluding")
+                return
+            }
+        // The walk needs the feed's episode list. A bare cached() lookup was
+        // the original code here, and it left feed-next silently dead in two
+        // real cases: the in-memory cache isn't hydrated yet this process
+        // (the episode outlived the catalog visit that would have primed
+        // it), and kabod:// packs, whose synthetic feeds are NEVER in the
+        // RSS disk cache — they hydrate only through KabodAssetLoader.
+        // Every other cached() consumer (EpisodesScreen, the note-link
+        // resolver in MainActivity) already awaits disk hydration and falls
+        // back to the kabod loader; this call site predated those fixes and
+        // was the one place the pattern was missing.
+        app.repo.hydrateFromDisk()
+        val pod = app.repo.cached(finishedFeedUrl)
+            ?: app.kabodLoader.takeIf { it.isKabodFeed(finishedFeedUrl) }
+                ?.loadIntoCache(finishedFeedUrl)
+            ?: run {
+                recordAutoplayStop("feed not loaded: $finishedFeedUrl")
+                return
+            }
 
         val playedGuids = withContext(Dispatchers.IO) {
             // Anything previously played to completion gets skipped — keeps the
@@ -2551,10 +2677,36 @@ class PlayerController(private val context: Context) {
             else -> unplayed
                 .filter { (it.pubDateMillis ?: Long.MAX_VALUE) < finishedPub }
                 .maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
-        }) ?: return
+        }) ?: run {
+            // Boundary of the feed in the configured direction (or every
+            // remaining episode is already played). The no-wraparound stop
+            // is deliberate — but it must never again be a silent one:
+            // leave a breadcrumb and tell the listener why the player is
+            // about to go quiet.
+            recordAutoplayStop(
+                "no ${if (directionUp) "newer" else "older"} unplayed episode " +
+                    "after $excluding in $finishedFeedUrl"
+            )
+            _transientMessages.tryEmit(
+                "Autoplay stopped: no unplayed episode left in that direction."
+            )
+            return
+        }
 
         lastPlayWasAutoplay = true
         playEpisode(candidate, pod.title, pod.artworkUrl)
+    }
+
+    /**
+     * Diagnostics breadcrumb for every path that ends an autoplay advance
+     * without starting anything. The advance chain has many legitimate dead
+     * ends (feed boundaries, settings, missing metadata), and every one of
+     * them used to be a bare `return` — indistinguishable, after the fact,
+     * from a bug. One line in the playback ring turns "autoplay just stops
+     * sometimes" into a readable trail on the diagnostics screen.
+     */
+    private fun recordAutoplayStop(detail: String) {
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback("autoplay_stop", detail)
     }
 
     /**

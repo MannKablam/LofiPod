@@ -18,6 +18,7 @@ import com.lofipod.app.parser.SourceGroup
  *   CCM — Sunday Morning Service        — podcastindex 6316408
  *   CCM — Sunday Evening Service        — podcastindex 6316409
  *   BibleThinker (Mike Winger)          — podcastindex 5128808
+ *   Compelled (Paul Hastings)           — iTunes 1412479643
  *   Now That We're A Family             — podcastindex 4469282
  *   Simple Farmhouse Life               — podcastindex 691589
  *   Ask Pastor John                     — iTunes 618132843
@@ -118,6 +119,14 @@ object Sources {
         ),
         SourceEntry(
             feedUrl = "https://feeds.castos.com/41z28",
+            displayName = null
+        ),
+        // Compelled (Paul Hastings) — long-form conversion testimonies, one
+        // guest per episode. This is the Megaphone feed behind
+        // compelledpodcast.com; the feed's own title carries the full
+        // "Christian Stories & Testimonies" subtitle.
+        SourceEntry(
+            feedUrl = "https://feeds.megaphone.fm/compelled",
             displayName = null
         ),
         SourceEntry(

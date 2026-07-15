@@ -224,7 +224,18 @@ class PlaybackService : MediaSessionService() {
                     startSaveTicker(player)
                 } else {
                     stopSaveTicker()
-                    saveCurrent(player, listenDelta = 0L)
+                    // At a natural end (READY -> ENDED) isPlaying flips false in
+                    // the same event batch as the ENDED transition. Skip the
+                    // save here in that case: onPlaybackStateChanged(ENDED) owns
+                    // the final write via saveEnded, which pins the position up
+                    // to the duration. A raw saveCurrent racing it on the IO
+                    // pool could commit last and rewrite the position short of
+                    // the end, un-marking a completed episode whose playhead
+                    // parks below the declared duration (a VBR file whose header
+                    // overstates length). Every non-end pause still saves.
+                    if (player.playbackState != Player.STATE_ENDED) {
+                        saveCurrent(player, listenDelta = 0L)
+                    }
                     releasePlaybackWakeLock()
                 }
             }
@@ -299,6 +310,35 @@ class PlaybackService : MediaSessionService() {
                 // it's a valid anchor for the restarted stream.
                 if (playbackState == Player.STATE_READY) {
                     sharedPauseTap.postAnchor(player.currentPosition)
+                }
+                if (playbackState == Player.STATE_ENDED) {
+                    // Natural end of stream. Two service-side duties, both of
+                    // which must hold even when no activity (and therefore no
+                    // PlayerController) is alive to run the autoplay advance:
+                    //
+                    // 1. Mark the episode played. The isPlaying=false save
+                    //    above covers most ends, but a BUFFERING -> ENDED hop
+                    //    (isPlaying was already false when the source ran
+                    //    out) fires no save at all, leaving the newest row a
+                    //    ticker write up to 10 s short of the end — outside
+                    //    the 5 s completion window. Write the final position
+                    //    explicitly, pinned to the best-known duration, so
+                    //    the derived completion predicate always holds.
+                    saveEnded(player)
+                    // 2. Leave the playing state. ExoPlayer parks at ENDED
+                    //    with playWhenReady still true — "wants to play, has
+                    //    nothing left" — which keeps every intent-to-play
+                    //    consumer armed: the controller-side stall watchdog
+                    //    keeps polling a position pinned at the duration
+                    //    (and would eventually seek the player back OUT of
+                    //    ENDED to "recover" it), and onTaskRemoved reads the
+                    //    session as active and keeps the service alive after
+                    //    a swipe-from-recents. Dropping playWhenReady makes
+                    //    end-of-stream an honest pause: the play/pause icon
+                    //    flips to "play" everywhere, and when the advance
+                    //    picks a next episode it calls play() a beat later,
+                    //    exactly as if the user had tapped it.
+                    player.pause()
                 }
             }
 
@@ -559,8 +599,16 @@ class PlaybackService : MediaSessionService() {
         val now = System.currentTimeMillis()
         scope.launch(Dispatchers.IO) {
             val dao = (application as LofiPodApp).db.episodeStateDao()
-            if (dao.get(id) != null) {
-                dao.updatePosition(id, pos, dur, now, listenDelta)
+            val row = dao.get(id)
+            if (row != null) {
+                // A live duration snapshot can legitimately read TIME_UNSET
+                // (mapped to 0 above) around item transitions and degenerate
+                // sources. updatePosition overwrites durationMs
+                // unconditionally, so writing that zero would silently
+                // un-mark a completed episode — the derived "played"
+                // predicate requires durationMs > 0. Prefer the last known
+                // duration whenever the player can't supply one.
+                dao.updatePosition(id, pos, if (dur > 0) dur else row.durationMs, now, listenDelta)
             }
             // Replay heatmap: only real listen ticks accrue heat —
             // listenDelta == 0 is a save-on-pause/destroy snapshot where no
@@ -572,12 +620,57 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Final save for a stream that reached STATE_ENDED. Companion to
+     * [saveCurrent] with end-of-stream semantics: the row's position is
+     * pinned up to the best-known duration so the derived completion
+     * predicate (positionMs >= durationMs - 5s) holds no matter how the
+     * last live snapshot landed.
+     *
+     * Two realities this compensates for:
+     *   - isPlaying can already be false when ENDED arrives (a
+     *     BUFFERING -> ENDED hop after a near-end underrun, or a
+     *     truncated source), so the save-on-pause path never fires and
+     *     the freshest row is a ticker write up to 10 s behind the end.
+     *   - player.duration can read TIME_UNSET on the same degenerate
+     *     sources; the previously persisted durationMs is then the only
+     *     usable end mark, so prefer it over zero. When neither side
+     *     knows a duration there is nothing to pin against — the plain
+     *     position write is still recorded, and the episode simply
+     *     can't satisfy a predicate that requires a duration.
+     *
+     * No listen delta and no heat tick: this is a bookkeeping
+     * correction, not elapsed listening — the ticker already accounted
+     * for the real time spent.
+     */
+    private fun saveEnded(player: Player) {
+        val id = player.currentMediaItem?.mediaId ?: return
+        val pos = player.currentPosition
+        val dur = player.duration.takeIf { it > 0 } ?: 0L
+        val now = System.currentTimeMillis()
+        scope.launch(Dispatchers.IO) {
+            val dao = (application as LofiPodApp).db.episodeStateDao()
+            val row = dao.get(id) ?: return@launch
+            val endDur = if (dur > 0) dur else row.durationMs
+            val endPos = if (endDur > 0) maxOf(pos, endDur) else pos
+            dao.updatePosition(id, endPos, endDur, now, 0L)
+        }
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = mediaSession
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         val player = mediaSession?.player
         if (player != null) {
-            saveCurrent(player, listenDelta = 0L)
+            // Parked at ENDED, the final write must stay pinned to the
+            // duration (saveEnded), not overwritten with the raw parked
+            // position (saveCurrent) — otherwise a swipe-from-recents after
+            // an episode finished un-marks it as played.
+            if (player.playbackState == Player.STATE_ENDED) {
+                saveEnded(player)
+            } else {
+                saveCurrent(player, listenDelta = 0L)
+            }
             if (!player.playWhenReady || player.mediaItemCount == 0) {
                 stopSelf()
             }
@@ -585,7 +678,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        mediaSession?.player?.let { saveCurrent(it, listenDelta = 0L) }
+        mediaSession?.player?.let {
+            // Preserve the completion pin at end-of-stream (see onTaskRemoved).
+            if (it.playbackState == Player.STATE_ENDED) saveEnded(it)
+            else saveCurrent(it, listenDelta = 0L)
+        }
         stopSaveTicker()
         releasePlaybackWakeLock()
         mediaSession?.run {

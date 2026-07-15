@@ -253,9 +253,13 @@ class PauseTapProcessor : BaseAudioProcessor() {
         /**
          * Amplitude ceiling per step, in 16-bit PCM units (1024 ≈ 3% FS,
          * same scale as SilenceSkippingProcessor). Higher sensitivity =
-         * shallower gaps count as pauses.
+         * shallower gaps count as pauses. Public for the same reason as
+         * [minSilenceMsFor]: the read-ahead scanner ([EpisodeAudioAnalyzer])
+         * detects pauses offline on the same raw source signal this tap
+         * sees live, and sharing the table keeps its precomputed marks in
+         * agreement with the live ones — tune here, both move together.
          */
-        private fun thresholdFor(sensitivity: Int): Int = when (sensitivity.coerceIn(1, 5)) {
+        fun thresholdFor(sensitivity: Int): Int = when (sensitivity.coerceIn(1, 5)) {
             1 -> 640
             2 -> 832
             3 -> 1_024

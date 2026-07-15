@@ -1,5 +1,6 @@
 package com.lofipod.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,7 +16,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -96,6 +99,16 @@ private suspend fun resolvePreviewData(app: LofiPodApp, guid: String): PreviewDa
             else -> null
         }
     }
+
+/**
+ * Touch-target size of the pause-skip control AND of the empty slot that
+ * mirrors it at the transport row's far right. The two read one constant
+ * because they must never drift apart: the row centers the play button
+ * by giving both of its flanks identical fixed widths, so the equal gaps
+ * SpaceEvenly hands out land the button's center exactly on the row's
+ * center. See the transport Row in [PlayerScreen] for the geometry.
+ */
+private val PauseSkipTouchTargetSize = 52.dp
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -271,6 +284,29 @@ fun PlayerScreen(
             heatBuckets = row?.let { com.lofipod.app.data.EpisodeHeatRecorder.decode(it.bucketsCsv) }
         }
     }
+    // Offline analysis: whole-file pause cut marks plus the measured
+    // duration to map them against. Same explicit state + collect shape
+    // as the heat row above, for the same flow-swap reason. The analyzer
+    // scans local files only (never a second network stream — that
+    // contends with live playback and the auto-download), so the effect
+    // re-keys on the episode's DOWNLOAD STATE: re-firing ensureAnalyzed
+    // the moment the download reaches COMPLETED is what starts the scan,
+    // and the repository makes repeat calls free (present row / in-flight
+    // scan short-circuit).
+    var episodeAnalysis by remember(state.currentEpisodeGuid) {
+        mutableStateOf<com.lofipod.app.audio.EpisodeAnalysis?>(null)
+    }
+    val analysisDownloadState =
+        state.currentEpisodeGuid?.let { downloadsByGuid[it]?.state }
+    LaunchedEffect(state.currentEpisodeGuid, analysisDownloadState, isPreview) {
+        val g = state.currentEpisodeGuid ?: return@LaunchedEffect
+        // Preview never scans: it's a static look at a non-playing episode
+        // whose local file may not be present. Live episodes resolve their
+        // local source (downloaded file or device content:// guid) from the
+        // guid alone.
+        if (!isPreview) app.episodeAnalysis.ensureAnalyzed(g)
+        app.episodeAnalysis.analysisFor(g).collect { episodeAnalysis = it }
+    }
     // Scripture markers: one-shot per episode, cached-transcript-only (no
     // network — transcripts arrive when the user opens the Transcript tab).
     var scrubberMarkers by remember(state.currentEpisodeGuid) {
@@ -312,6 +348,32 @@ fun PlayerScreen(
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose { onPlayerTabsFullscreenChange(false) }
     }
+
+    // Expanded waveform panel (v0.11): press-and-hold on the playback bar
+    // swaps the artwork square for a pannable close-up of the analyzer's
+    // amplitude envelope (see WaveformPanel). Per-screen state, live mode
+    // only — preview has no playhead and deliberately never feeds the
+    // analyzer (a preview's audio URL must not be scanned under the live
+    // guid), so the panel would have nothing truthful to show there.
+    var waveformExpanded by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+
+    // The panel lives inside the top block, which tabsFullscreen removes
+    // wholesale, and its trigger only exists on the live scrubber. If
+    // either exit happens while the panel is open (active-tab tap; the
+    // playing episode drifting away from previewGuid via autoplay),
+    // collapse — otherwise the BackHandler below would keep intercepting
+    // back on behalf of a surface that is no longer on screen.
+    LaunchedEffect(tabsFullscreen, isPreview) {
+        if (tabsFullscreen || isPreview) waveformExpanded = false
+    }
+
+    // Back collapses the panel instead of leaving the player. This
+    // composes deeper than AppNav's player-route BackHandler
+    // (feedAwareBackFromPlayer in MainActivity), so it wins exactly while
+    // enabled — the gate must stay precisely "panel open", or the
+    // feed-aware back-to-episodes navigation silently breaks.
+    BackHandler(enabled = waveformExpanded) { waveformExpanded = false }
 
     // Diagnostics-tab toggle from Settings. When false (default) the player
     // tab strip is Notes / Details / Transcript only. When true, a 4th
@@ -610,18 +672,39 @@ fun PlayerScreen(
                     previewData?.podcast?.title ?: ""
                 else state.currentArtist ?: ""
 
-                // Bigger artwork with a thin-but-bold ink stroke between the
-                // image and the screen edge (the chunky border is part of the
-                // theme language — same as cassette/reel/ticker placeholder
-                // surfaces). Uses outline at 0.7-alpha so it reads on every theme.
-                ThemedArtwork(
-                    artworkUrl = displayedArtwork,
-                    size = 260.dp,
-                    modifier = Modifier.border(
-                        width = 3.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+                // Artwork square, or — while the hold-gesture panel is open —
+                // the expanded waveform in its place. Same 260dp height either
+                // way, so the title, scrubber, and transport below never
+                // reflow when the panel toggles; the artwork is the one
+                // element up here that is pure decoration, which is exactly
+                // why it's the one that cedes its space. Everything the
+                // panel needs to stay honest (scrubber for the whole-episode
+                // view, transport, the autoplay-countdown morph on the play
+                // button) stays visible around it.
+                if (waveformExpanded && !isPreview) {
+                    WaveformPanel(
+                        analysis = episodeAnalysis,
+                        positionSource = { controller.currentPositionMs() },
+                        onSeek = { controller.seekTo(it) },
+                        onClose = { waveformExpanded = false },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(260.dp),
                     )
-                )
+                } else {
+                    // Bigger artwork with a thin-but-bold ink stroke between the
+                    // image and the screen edge (the chunky border is part of the
+                    // theme language — same as cassette/reel/ticker placeholder
+                    // surfaces). Uses outline at 0.7-alpha so it reads on every theme.
+                    ThemedArtwork(
+                        artworkUrl = displayedArtwork,
+                        size = 260.dp,
+                        modifier = Modifier.border(
+                            width = 3.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+                        )
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(
                     displayedTitle,
@@ -700,8 +783,17 @@ fun PlayerScreen(
                         durationMs = durationMs,
                         heatBuckets = heatBuckets,
                         pauses = scrubberPauses,
+                        analysis = episodeAnalysis,
                         markers = scrubberMarkers,
                         onSeek = { controller.seekTo(it) },
+                        // Press-and-hold opens the expanded waveform above.
+                        // The haptic matches the transport row's other
+                        // long-press (pause-skip sensitivity), which gets
+                        // the same pulse via combinedClickable.
+                        onExpandWaveform = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            waveformExpanded = true
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -727,11 +819,26 @@ fun PlayerScreen(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                // SpaceEvenly + fillMaxWidth instead of fixed spacers: four
-                // fixed-size controls total 268dp, which fits a 320dp-wide
-                // window (272dp usable inside the 24dp side padding) only if
-                // the gaps flex. Fixed 8-16dp spacers overflowed and clipped
-                // the outer buttons on compact/split-screen widths.
+                // SpaceEvenly + fillMaxWidth instead of fixed spacers: the
+                // fixed-size controls fit a 320dp-wide window (272dp usable
+                // inside the 24dp side padding) only if the gaps flex. Fixed
+                // 8-16dp spacers overflowed and clipped the outer buttons on
+                // compact/split-screen widths.
+                //
+                // The trailing symmetry slot is what puts the play button on
+                // the screen's midline. SpaceEvenly hands out equal GAPS, so
+                // the button sits centered only when the fixed widths on its
+                // two flanks match — and bare, they don't: pause-skip plus
+                // seek-back on the left against seek-forward alone on the
+                // right pushes the button rightward by half the width
+                // difference. An empty slot mirroring the pause-skip's exact
+                // footprint on the far right makes both flanks 116dp, and
+                // the equal-gap arithmetic then lands the play center on the
+                // row center at EVERY width — the gaps all grow or shrink by
+                // the same amount, so the symmetry (and the centering) holds
+                // even on windows narrow enough to drive them slightly
+                // negative, where adjacent ripple areas overlap a few dp but
+                // the glyphs themselves stay clear of each other.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -747,7 +854,7 @@ fun PlayerScreen(
                         // long-press slot.
                         Box(
                             modifier = Modifier
-                                .size(52.dp)
+                                .size(PauseSkipTouchTargetSize)
                                 .clip(androidx.compose.foundation.shape.CircleShape)
                                 .combinedClickable(
                                     onClick = { controller.skipBackToPreviousPause() },
@@ -850,6 +957,14 @@ fun PlayerScreen(
                                 modifier = Modifier.size(56.dp)
                             )
                         }
+                        // The symmetry slot — pure geometry, no control
+                        // lives here (nothing in the transport family wants
+                        // the position, and inventing a control to fill it
+                        // would be worse than the space). It balances the
+                        // pause-skip control so the play button's flanks
+                        // weigh the same; the comment above the Row carries
+                        // the full argument.
+                        Spacer(Modifier.size(PauseSkipTouchTargetSize))
                     }
                 }
                 // Error chip if the player just failed (live only). The
@@ -1032,6 +1147,27 @@ fun PlayerScreen(
                                     .sharedPauseTap.setSensitivity(level)
                                 scope.launch {
                                     pauseSkipSettings.setPauseSkipSensitivity(level)
+                                    // The offline analyzer's cut marks carry
+                                    // a sensitivity too, and the repository
+                                    // rescans any row whose stored level
+                                    // disagrees with the setting — but only
+                                    // when poked. Poke it AFTER the DataStore
+                                    // write lands (the scan reads the flow;
+                                    // firing early would re-scan at the old
+                                    // level and conclude nothing changed),
+                                    // cancelling any pass already mid-decode
+                                    // so a drag across several levels
+                                    // converges on the last one instead of
+                                    // finishing a stale scan first. Other
+                                    // sensitivity writers (Settings, audio
+                                    // diagnostics) need no hook: the marks
+                                    // are only visible here, and re-entering
+                                    // this screen re-fires ensureAnalyzed
+                                    // anyway.
+                                    state.currentEpisodeGuid?.let { g ->
+                                        app.episodeAnalysis.cancel(g)
+                                        app.episodeAnalysis.ensureAnalyzed(g)
+                                    }
                                 }
                             }
                         },

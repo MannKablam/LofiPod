@@ -106,7 +106,16 @@ class MainActivity : ComponentActivity() {
             notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        playerController = PlayerController(this)
+        // Borrowed, not owned: the controller is process-scoped (it lives
+        // on LofiPodApp) so the playback bookkeeping in its coroutine
+        // scope — the STATE_ENDED autoplay advance, the confirmation
+        // countdown, the sleep timer — survives this activity dying while
+        // the service plays on (swipe-from-recents). connect() below is
+        // recreation-safe: against a healthy controller it reuses the
+        // live MediaController connection instead of stacking a second
+        // one, so there is deliberately no matching release() in
+        // onDestroy — the process's death is the release.
+        playerController = (application as com.lofipod.app.LofiPodApp).playerController
 
         setContent {
             LofiPodTheme {
@@ -155,10 +164,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        playerController.release()
-        super.onDestroy()
-    }
+    // No onDestroy override: the process-scoped playerController must NOT
+    // be released with the activity — see the comment at its assignment
+    // in onCreate.
 }
 
 /**

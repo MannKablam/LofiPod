@@ -2,6 +2,189 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.29 — Read-ahead analyzer, scrubber redesign, end-of-playback fixes (2026-07-14)
+
+Background engine that scans an episode's audio ahead of playback and
+caches what the scrubber needs, plus the scrubber redesign that consumes
+it: replay heat as a real cold-to-hot heatmap, pause marks as whole-file
+cut marks. Same batch: a sweep over what happens when an episode reaches
+its natural end (advance, pause state, mark-played), and player-screen
+finishing touches (centered transport, sensitivity-change rescan hook).
+
+### Bug-hunt corrections (2026-07-15)
+
+A multi-agent bug hunt over the batch above surfaced eleven findings; six
+confirmed under adversarial verification, plus five more a session
+interruption left unadjudicated — all reviewed against the working tree
+and resolved here. Where a fix changed behavior the bullets below
+describe, the item here is authoritative (and those bullets are corrected
+in place).
+
+- **Analyzer scans local files only — it never streams.** The old
+  "progressive stream" fallback opened a second full-file HTTP fetch of
+  an episode that was still live-streaming and auto-downloading: exactly
+  the second-socket CDN contention `AUTOPLAY_DOWNLOAD_DELAY_MS` exists to
+  avoid (playback rebuffering, ~3x metered data), and a blocked network
+  read had no cancellation path off the single decode thread, so one
+  stalled CDN wedged every queued scan for the session. Now the scan
+  waits for the downloaded (or device `content://`) file — which playing
+  an episode produces within a minute anyway — and PlayerScreen re-fires
+  `ensureAnalyzed` when the download reaches COMPLETED. This one change
+  also closes the A→B transition-window bug (a fast advance scanned A's
+  audio under B's guid — it needed the streaming path) and the "one
+  transient stream failure poisons the guid for the whole session" trap.
+- **Heat baseline is the median, full stop.** Capping it at the
+  theoretical 1x rate broke below 1x: a single 0.75x/0.5x pass (both
+  quick-chip speeds) accrues MORE ticks per bucket than the 1x estimate,
+  so `min()` undercut the real single-pass rate and painted the whole bar
+  hot after one listen. The median already self-calibrates to any speed;
+  the cap only ever equaled it at ≥1x and only ever hurt below.
+- **Cut marks share the playhead's denominator.** Ticks map against the
+  player's duration now (like the thumb and every seek), not the scan's
+  own measured duration — otherwise on a VBR file whose two durations
+  disagree, every tick sat visibly ahead of or behind the audible pause
+  the playhead was sweeping. The waveform panel's playhead is clamped to
+  the envelope range for the same mismatch, so it pins at the end instead
+  of scrolling off-screen in the tail.
+- **Room re-emissions are de-duplicated.** `analysisFor` applies
+  `distinctUntilChanged`, so a sibling episode's scan landing (it
+  invalidates the whole table) no longer hands the panel a "new" but
+  byte-identical analysis that reset its viewport and killed a pan/drag
+  in flight — `EpisodeAnalysisEntity`'s content-equality equals finally
+  does something.
+- **Scrubber drag state can't leak across a gesture restart.** A key
+  change mid-drag (durationMs on a track transition, markers when the
+  transcript scan lands) cancelled the gesture coroutine past its reset
+  paths, freezing the thumb and swallowing the next tap; the handler now
+  clears isDragging/dragFrac up front on every (re)start.
+- **Marker label bubble placed physically.** `AbsoluteAlignment.TopLeft`
+  + `absoluteOffset` (and a dp lift, not raw px) so the bubble tracks its
+  tick under an RTL layout direction and doesn't collapse onto the track
+  at high density.
+- **End-of-stream save can't be un-pinned.** `saveEnded` pins the final
+  position to the duration, but the racing save-on-pause — and a later
+  onTaskRemoved/onDestroy save — could overwrite it short on a
+  duration-overstating source, un-marking a finished episode; those saves
+  now defer to `saveEnded` whenever the player is parked at STATE_ENDED.
+
+Known and deliberately left: the process-scoped PlayerController keeps
+the MediaSessionService bound for the process lifetime, so a paused
+swipe-from-recents no longer tears the service down promptly (it lingers
+until the OS reclaims the cached process). That is the direct cost of the
+autoplay-survives-the-activity change below; the wake lock is still
+released on pause, so it is a lingering-resource nuance, not a leak.
+Flagged for on-device evaluation rather than reverting a working feature.
+
+- **EpisodeAudioAnalyzer** — the app's first offline decode path:
+  MediaExtractor + MediaCodec, front-to-back scan producing (a) audible-
+  pause spans and (b) a 2000-bucket max-|amplitude| waveform envelope,
+  normalized to the file's peak. All scans share one dedicated
+  THREAD_PRIORITY_LOWEST thread (serialized, so live playback never
+  competes), memory stays flat via a 250 ms slice table max-pooled at
+  the end (never holds full PCM), and MP3s get the same
+  c2.android.mp3.decoder avoidance EqRenderersFactory already needed.
+- **Pause marks agree with the live tap** — detection borrows
+  PauseTapProcessor's exact sensitivity tables (thresholdFor widened to
+  public alongside the already-public minSilenceMsFor) and runs on the
+  same raw-source signal, so precomputed marks and live-recorded marks
+  land in the same place. Rows remember the sensitivity they were
+  scanned at; a changed setting triggers a rescan instead of serving
+  disagreeing marks.
+- **episode_analysis table (DB v18 → v19)** — guid-keyed like every
+  per-episode table; pause spans as `start:end` CSV, envelope as a flat
+  2 KB BLOB (one unsigned byte per bucket — CSV would triple the row
+  for a payload nobody reads in a shell). Only completed scans persist;
+  derived analytics, excluded from backup like episode_heat.
+- **EpisodeAnalysisRepository** — `analysisFor(guid)` Flow (deduplicated
+  with distinctUntilChanged) + `ensureAnalyzed(guid)` with per-guid job
+  dedup, per-session failure memory, and local-only source resolution
+  (downloaded .bin via completedFile, SAF content:// device files; no
+  network stream — see the 2026-07-15 corrections). Failure is silent by
+  contract: no analysis just means the UI draws no marks. Exposed as
+  `LofiPodApp.episodeAnalysis`.
+- **Scrubber replay heat, redrawn as a real heatmap** — the per-bucket
+  alpha rectangles (which rendered the 10s-tick vs. bucket-width
+  sampling beat as stripes) give way to one horizontal-gradient ramp,
+  deep blue through green/yellow/orange to red. Counts are smoothed
+  with a small triangular kernel, the single-pass baseline is
+  subtracted (median of visited buckets, which self-calibrates to
+  playback speed), and the remainder normalizes per episode — a plain
+  front-to-back listen leaves the track bare; only re-listened ranges
+  heat up, hottest always full red.
+- **Pause marks as cut marks** — silence boundaries draw as thin
+  neutral ticks overshooting the band top and bottom, editing-timeline
+  style. The analyzer's whole-file spans take over the layer when a scan
+  exists (mapped against the PLAYER's duration, the playhead's own
+  denominator); the live tap's session-limited spans remain the fallback.
+- **Player-screen wiring** — PlayerScreen fires `ensureAnalyzed` for
+  the playing episode (re-fired when its download reaches COMPLETED, so
+  the local scan starts the moment the file lands) and collects
+  `analysisFor` into the scrubber; no scan, no marks, no fuss.
+- **Expanded waveform view (hold the playback bar)** — press-and-hold
+  on the scrubber (never a seek, never a pause) swaps the artwork
+  square for WaveformPanel: the analyzer's 2000-bucket envelope at a
+  fixed 3dp-per-bucket magnification, pannable by dragging the wave,
+  with a draggable playhead line that seeks once on release. The window
+  auto-follows playback until the first pan; a recenter button snaps
+  back. Close via the X or the system back gesture (a tightly-gated
+  BackHandler, so feed-aware back is untouched otherwise). Playhead
+  motion rides the frame clock into a draw-phase-only state read —
+  zero recomposition per frame — and a pending/failed scan shows a
+  plain "Analyzing audio..." line so the hold always lands visibly.
+- **Feed-next advance can actually find its feed** — the STATE_ENDED
+  walk did a bare in-memory `cached(feedUrl)` lookup, which is empty
+  when the episode outlived the catalog visit that primed it and ALWAYS
+  empty for kabod:// packs (their synthetic feeds hydrate only through
+  KabodAssetLoader). Now it awaits disk hydration and falls back to the
+  kabod loader's `loadIntoCache`, same as every other cached() consumer.
+  Every dead end in the advance chain also drops an `autoplay_stop`
+  breadcrumb into the playback diagnostics ring (plus a snackbar for
+  the user-visible cases) — "autoplay just stops sometimes" is now a
+  readable trail instead of a bare return.
+- **End of stream is an honest pause** — ExoPlayer parks at ENDED with
+  playWhenReady still true, which kept every intent-to-play consumer
+  armed: the stall watchdog read the position pinned at the duration as
+  a stall (arm C would eventually seek backwards, yank the player out
+  of ENDED, and loop the tail), and onTaskRemoved read the session as
+  active. The service now drops playWhenReady at STATE_ENDED (play icon
+  flips everywhere; the advance calls play() a beat later exactly as if
+  tapped), and the watchdog treats ENDED like a pause regardless of
+  which side wins the propagation race.
+- **Mark-played hardening** — STATE_ENDED writes a final position pinned
+  to the best-known duration (a BUFFERING→ENDED hop fires no
+  save-on-pause, leaving the row a ticker write short of the completion
+  window), and both periodic saves stop letting a TIME_UNSET duration
+  snapshot clobber a known durationMs — one zero write was enough to
+  un-mark a completed episode.
+- **Autoplay advance survives the activity** — PlayerController is
+  process-scoped now (lives on LofiPodApp; MainActivity borrows it and
+  no longer releases it in onDestroy). The STATE_ENDED advance, the
+  confirmation countdown, and the sleep timer all run in the
+  controller's scope, so an activity-owned controller silently beheaded
+  them on swipe-from-recents while the service played on — the episode
+  just ended and nothing followed. connect() gained a reconnection
+  contract (healthy connection short-circuits; dead session rebuilds)
+  so activity recreation can't stack a second MediaController with a
+  doubled listener.
+- **Play button truly centered** — the transport row's SpaceEvenly hands
+  out equal gaps, but the fixed widths flanking the play button were
+  asymmetric (pause-skip + seek-back left vs. seek-forward alone right),
+  pushing it right of the screen midline. An empty slot mirroring the
+  pause-skip's footprint on the far right makes the flanks weigh the
+  same, so the equal-gap arithmetic centers the button at every window
+  width — compact ones included, where the gaps shrink symmetrically.
+- **Sensitivity changes re-scan the analyzer row** — committing a new
+  pause-skip sensitivity from the player's long-press dialog now pokes
+  ensureAnalyzed after the DataStore write lands (cancelling any
+  mid-decode pass first), so the scrubber's precomputed cut marks track
+  the live tap's level immediately instead of waiting for the next
+  screen entry.
+- **Catalog: added Compelled** — the conversion-testimony show (Paul
+  Hastings, `feeds.megaphone.fm/compelled`, iTunes 1412479643), inserted
+  directly after Mike Winger's BibleThinker in the catalog order.
+  displayName null so the feed's own "Compelled - Christian Stories &
+  Testimonies" title wins; feed artwork resolves, so no override.
+
 ## v0.10.28 — Voice-suite activity visualizer (2026-07-12)
 
 The four voice stages are deliberately subtle, so it was never clear from
