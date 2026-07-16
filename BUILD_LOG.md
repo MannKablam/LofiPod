@@ -2,7 +2,42 @@
 
 Running notes on what's changed and why. Newest at top.
 
-## v0.10.30 — Main-screen UX affordances (2026-07-15)
+## v0.10.31 — Continue listening, unplayed chip, in-feed filter, more hold menus (2026-07-15)
+
+Second UX batch, building on v0.10.30's affordances — the four items the
+user picked off that entry's suggestions list. Ships as the v0.10.31 tag
+together with the two entries below.
+
+- **"Continue listening" card** — the most recent in-progress episode,
+  pinned above everything on the Catalog: artwork, title, minutes left,
+  a progress strip, and one tap from app open to resumed audio (resumes
+  via the same playEntity fallback chain the mini-player uses, then
+  opens the Player). Backed by a new `observeMostRecentInProgress()`
+  DAO query (in-progress = played, unarchived, short of the completion
+  window), so it renders off Room before any feed loads and its
+  progress creeps along with the 10s ticker. Shows "Now playing" with
+  the eq glyph when that episode is already live; hidden entirely when
+  nothing is mid-listen.
+- **Unplayed chip** — the episodes screen grew a filter bar under the
+  top bar: a FilterChip that surfaces the existing global "show played"
+  setting as a one-tap toggle (selected = unplayed only). Same switch
+  as Settings, now visible where it matters; the empty state explains
+  itself when the filter leaves nothing.
+- **In-feed title filter** — next to the chip, a compact text field
+  narrows the list to title matches (case-insensitive, title-only on
+  purpose — sermon titles carry the passage reference). Keyed per feed
+  so queries never leak across podcasts; composes with the unplayed
+  chip, archive visibility, and sort.
+- **Hold menus for the special cards** — group headers (CCM, John
+  Piper) get touch-and-hold: *Refresh these feeds* (per-child
+  refreshOne with one summary snackbar) and *Mark all played* (same
+  confirm dialog, now group-aware across all loaded children). The
+  gold Kabod card gets *Import pack…* (same SAF flow as the overflow)
+  and *Refresh packs*; the Device card gets *Add audio files…* — the
+  full picker + persistable-grant flow from DeviceFilesScreen, so
+  files land identically without opening the screen first.
+
+## v0.10.30 (shipped in v0.10.31) — Main-screen UX affordances (2026-07-15)
 
 Intuitiveness pass over the two browsing surfaces: the actions a podcast
 app is expected to have, where a thumb expects to find them.
@@ -37,7 +72,7 @@ app is expected to have, where a thumb expects to find them.
   arrow_upward/arrow_downward paths so its stroke geometry matches the
   autoplay-direction arrows it sits beside.
 
-## v0.10.29 — Read-ahead analyzer, scrubber redesign, end-of-playback fixes (2026-07-14)
+## v0.10.29 (shipped in v0.10.31) — Read-ahead analyzer, scrubber redesign, end-of-playback fixes (2026-07-14)
 
 Background engine that scans an episode's audio ahead of playback and
 caches what the scrubber needs, plus the scrubber redesign that consumes

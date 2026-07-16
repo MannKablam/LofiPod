@@ -94,6 +94,10 @@ fun EpisodesScreen(
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
+    // In-feed title filter (v0.11) — lives in the filter bar above the
+    // list. Keyed on the feed so navigating to another podcast never
+    // carries a stale query along.
+    var episodeFilter by remember(feedUrl) { mutableStateOf("") }
 
     // Kabod pack metadata per guid — "Part N · <scripture>" line shown on
     // each episode row, so the sermon-series structure that previously only
@@ -177,16 +181,22 @@ fun EpisodesScreen(
     val queueSet = remember(queueGuids) { queueGuids.map { it.guid }.toSet() }
 
     val archivedCount = episodeStates.values.count { it.archivedAt > 0 }
+    val filterQuery = episodeFilter.trim()
     val filteredEpisodes = (pod?.episodes ?: emptyList()).filter { ep ->
         val s = episodeStates[ep.guid]
         val archived = (s?.archivedAt ?: 0L) > 0L
         val played = s?.isPlayed == true
-        when {
+        val visibilityOk = when {
             showArchived -> true
             archived -> false
             !showPlayedInList && played -> false
             else -> true
         }
+        // Title-only match, deliberately: sermon titles carry the passage
+        // ("Leviticus 14:1-32"), and description matches would surface
+        // rows for no visible reason.
+        visibilityOk &&
+            (filterQuery.isEmpty() || ep.title.contains(filterQuery, ignoreCase = true))
     }
     // Sort AFTER filtering, per the feed's persisted preference. Feed
     // order (the default) is the RSS document's own sequence — most
@@ -554,7 +564,65 @@ fun EpisodesScreen(
             }
             return@Scaffold
         }
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
+        // Filter bar (v0.11): the narrowing controls, always visible so
+        // they're discoverable — the top bar keeps the VIEW options
+        // (sort, archived). The chip surfaces the existing global
+        // "show played" setting as a one-tap toggle (selected = unplayed
+        // only), so the Settings toggle and this chip are the same
+        // switch seen from two places. The field filters titles within
+        // this feed — the fast path through a thousand-episode archive.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilterChip(
+                selected = !showPlayedInList,
+                onClick = {
+                    scope.launch { settings.setShowPlayedInList(!showPlayedInList) }
+                },
+                label = { Text("Unplayed") },
+                leadingIcon = if (!showPlayedInList) {
+                    {
+                        Icon(
+                            painterResource(R.drawable.check_24),
+                            contentDescription = null,
+                            modifier = Modifier.size(FilterChipDefaults.IconSize),
+                        )
+                    }
+                } else null,
+            )
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(
+                value = episodeFilter,
+                onValueChange = { episodeFilter = it },
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("Filter titles") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                leadingIcon = {
+                    Icon(
+                        painterResource(R.drawable.search_24),
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                trailingIcon = if (episodeFilter.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { episodeFilter = "" }) {
+                            Icon(
+                                painterResource(R.drawable.close_24),
+                                contentDescription = "Clear filter",
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                } else null,
+            )
+        }
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -738,8 +806,14 @@ fun EpisodesScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            if (showArchived) "No episodes."
-                            else "All episodes are archived. Tap the archive icon to show them.",
+                            when {
+                                filterQuery.isNotEmpty() ->
+                                    "No episodes match \"$filterQuery\"."
+                                showArchived -> "No episodes."
+                                !showPlayedInList ->
+                                    "Nothing unplayed. Tap the Unplayed chip to show everything."
+                                else -> "All episodes are archived. Tap the archive icon to show them."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -761,6 +835,7 @@ fun EpisodesScreen(
                 }
             },
         )
+        }
         }
     }
 

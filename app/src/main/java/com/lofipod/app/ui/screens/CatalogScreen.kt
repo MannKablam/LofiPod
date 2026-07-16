@@ -5,6 +5,8 @@
 
 package com.lofipod.app.ui.screens
 
+import android.content.Intent
+import android.provider.OpenableColumns
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -117,6 +119,13 @@ fun CatalogScreen(
         feedVisits.associate { it.feedUrl to it.lastVisitedAt }
     }
 
+    // "Continue listening": the most recent in-progress episode, straight
+    // from Room so the card appears even on a cold start where the player
+    // session hasn't restored yet. Re-emits on every 10s ticker save, so
+    // the card's progress creeps forward while the episode plays.
+    val resumeRow by app.db.episodeStateDao().observeMostRecentInProgress()
+        .collectAsState(initial = null)
+
     // Device-files card state: the user's device name (their own setting
     // when present, hardware model otherwise) + how many files they've
     // added so the card subtitle reads at a glance.
@@ -128,6 +137,39 @@ fun CatalogScreen(
     val deviceFiles by appSettings.deviceFiles.collectAsState(initial = emptyList())
     val deviceFileCount = deviceFiles.size
 
+    // SAF picker for the Device card's long-press "Add audio files…" —
+    // the same contract + persistable-grant dance as DeviceFilesScreen's
+    // own picker, so files added from here appear there identically.
+    val deviceFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            val entries = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri ->
+                    try {
+                        ctx.contentResolver.takePersistableUriPermission(
+                            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                        val name = ctx.contentResolver.query(
+                            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+                        )?.use { c ->
+                            if (c.moveToFirst()) c.getString(0) else null
+                        } ?: uri.lastPathSegment ?: "Audio file"
+                        com.lofipod.app.data.DeviceFileEntry(uri = uri.toString(), name = name)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
+            appSettings.addDeviceFiles(entries)
+            snackbarHostState.showSnackbar(
+                if (entries.isEmpty()) "Couldn't add those files"
+                else "Added ${entries.size} file${if (entries.size == 1) "" else "s"}"
+            )
+        }
+    }
+
     // ---- Card long-press actions (v0.11) --------------------------------
     // Every podcast card carries a context menu on touch-and-hold; these
     // are the shared handlers both call sites (top-level rows and group
@@ -135,9 +177,11 @@ fun CatalogScreen(
     val clipboard = LocalClipboardManager.current
 
     // Pending "Mark all played" target. The action rewrites every episode
-    // row of a feed — hundreds for a deep archive — so it confirms first;
-    // the dialog renders near the bottom of this composable.
-    var confirmMarkAll by remember { mutableStateOf<Podcast?>(null) }
+    // row of one or more feeds — hundreds for a deep archive, thousands
+    // for a group — so it confirms first; the dialog renders near the
+    // bottom of this composable. Single cards pass themselves as a
+    // one-pod target; group headers pass all their loaded children.
+    var confirmMarkAll by remember { mutableStateOf<MarkAllTarget?>(null) }
 
     val playNewest: (Podcast) -> Unit = { pod ->
         // Newest by pubDate, not list position — feed order isn't
@@ -165,6 +209,31 @@ fun CatalogScreen(
         clipboard.setText(AnnotatedString(url))
         scope.launch { snackbarHostState.showSnackbar("Feed URL copied") }
     }
+    // Refresh several sources (a group's children, or the kabod packs) and
+    // report once at the end. refreshOne's callbacks all land on the main
+    // dispatcher, so the plain captured counters can't race.
+    val refreshMany: (List<SourceEntry>) -> Unit = { sources ->
+        if (sources.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("Nothing to refresh") }
+        } else {
+            var done = 0
+            var ok = 0
+            for (src in sources) {
+                vm.refreshOne(src) { fresh ->
+                    done++
+                    if (fresh != null) ok++
+                    if (done == sources.size) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (ok == sources.size) "Refreshed $ok feeds"
+                                else "Refreshed $ok of ${sources.size} feeds"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // First-visit seeding: a podcast we've never seen a visit for gets a row
     // stamped to NOW so we don't lump every previously-released episode into
@@ -185,23 +254,26 @@ fun CatalogScreen(
 
     // Confirmation for the long-press "Mark all played" — the one card
     // action heavy enough to warrant a second tap (it stamps every episode
-    // of the feed, and auto-archive will then treat them all as finished).
+    // of the feed(s), and auto-archive will then treat them all as
+    // finished).
     confirmMarkAll?.let { target ->
+        val total = target.pods.sumOf { it.episodes.size }
         AlertDialog(
             onDismissRequest = { confirmMarkAll = null },
             title = { Text("Mark all played?") },
             text = {
                 Text(
-                    "All ${target.episodes.size} episodes of \"${target.title}\" " +
-                        "will be marked played. Auto-archive will treat them as finished."
+                    "All $total episodes of \"${target.label}\" will be " +
+                        "marked played. Auto-archive will treat them as finished."
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val pod = target
+                    val pods = target.pods
                     confirmMarkAll = null
                     scope.launch {
-                        val n = markAllPlayed(app, pod)
+                        var n = 0
+                        for (p in pods) n += markAllPlayed(app, p)
                         snackbarHostState.showSnackbar("Marked $n played")
                     }
                 }) { Text("Mark all") }
@@ -421,7 +493,31 @@ fun CatalogScreen(
                             contentPadding = PaddingValues(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                        // Device card first — the user's own phone as a source.
+                        // Continue listening — the fastest path back into the
+                        // episode in progress, pinned above everything: from
+                        // app open to resumed audio in one tap. Hidden when
+                        // nothing is mid-listen.
+                        resumeRow?.let { row ->
+                            item(key = "resume://listening") {
+                                val isCurrent = playerState.currentEpisodeGuid == row.guid
+                                ContinueListeningCard(
+                                    row = row,
+                                    isCurrent = isCurrent,
+                                    isPlaying = isCurrent && playerState.isPlaying,
+                                    onClick = {
+                                        if (isCurrent) {
+                                            // Already loaded: make sure audio is
+                                            // rolling, then just open the player.
+                                            if (!playerState.isPlaying) controller.togglePlay()
+                                        } else {
+                                            resumePlayback(app, controller, row)
+                                        }
+                                        onOpenNowPlaying()
+                                    },
+                                )
+                            }
+                        }
+                        // Device card — the user's own phone as a source.
                         // Unique cool-slate chrome so it reads as hardware, not
                         // another feed.
                         item(key = "device://files") {
@@ -429,6 +525,7 @@ fun CatalogScreen(
                                 deviceName = deviceName,
                                 fileCount = deviceFileCount,
                                 onClick = onOpenDeviceFiles,
+                                onAddFiles = { deviceFilePicker.launch(arrayOf("audio/*")) },
                             )
                         }
                         // Kabod Packs, collapsed under one gold card (v0.11).
@@ -447,6 +544,8 @@ fun CatalogScreen(
                                     } ?: 0
                                 },
                                 onClick = onOpenKabodPacks,
+                                onImportPack = { packPicker.launch(arrayOf("*/*")) },
+                                onRefreshPacks = { refreshMany(Sources.KABOD_PACKS) },
                             )
                         }
                         Sources.PODCASTS.forEach { catalogItem ->
@@ -465,7 +564,9 @@ fun CatalogScreen(
                                                 onClick = { onPodcastClick(pod) },
                                                 onPlayNewest = { playNewest(pod) },
                                                 onRefreshFeed = { refreshFeed(catalogItem) },
-                                                onMarkAllPlayed = { confirmMarkAll = pod },
+                                                onMarkAllPlayed = {
+                                                    confirmMarkAll = MarkAllTarget(pod.title, listOf(pod))
+                                                },
                                                 onCopyFeedUrl = { copyFeedUrl(pod.feedUrl) },
                                             )
                                         }
@@ -500,7 +601,16 @@ fun CatalogScreen(
                                                 expanded = expanded,
                                                 onToggle = {
                                                     expandedGroups[catalogItem.groupId] = !expanded
-                                                }
+                                                },
+                                                onRefreshGroup = {
+                                                    refreshMany(loadedChildren.map { it.first })
+                                                },
+                                                onMarkGroupPlayed = {
+                                                    confirmMarkAll = MarkAllTarget(
+                                                        catalogItem.groupName,
+                                                        loadedChildren.map { it.second },
+                                                    )
+                                                },
                                             )
                                         }
                                         if (expanded) {
@@ -520,7 +630,12 @@ fun CatalogScreen(
                                                     onClick = { onPodcastClick(pod) },
                                                     onPlayNewest = { playNewest(pod) },
                                                     onRefreshFeed = { refreshFeed(entry) },
-                                                    onMarkAllPlayed = { confirmMarkAll = pod },
+                                                    onMarkAllPlayed = {
+                                                        confirmMarkAll = MarkAllTarget(
+                                                            entry.displayName ?: pod.title,
+                                                            listOf(pod),
+                                                        )
+                                                    },
                                                     onCopyFeedUrl = { copyFeedUrl(pod.feedUrl) },
                                                     titleOverride = entry.displayName,
                                                     indent = true
@@ -700,6 +815,120 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         Button(onClick = onRetry) { Text("Retry") }
     }
+}
+
+/** Pending mark-all-played request: a human label for the confirm dialog
+ *  plus the pod(s) it covers — one for a card, several for a group. */
+private data class MarkAllTarget(val label: String, val pods: List<Podcast>)
+
+/**
+ * "Continue listening" — the most recent in-progress episode as a
+ * one-tap resume card pinned to the catalog top. Reads straight off the
+ * episode_state row (title/artwork were stamped at first play; position
+ * advances with the ticker), so it renders before any feed has loaded.
+ * primaryContainer chrome + a progress strip make it read as "your
+ * place", not another feed.
+ */
+@Composable
+private fun ContinueListeningCard(
+    row: EpisodeStateEntity,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ThemedArtwork(artworkUrl = row.artworkUrl, size = 56.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (isPlaying) "Now playing" else "Continue listening",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        row.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 2,
+                    )
+                    if (row.durationMs > 0) {
+                        val leftMin = ((row.durationMs - row.positionMs) / 60_000L)
+                            .coerceAtLeast(0L)
+                        Text(
+                            if (leftMin > 0) "$leftMin min left" else "Almost done",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Icon(
+                    if (isPlaying) painterResource(R.drawable.graphic_eq_24)
+                    else painterResource(R.drawable.play_circle_24),
+                    contentDescription = if (isPlaying) "Now playing" else "Resume",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+            // Progress strip along the card's bottom edge — the "how far
+            // in am I" read without any numbers.
+            if (row.durationMs > 0) {
+                LinearProgressIndicator(
+                    progress = {
+                        (row.positionMs.toFloat() / row.durationMs).coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    trackColor = MaterialTheme.colorScheme.primaryContainer,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Resume an episode straight from its persisted state row — the Catalog
+ * card's play path when the episode isn't already loaded in the player.
+ * Mirrors MainActivity's playEntity: refresh the artwork against the live
+ * feed cache when possible (the stamped row art can predate the feed's
+ * channel image), fall back to a minimal Episode built from the row.
+ * playEpisode's own smart-resume logic picks up the saved position.
+ */
+private fun resumePlayback(
+    app: LofiPodApp,
+    controller: PlayerController,
+    e: EpisodeStateEntity,
+) {
+    val livePod = app.repo.cached(e.feedUrl)
+    val liveEp = livePod?.episodes?.find { it.guid == e.guid }
+    val resolvedEpArt = liveEp?.episodeArtworkUrl ?: e.artworkUrl
+    val resolvedPodArt = livePod?.artworkUrl ?: resolvedEpArt
+
+    val ep = liveEp ?: com.lofipod.app.data.model.Episode(
+        guid = e.guid,
+        feedUrl = e.feedUrl,
+        title = e.title,
+        description = null,
+        pubDateMillis = null,
+        audioUrl = e.audioUrl,
+        audioMimeType = null,
+        durationSeconds = null,
+        episodeArtworkUrl = resolvedEpArt,
+    )
+    controller.playEpisode(
+        ep,
+        podcastTitle = livePod?.title ?: "",
+        podcastArt = resolvedPodArt,
+    )
 }
 
 /**
@@ -935,7 +1164,9 @@ internal fun KabodPackRow(
 /**
  * Card-stack header for a [SourceGroup]. Uses the first child's artwork as a
  * stand-in (cheap and recognizable; a bespoke stacked-thumbnail visual is a
- * later iteration). Tapping toggles inline expansion of the children below.
+ * later iteration). Tapping toggles inline expansion of the children below;
+ * touch-and-hold opens group-wide quick actions (refresh every child feed,
+ * mark the whole cluster played).
  */
 @Composable
 private fun GroupRow(
@@ -946,47 +1177,74 @@ private fun GroupRow(
     newEpisodeCount: Int,
     expanded: Boolean,
     onToggle: () -> Unit,
+    onRefreshGroup: () -> Unit,
+    onMarkGroupPlayed: () -> Unit,
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         label = "group-chevron"
     )
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onToggle),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    Box(Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onToggle,
+                    onLongClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    },
+                ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            ThemedArtwork(artworkUrl = leadArtworkUrl, size = 64.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    group.groupName,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2
-                )
-                Text(
-                    if (totalEpisodes > 0) "$feedCount feeds  ·  $totalEpisodes episodes"
-                    else "$feedCount feeds",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (newEpisodeCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    NewEpisodesBadge(count = newEpisodeCount)
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThemedArtwork(artworkUrl = leadArtworkUrl, size = 64.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        group.groupName,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2
+                    )
+                    Text(
+                        if (totalEpisodes > 0) "$feedCount feeds  ·  $totalEpisodes episodes"
+                        else "$feedCount feeds",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (newEpisodeCount > 0) {
+                        Spacer(Modifier.height(4.dp))
+                        NewEpisodesBadge(count = newEpisodeCount)
+                    }
                 }
+                Icon(
+                    painterResource(R.drawable.expand_more_24),
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .graphicsLayer { rotationZ = rotation }
+                )
             }
-            Icon(
-                painterResource(R.drawable.expand_more_24),
-                contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .size(28.dp)
-                    .graphicsLayer { rotationZ = rotation }
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Refresh these feeds") },
+                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) },
+                onClick = { menuOpen = false; onRefreshGroup() },
+            )
+            DropdownMenuItem(
+                text = { Text("Mark all played") },
+                leadingIcon = { Icon(painterResource(R.drawable.check_circle_24), null) },
+                onClick = { menuOpen = false; onMarkGroupPlayed() },
             )
         }
     }
@@ -1037,11 +1295,27 @@ internal fun GoldKabodCard(
     itemCount: Int,
     newCount: Int,
     onClick: () -> Unit,
+    /** Touch-and-hold quick actions (v0.11); both optional so the card
+     *  stays drop-in for hosts that don't offer them. */
+    onImportPack: (() -> Unit)? = null,
+    onRefreshPacks: (() -> Unit)? = null,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    val hasMenu = onImportPack != null || onRefreshPacks != null
+    Box(Modifier.fillMaxWidth()) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (hasMenu) {
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    }
+                } else null,
+            ),
         border = BorderStroke(1.5.dp, GoldDeep),
     ) {
         Box(
@@ -1102,6 +1376,26 @@ internal fun GoldKabodCard(
             }
         }
     }
+    DropdownMenu(
+        expanded = menuOpen,
+        onDismissRequest = { menuOpen = false },
+    ) {
+        if (onImportPack != null) {
+            DropdownMenuItem(
+                text = { Text("Import pack…") },
+                leadingIcon = { Icon(painterResource(R.drawable.folder_open_24), null) },
+                onClick = { menuOpen = false; onImportPack() },
+            )
+        }
+        if (onRefreshPacks != null) {
+            DropdownMenuItem(
+                text = { Text("Refresh packs") },
+                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) },
+                onClick = { menuOpen = false; onRefreshPacks() },
+            )
+        }
+    }
+    }
 }
 
 /** One bullion bar: bright top-lit gradient with a darker edge. */
@@ -1139,11 +1433,26 @@ internal fun DeviceCard(
     deviceName: String,
     fileCount: Int,
     onClick: () -> Unit,
+    /** Touch-and-hold quick action (v0.11): jump straight into the SAF
+     *  picker without opening the Device files screen first. Optional so
+     *  the card stays drop-in for hosts without a picker. */
+    onAddFiles: (() -> Unit)? = null,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    Box(Modifier.fillMaxWidth()) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (onAddFiles != null) {
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    }
+                } else null,
+            ),
         border = BorderStroke(1.5.dp, SlateEdge),
     ) {
         Box(
@@ -1185,5 +1494,19 @@ internal fun DeviceCard(
                 }
             }
         }
+    }
+    DropdownMenu(
+        expanded = menuOpen,
+        onDismissRequest = { menuOpen = false },
+    ) {
+        DropdownMenuItem(
+            text = { Text("Add audio files…") },
+            leadingIcon = { Icon(painterResource(R.drawable.add_24), null) },
+            onClick = {
+                menuOpen = false
+                onAddFiles?.invoke()
+            },
+        )
+    }
     }
 }
