@@ -35,6 +35,36 @@ class CatalogViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Refresh ONE feed — the catalog card's long-press action. Fetches
+     * just that source (network for RSS, asset re-parse for kabod://)
+     * and swaps its entry in [state] in place, leaving every other
+     * card and the global loading machinery untouched. [onResult]
+     * receives the fresh podcast, or null when the fetch failed, on
+     * the main dispatcher — the card's snackbar feedback hangs off it.
+     */
+    fun refreshOne(src: SourceEntry, onResult: (Podcast?) -> Unit = {}) {
+        viewModelScope.launch {
+            val pod = try {
+                repo.fetchOne(src)
+            } catch (_: Exception) {
+                null
+            }
+            if (pod != null) {
+                _state.update { current ->
+                    val replaced = current.podcasts.map {
+                        if (it.feedUrl == pod.feedUrl) pod else it
+                    }
+                    current.copy(
+                        podcasts = if (replaced.any { it.feedUrl == pod.feedUrl }) replaced
+                        else replaced + pod
+                    )
+                }
+            }
+            onResult(pod)
+        }
+    }
+
+    /**
      * Stale-while-revalidate. On any call (init or refresh), surface
      * whatever the in-memory + disk caches hold IMMEDIATELY so the
      * Catalog renders without waiting on the network. Then trigger a

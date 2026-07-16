@@ -1,4 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+)
 
 package com.lofipod.app.ui.screens
 
@@ -7,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -22,14 +27,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.room.withTransaction
+import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.R
 import com.lofipod.app.data.PodcastRepository.FeedStatus
@@ -117,6 +128,44 @@ fun CatalogScreen(
     val deviceFiles by appSettings.deviceFiles.collectAsState(initial = emptyList())
     val deviceFileCount = deviceFiles.size
 
+    // ---- Card long-press actions (v0.11) --------------------------------
+    // Every podcast card carries a context menu on touch-and-hold; these
+    // are the shared handlers both call sites (top-level rows and group
+    // children) wire in. All feedback lands on the screen's snackbar.
+    val clipboard = LocalClipboardManager.current
+
+    // Pending "Mark all played" target. The action rewrites every episode
+    // row of a feed — hundreds for a deep archive — so it confirms first;
+    // the dialog renders near the bottom of this composable.
+    var confirmMarkAll by remember { mutableStateOf<Podcast?>(null) }
+
+    val playNewest: (Podcast) -> Unit = { pod ->
+        // Newest by pubDate, not list position — feed order isn't
+        // guaranteed date-ordered. Ties/undated fall back to the feed's
+        // first row (maxByOrNull returns the first max).
+        val newest = pod.episodes.maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+        if (newest != null) {
+            controller.playEpisode(newest, pod.title, pod.artworkUrl)
+            onOpenNowPlaying()
+        } else {
+            scope.launch { snackbarHostState.showSnackbar("No episodes to play") }
+        }
+    }
+    val refreshFeed: (SourceEntry) -> Unit = { src ->
+        vm.refreshOne(src) { fresh ->
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    if (fresh != null) "Refreshed — ${fresh.episodes.size} episodes"
+                    else "Refresh failed — feed unreachable"
+                )
+            }
+        }
+    }
+    val copyFeedUrl: (String) -> Unit = { url ->
+        clipboard.setText(AnnotatedString(url))
+        scope.launch { snackbarHostState.showSnackbar("Feed URL copied") }
+    }
+
     // First-visit seeding: a podcast we've never seen a visit for gets a row
     // stamped to NOW so we don't lump every previously-released episode into
     // the "new" count. Subsequent loads find the row and use it for the diff.
@@ -132,6 +181,35 @@ fun CatalogScreen(
                 for (url in toSeed) dao.seedIfMissing(url, now)
             }
         }
+    }
+
+    // Confirmation for the long-press "Mark all played" — the one card
+    // action heavy enough to warrant a second tap (it stamps every episode
+    // of the feed, and auto-archive will then treat them all as finished).
+    confirmMarkAll?.let { target ->
+        AlertDialog(
+            onDismissRequest = { confirmMarkAll = null },
+            title = { Text("Mark all played?") },
+            text = {
+                Text(
+                    "All ${target.episodes.size} episodes of \"${target.title}\" " +
+                        "will be marked played. Auto-archive will treat them as finished."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pod = target
+                    confirmMarkAll = null
+                    scope.launch {
+                        val n = markAllPlayed(app, pod)
+                        snackbarHostState.showSnackbar("Marked $n played")
+                    }
+                }) { Text("Mark all") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmMarkAll = null }) { Text("Cancel") }
+            },
+        )
     }
 
     Scaffold(
@@ -163,6 +241,17 @@ fun CatalogScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
+                    // Search sits in the visible row, not the overflow —
+                    // finding an episode is a first-class entry point, and
+                    // hiding it behind More was a discoverability miss.
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(
+                            painterResource(R.drawable.search_24),
+                            contentDescription = "Search episodes",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenNotes) {
                         Icon(
                             painterResource(R.drawable.edit_note_24),
@@ -204,11 +293,6 @@ fun CatalogScreen(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false }
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("Search episodes") },
-                                onClick = { menuExpanded = false; onOpenSearch() },
-                                leadingIcon = { Icon(painterResource(R.drawable.search_24), null) }
-                            )
                             DropdownMenuItem(
                                 text = { Text("Bible index") },
                                 onClick = { menuExpanded = false; onOpenCanonBrowse() },
@@ -297,6 +381,18 @@ fun CatalogScreen(
                     // would cover an overlaid banner). With Column, the
                     // banner is its own row above the LazyColumn; both
                     // get their natural bounds with no overlap.
+                    //
+                    // Pull-to-refresh wraps the whole loaded state: the
+                    // gesture is the standard "get me fresh feeds" reflex,
+                    // and it drives the exact same stale-while-revalidate
+                    // refresh as the overflow item. isRefreshing rides
+                    // state.loading, so the spinner also reflects the
+                    // background refresh already in flight on cold start.
+                    PullToRefreshBox(
+                        isRefreshing = state.loading,
+                        onRefresh = { vm.refresh() },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
                     Column(modifier = Modifier.fillMaxSize()) {
                         if (state.loading) {
                             val doneCount = state.feedProgress.count {
@@ -366,7 +462,11 @@ fun CatalogScreen(
                                                 pod = pod,
                                                 artworkUrl = catalogItem.customArtworkUrl ?: pod.artworkUrl,
                                                 newEpisodeCount = newCount,
-                                                onClick = { onPodcastClick(pod) }
+                                                onClick = { onPodcastClick(pod) },
+                                                onPlayNewest = { playNewest(pod) },
+                                                onRefreshFeed = { refreshFeed(catalogItem) },
+                                                onMarkAllPlayed = { confirmMarkAll = pod },
+                                                onCopyFeedUrl = { copyFeedUrl(pod.feedUrl) },
                                             )
                                         }
                                     }
@@ -418,6 +518,10 @@ fun CatalogScreen(
                                                     artworkUrl = entry.customArtworkUrl ?: pod.artworkUrl,
                                                     newEpisodeCount = newCount,
                                                     onClick = { onPodcastClick(pod) },
+                                                    onPlayNewest = { playNewest(pod) },
+                                                    onRefreshFeed = { refreshFeed(entry) },
+                                                    onMarkAllPlayed = { confirmMarkAll = pod },
+                                                    onCopyFeedUrl = { copyFeedUrl(pod.feedUrl) },
                                                     titleOverride = entry.displayName,
                                                     indent = true
                                                 )
@@ -427,6 +531,7 @@ fun CatalogScreen(
                                 }
                             }
                         }
+                    }
                     }
                     }
                 }
@@ -531,6 +636,42 @@ private fun NewEpisodesBadge(count: Int) {
 }
 
 /**
+ * Mark every episode of [pod] played: ensure each has an episode_state
+ * row, then pin position to the best-known duration so the derived
+ * completion predicate (positionMs >= durationMs - 5s) holds — the same
+ * mechanics as the Episodes screen's bulk mark-played, feed-wide. One
+ * transaction: a deep archive is a thousand-plus rows, and row-at-a-time
+ * commits would turn a tap into seconds of jank. Returns the count for
+ * the confirmation snackbar.
+ */
+private suspend fun markAllPlayed(app: LofiPodApp, pod: Podcast): Int =
+    withContext(Dispatchers.IO) {
+        val dao = app.db.episodeStateDao()
+        val now = System.currentTimeMillis()
+        app.db.withTransaction {
+            for (ep in pod.episodes) {
+                val existing = dao.get(ep.guid)
+                if (existing == null) {
+                    dao.upsert(
+                        EpisodeStateEntity(
+                            guid = ep.guid,
+                            feedUrl = ep.feedUrl,
+                            title = ep.title,
+                            audioUrl = ep.audioUrl,
+                            artworkUrl = ep.episodeArtworkUrl ?: pod.artworkUrl,
+                        )
+                    )
+                }
+                val dur = existing?.durationMs?.takeIf { it > 0 }
+                    ?: ep.durationSeconds?.let { it * 1000L }
+                    ?: 1L
+                dao.updatePosition(ep.guid, dur, dur, now, 0L)
+            }
+        }
+        pod.episodes.size
+    }
+
+/**
  * Count of episodes whose pubDate is strictly after the last-visited timestamp.
  * Returns 0 when [lastVisitedAt] is null (no visit row yet — the LaunchedEffect
  * in [CatalogScreen] seeds one to NOW so this is a transient state on first
@@ -570,6 +711,11 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
  * [artworkUrl] is decoupled from [pod] so callers can route through the
  * [SourceEntry.customArtworkUrl] override when a feed's own art is broken
  * or missing. Pass `pod.artworkUrl` to keep the original behavior.
+ *
+ * Touch-and-hold (v0.11) opens a context menu of feed-level quick actions —
+ * the things that previously required opening the feed (or didn't exist):
+ * play the newest episode, refresh just this feed, mark the whole feed
+ * played, copy the feed URL. Tap still navigates; the menu is additive.
  */
 @Composable
 private fun PodcastRow(
@@ -577,38 +723,85 @@ private fun PodcastRow(
     artworkUrl: String?,
     newEpisodeCount: Int,
     onClick: () -> Unit,
+    onPlayNewest: () -> Unit,
+    onRefreshFeed: () -> Unit,
+    onMarkAllPlayed: () -> Unit,
+    onCopyFeedUrl: () -> Unit,
     titleOverride: String? = null,
     indent: Boolean = false,
 ) {
-    Card(
-        modifier = Modifier
+    // Indent lives on the wrapper Box (not the Card) so the context menu
+    // anchors inside the indented bounds too.
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    Box(
+        Modifier
             .fillMaxWidth()
             .padding(start = if (indent) 24.dp else 0.dp)
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = {
+                        // Same pulse as the app's other holds (pause-skip
+                        // control, scrubber) so the gesture family feels
+                        // consistent.
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    },
+                ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            ThemedArtwork(artworkUrl = artworkUrl, size = 64.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    titleOverride ?: pod.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2
-                )
-                Text(
-                    "${pod.episodes.size} episodes",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (newEpisodeCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    NewEpisodesBadge(count = newEpisodeCount)
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThemedArtwork(artworkUrl = artworkUrl, size = 64.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        titleOverride ?: pod.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2
+                    )
+                    Text(
+                        "${pod.episodes.size} episodes",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (newEpisodeCount > 0) {
+                        Spacer(Modifier.height(4.dp))
+                        NewEpisodesBadge(count = newEpisodeCount)
+                    }
                 }
             }
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Play newest episode") },
+                leadingIcon = { Icon(painterResource(R.drawable.play_circle_24), null) },
+                onClick = { menuOpen = false; onPlayNewest() },
+            )
+            DropdownMenuItem(
+                text = { Text("Refresh this feed") },
+                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) },
+                onClick = { menuOpen = false; onRefreshFeed() },
+            )
+            DropdownMenuItem(
+                text = { Text("Mark all played") },
+                leadingIcon = { Icon(painterResource(R.drawable.check_circle_24), null) },
+                onClick = { menuOpen = false; onMarkAllPlayed() },
+            )
+            DropdownMenuItem(
+                text = { Text("Copy feed URL") },
+                leadingIcon = { Icon(painterResource(R.drawable.content_copy_24), null) },
+                onClick = { menuOpen = false; onCopyFeedUrl() },
+            )
         }
     }
 }

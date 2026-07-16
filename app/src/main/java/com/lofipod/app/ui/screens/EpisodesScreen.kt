@@ -89,6 +89,8 @@ fun EpisodesScreen(
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val autoplayDirectionUp by settings.autoplayDirectionUp.collectAsState(initial = true)
+    val sortOrders by settings.episodeSortOrders.collectAsState(initial = emptyMap())
+    val sortOrder = sortOrders[feedUrl] ?: com.lofipod.app.data.Settings.EPISODE_SORT_FEED
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
@@ -175,7 +177,7 @@ fun EpisodesScreen(
     val queueSet = remember(queueGuids) { queueGuids.map { it.guid }.toSet() }
 
     val archivedCount = episodeStates.values.count { it.archivedAt > 0 }
-    val visibleEpisodes = (pod?.episodes ?: emptyList()).filter { ep ->
+    val filteredEpisodes = (pod?.episodes ?: emptyList()).filter { ep ->
         val s = episodeStates[ep.guid]
         val archived = (s?.archivedAt ?: 0L) > 0L
         val played = s?.isPlayed == true
@@ -185,6 +187,21 @@ fun EpisodesScreen(
             !showPlayedInList && played -> false
             else -> true
         }
+    }
+    // Sort AFTER filtering, per the feed's persisted preference. Feed
+    // order (the default) is the RSS document's own sequence — most
+    // shows publish newest-first, but series feeds and kabod packs run
+    // in reading/part order, which is why this is a per-feed choice.
+    // Undated episodes sink to the bottom under either explicit sort
+    // (sortedBy is stable, so they keep their feed order among
+    // themselves). Display-only: the autoplay feed-walk works over the
+    // feed's own order + the direction setting, never this list.
+    val visibleEpisodes = when (sortOrder) {
+        com.lofipod.app.data.Settings.EPISODE_SORT_NEWEST ->
+            filteredEpisodes.sortedByDescending { it.pubDateMillis ?: Long.MIN_VALUE }
+        com.lofipod.app.data.Settings.EPISODE_SORT_OLDEST ->
+            filteredEpisodes.sortedBy { it.pubDateMillis ?: Long.MAX_VALUE }
+        else -> filteredEpisodes
     }
 
     // Scroll-to-now-playing on entry. One-shot per screen instance: when the
@@ -463,6 +480,56 @@ fun EpisodesScreen(
                         }
                     },
                     actions = {
+                        // Sort order. Menu rather than a blind cycle-toggle so
+                        // the three states are visible and labeled; the icon
+                        // tints primary while a non-default sort is active,
+                        // matching the archive toggle's active treatment.
+                        Box {
+                            var sortMenuOpen by remember { mutableStateOf(false) }
+                            IconButton(onClick = { sortMenuOpen = true }) {
+                                Icon(
+                                    painterResource(R.drawable.swap_vert_24),
+                                    contentDescription = "Sort episodes",
+                                    tint = if (sortOrder != com.lofipod.app.data.Settings.EPISODE_SORT_FEED)
+                                        MaterialTheme.colorScheme.primary
+                                    else LocalContentColor.current,
+                                    modifier = Modifier.size(26.dp),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = sortMenuOpen,
+                                onDismissRequest = { sortMenuOpen = false },
+                            ) {
+                                // "Feed order" label deliberately vague about
+                                // direction — it IS whatever the publisher
+                                // chose (part order for kabod packs).
+                                val options = listOf(
+                                    com.lofipod.app.data.Settings.EPISODE_SORT_FEED to "Feed order",
+                                    com.lofipod.app.data.Settings.EPISODE_SORT_NEWEST to "Newest first",
+                                    com.lofipod.app.data.Settings.EPISODE_SORT_OLDEST to "Oldest first",
+                                )
+                                for ((value, label) in options) {
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        trailingIcon = if (sortOrder == value) {
+                                            {
+                                                Icon(
+                                                    painterResource(R.drawable.check_24),
+                                                    contentDescription = "Active",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                        } else null,
+                                        onClick = {
+                                            sortMenuOpen = false
+                                            scope.launch {
+                                                settings.setEpisodeSortOrder(feedUrl, value)
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
                         // Archive visibility toggle. The icon flips between open and
                         // closed-archive boxes so the active state reads at a glance.
                         IconButton(onClick = { showArchived = !showArchived }) {
@@ -544,9 +611,12 @@ fun EpisodesScreen(
                             // Snackbar dismisses on its own after ~3 seconds
                             // (Material Short duration). Sticking to a single
                             // line so it doesn't crowd out the cards behind.
+                            // Date-based wording (not "up/down the list"):
+                            // the sort control can flip the list's visual
+                            // direction, but the walk is always by date.
                             snackbarHostState.showSnackbar(
-                                if (nextUp) "Autoplay: next newer episode (up the list)"
-                                else "Autoplay: next older episode (down the list)",
+                                if (nextUp) "Autoplay: toward newer episodes"
+                                else "Autoplay: toward older episodes",
                                 duration = SnackbarDuration.Short
                             )
                         }

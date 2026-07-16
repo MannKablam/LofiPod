@@ -123,6 +123,48 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Per-feed episode sort order for the Episodes screen. Values:
+     * [EPISODE_SORT_FEED] (the RSS document's own sequence — for kabod
+     * packs that is part order), [EPISODE_SORT_NEWEST], and
+     * [EPISODE_SORT_OLDEST]. Per feed rather than global because the
+     * natural direction differs by show: a daily brief reads newest-first,
+     * a thru-the-Bible series oldest-first. Stored as one JSON object
+     * keyed by feedUrl (same single-string-key rationale as
+     * [deviceFiles]); feeds absent from the map are feed order, and
+     * setting a feed back to feed order removes its key so the object
+     * only carries deliberate overrides.
+     *
+     * Display-only: the autoplay feed-walk works over the feed's own
+     * episode order plus [autoplayDirectionUp], so re-sorting the list
+     * never changes what plays next.
+     */
+    val episodeSortOrders: Flow<Map<String, Int>> =
+        context.dataStore.data.map { prefs ->
+            val raw = prefs[KEY_EPISODE_SORT] ?: return@map emptyMap()
+            try {
+                val obj = org.json.JSONObject(raw)
+                buildMap {
+                    for (key in obj.keys()) put(key, obj.getInt(key))
+                }
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+
+    suspend fun setEpisodeSortOrder(feedUrl: String, order: Int) {
+        context.dataStore.edit { prefs ->
+            val obj = try {
+                org.json.JSONObject(prefs[KEY_EPISODE_SORT] ?: "{}")
+            } catch (_: Exception) {
+                org.json.JSONObject()
+            }
+            if (order == EPISODE_SORT_FEED) obj.remove(feedUrl)
+            else obj.put(feedUrl, order)
+            prefs[KEY_EPISODE_SORT] = obj.toString()
+        }
+    }
+
+    /**
      * Surfaces an extra "Diagnostics" tab on the Player screen alongside
      * Notes / Details / Transcript. When the user is actively listening and
      * something sounds wrong, this is the fastest path to the audio-chain
@@ -657,6 +699,15 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("voice_air_level")
         private val KEY_DEVICE_FILES =
             androidx.datastore.preferences.core.stringPreferencesKey("device_files_json")
+        private val KEY_EPISODE_SORT =
+            androidx.datastore.preferences.core.stringPreferencesKey("episode_sort_json")
+
+        /** Episode-list sort values for [episodeSortOrders]. Ints rather
+         *  than an enum for the same round-trip reason as the phase-mode
+         *  strings below. */
+        const val EPISODE_SORT_FEED = 0
+        const val EPISODE_SORT_NEWEST = 1
+        const val EPISODE_SORT_OLDEST = 2
         private val KEY_SMART_RESUME =
             androidx.datastore.preferences.core.booleanPreferencesKey("smart_resume_enabled")
         private val KEY_PHASE_MODE_LINEAR =

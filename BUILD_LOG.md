@@ -2,6 +2,41 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.30 — Main-screen UX affordances (2026-07-15)
+
+Intuitiveness pass over the two browsing surfaces: the actions a podcast
+app is expected to have, where a thumb expects to find them.
+
+- **Episode sort, per feed** — swap-vert menu in the Episodes top bar:
+  Feed order (default — the RSS document's own sequence, which for kabod
+  packs is part order), Newest first, Oldest first. Persisted per feed
+  (a daily brief reads newest-first, a thru-the-Bible series
+  oldest-first) as one JSON object in DataStore; icon tints primary
+  while a non-default sort is active. Display-only by design: the
+  autoplay feed-walk runs on feed order + the direction setting, so
+  re-sorting the list never changes what plays next. Undated episodes
+  sink to the bottom, keeping their relative feed order (stable sort).
+- **Catalog cards: touch-and-hold context menu** — every podcast card
+  (top-level and group children) now opens a quick-action menu on
+  long-press, with the same haptic pulse as the app's other holds:
+  *Play newest episode* (by pubDate, straight to the player), *Refresh
+  this feed* (new `CatalogViewModel.refreshOne` — fetches just that
+  source and swaps its card in place), *Mark all played* (confirm
+  dialog first; the whole feed in one Room transaction so a
+  thousand-row archive doesn't jank), *Copy feed URL*.
+- **Pull-to-refresh on the catalog** — the standard reflex now drives
+  the same stale-while-revalidate refresh as the overflow item; the
+  indicator also reflects the background refresh already in flight on
+  cold start.
+- **Search is a visible top-bar icon** — finding an episode is a
+  first-class entry point; it was hiding in the overflow menu.
+- **Autoplay-direction wording** — the toggle's snackbar now says
+  "toward newer/older episodes" instead of "up/down the list", which
+  stopped being reliably true the moment the list became sortable.
+- **swap_vert_24** — sort glyph composed from the app's own
+  arrow_upward/arrow_downward paths so its stroke geometry matches the
+  autoplay-direction arrows it sits beside.
+
 ## v0.10.29 — Read-ahead analyzer, scrubber redesign, end-of-playback fixes (2026-07-14)
 
 Background engine that scans an episode's audio ahead of playback and
