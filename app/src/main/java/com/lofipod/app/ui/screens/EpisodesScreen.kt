@@ -534,18 +534,22 @@ fun EpisodesScreen(
                         }
                     },
                     actions = {
-                        // Sort order. Menu rather than a blind cycle-toggle so
-                        // the three states are visible and labeled; the icon
-                        // tints primary while a non-default sort is active,
-                        // matching the archive toggle's active treatment.
+                        // List menu: sort order plus played-visibility — every
+                        // "how does this list read" knob in one place. A menu
+                        // rather than blind cycle-toggles so the states are
+                        // visible and labeled; the icon tints primary while
+                        // ANY non-default view is active (sorted, or played
+                        // hidden), matching the archive toggle's treatment.
                         Box {
                             var sortMenuOpen by remember { mutableStateOf(false) }
                             IconButton(onClick = { sortMenuOpen = true }) {
                                 Icon(
                                     painterResource(R.drawable.swap_vert_24),
-                                    contentDescription = "Sort episodes",
-                                    tint = if (sortOrder != com.lofipod.app.data.Settings.EPISODE_SORT_FEED)
-                                        MaterialTheme.colorScheme.primary
+                                    contentDescription = "List options",
+                                    tint = if (
+                                        sortOrder != com.lofipod.app.data.Settings.EPISODE_SORT_FEED ||
+                                        !showPlayedInList
+                                    ) MaterialTheme.colorScheme.primary
                                     else LocalContentColor.current,
                                     modifier = Modifier.size(26.dp),
                                 )
@@ -582,6 +586,32 @@ fun EpisodesScreen(
                                         },
                                     )
                                 }
+                                HorizontalDivider()
+                                // Visibility, not order — but the same "how
+                                // this list reads" menu. Moved here from
+                                // Settings (v0.11, per user direction): the
+                                // toggle only affects browsing this list, so
+                                // its switch lives where it acts. The check
+                                // marks the ON state; the list changes behind
+                                // the closing menu as feedback.
+                                DropdownMenuItem(
+                                    text = { Text("Show played") },
+                                    trailingIcon = if (showPlayedInList) {
+                                        {
+                                            Icon(
+                                                painterResource(R.drawable.check_24),
+                                                contentDescription = "On",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    } else null,
+                                    onClick = {
+                                        sortMenuOpen = false
+                                        scope.launch {
+                                            settings.setShowPlayedInList(!showPlayedInList)
+                                        }
+                                    },
+                                )
                             }
                         }
                         // Archive visibility toggle. The icon flips between open and
@@ -610,13 +640,14 @@ fun EpisodesScreen(
         }
         Column(Modifier.fillMaxSize().padding(padding)) {
         // Search bar (v0.11): full-width pill under the top bar — the top
-        // bar keeps the VIEW options (sort, archived). Searches this
+        // bar keeps the VIEW options (list menu, archived). Searches this
         // feed's titles, descriptions, AND the user's own notes; a row
         // that matched only through a note says so with a highlighted
         // snippet (see NoteMatchSnippet). The v0.11-era "Unplayed" chip
         // that shared this row is gone: played episodes auto-archive
         // within days, so a dedicated unplayed filter mostly duplicated
-        // the archive machinery (the global toggle survives in Settings).
+        // the archive machinery (played-visibility now lives in the list
+        // menu above).
         OutlinedTextField(
             value = episodeFilter,
             onValueChange = { episodeFilter = it },
@@ -836,7 +867,8 @@ fun EpisodesScreen(
                                 filterQuery.isNotEmpty() ->
                                     "No matches for \"$filterQuery\" in titles, descriptions, or notes."
                                 showArchived -> "No episodes."
-                                !showPlayedInList -> "No unplayed episodes."
+                                !showPlayedInList ->
+                                    "Played episodes are hidden. Turn on Show played in the list menu."
                                 else -> "All episodes are archived. Tap the archive icon to show them."
                             },
                             style = MaterialTheme.typography.bodyMedium,

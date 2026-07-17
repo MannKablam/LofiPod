@@ -65,7 +65,6 @@ fun SettingsScreen(
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
     val autoPlayNextInFeed by settings.autoPlayNextInFeed.collectAsState(initial = true)
     val autoplayConfirmEnabled by settings.autoplayConfirmEnabled.collectAsState(initial = true)
-    val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
     val smartResume by settings.smartResumeEnabled.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val textScale by settings.textScale.collectAsState(initial = 1.0f)
@@ -128,13 +127,10 @@ fun SettingsScreen(
                     "play/pause press) to confirm. Stops indefinite background playback.",
                 onCheckedChange = { v -> scope.launch { settings.setAutoplayConfirmEnabled(v) } }
             )
-            SwitchRow(
-                checked = showPlayedInList,
-                title = "Show played episodes",
-                subtitle = "Already-finished episodes stay visible (dimmed and " +
-                    "struck through) instead of disappearing from the per-podcast list.",
-                onCheckedChange = { v -> scope.launch { settings.setShowPlayedInList(v) } }
-            )
+            // "Show played episodes" moved to the Episodes screen's list
+            // menu (v0.11, per user direction): it only affects browsing
+            // that list, so its switch lives where it acts. The DataStore
+            // setting itself is unchanged.
             SwitchRow(
                 checked = smartResume,
                 title = "Smart resume",

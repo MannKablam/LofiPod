@@ -6,6 +6,15 @@ Running notes on what's changed and why. Newest at top.
 
 Field feedback on v0.10.31's filter bar, same day it shipped.
 
+- **"Show played" moved out of Settings** (follow-up, same day): the
+  toggle only affects browsing the per-podcast list, so its switch now
+  lives where it acts — the Episodes screen's list menu (the swap-vert
+  menu grows a divider + "Show played" toggle under the sort options,
+  and the icon tints primary whenever ANY non-default view is active:
+  sorted or played-hidden). The Settings row is gone; the DataStore
+  setting underneath is unchanged, and the empty state points at the
+  menu when the filter leaves nothing.
+
 - **Unplayed chip removed** — played episodes auto-archive within days,
   so a dedicated unplayed filter mostly duplicated the archive
   machinery. The global "show played" toggle survives in Settings; the
