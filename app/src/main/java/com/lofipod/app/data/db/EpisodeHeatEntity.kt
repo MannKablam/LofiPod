@@ -6,8 +6,10 @@ import androidx.room.PrimaryKey
 /**
  * Per-episode listen-intensity histogram powering the structured
  * scrubber's replay heatmap. [BUCKET_COUNT] equal-width position buckets
- * across the episode; PlaybackService's 10s save ticker increments the
- * bucket under the playhead, so re-listened passages accumulate heat.
+ * across the episode; on PlaybackService's 10s save ticker,
+ * EpisodeHeatRecorder increments every bucket the playhead crossed since
+ * the previous tick (range accrual), so one pass leaves each bucket at 1
+ * and re-listened passages accumulate heat.
  *
  * Stored as CSV TEXT (house style — cf. eqBandsCsvOverride) rather than a
  * BLOB: ~600 bytes/row, debuggable in a sqlite shell. Counts saturate at

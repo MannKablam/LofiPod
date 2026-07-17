@@ -2,6 +2,41 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.11.2-dev — Heatmap records ranges; cut marks decluttered (2026-07-16)
+
+First on-device feedback on the v0.11.x scrubber: "I don't think the
+heat map works" and "the playback bar looks like a bar code."
+Both confirmed from the code.
+
+- **Replay heat is now range-accrued (DB v20!).** The recorder was
+  point-sampling: one +1 per 10s save tick into the single ~0.5%-wide
+  bucket under the playhead. A 30s re-listen deposited 3 ticks that
+  usually landed BETWEEN the first pass's ticks (10s cadence beating
+  against ~3s buckets), so no bucket reached the renderer's ≥2 replay
+  threshold and the map stayed blank — exactly the user's test.
+  EpisodeHeatRecorder now accrues +1 to every bucket the playhead
+  crossed since the previous tick (half-open in bucket space, so
+  boundaries never double-count): one pass = every bucket exactly 1 at
+  any speed or episode length, a re-listen = 2, a third pass = 3. The
+  2x/3x lighter/darker expectation now falls out of the statistics
+  as-is. Seeks post a rebase (new PlaybackService discontinuity +
+  item-transition hooks) so the next interval starts at the landing
+  position instead of bridging the jump into a phantom listen; a
+  span ceiling (tick interval × speed × 1.6) rejects anything a missed
+  rebase lets through. MIGRATION_19_20 wipes episode_heat — old
+  point-sampled rows mixed with range rows would read as phantom
+  replays; the table is derived decoration and rebuilds on listening.
+- **Cut marks: top-40 longest only, length-scaled alpha.** The
+  analyzer flags every audible gap ≥700ms at default sensitivity —
+  in spoken word that's nearly every sentence boundary, up to its
+  2000-span cap, all drawn as full-strength ticks: the barcode. The
+  collapsed scrubber now draws only the 40 longest gaps (same cap
+  order as scripture markers), with each tick's alpha scaled by its
+  relative length (0.30–0.75) so a section break reads stronger than
+  a long breath. The expanded waveform panel still shows the full
+  analyzer list; skip-back-to-pause behavior is untouched (the
+  filter is render-side only).
+
 ## v0.11.1 — Metrics knows the canon; device-file removal stops playback; BMC black (2026-07-16)
 
 Second round of same-day v0.11.0 field feedback.

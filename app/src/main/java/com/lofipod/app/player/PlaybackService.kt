@@ -256,6 +256,16 @@ class PlaybackService : MediaSessionService() {
                 sharedPauseTap.postAnchor(player.currentPosition)
                 // Never show stale chapters against the wrong episode.
                 ChapterBridge.chapters.value = null
+                // Replay heatmap: start the new episode's first listen
+                // interval at its actual starting position (0, or the
+                // restored resume point). Covers starts that fire no
+                // discontinuity (setMediaItem + prepare); without it the
+                // first ~tick of every episode would never accrue heat.
+                val guid = mediaItem?.mediaId
+                if (guid != null) {
+                    val startMs = player.currentPosition
+                    scope.launch(Dispatchers.IO) { heatRecorder.rebase(guid, startMs) }
+                }
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -302,6 +312,16 @@ class PlaybackService : MediaSessionService() {
                 reason: Int,
             ) {
                 sharedPauseTap.postAnchor(newPosition.positionMs)
+                // Replay heatmap: a discontinuity ends any continuous-listen
+                // interval; the next one starts at the landing position.
+                // Without the rebase, the first post-seek tick would read
+                // the jump as one interval — a phantom "listened" span for
+                // a small forward skip, a discarded real one otherwise.
+                val guid = newPosition.mediaItem?.mediaId
+                if (guid != null) {
+                    val landedMs = newPosition.positionMs
+                    scope.launch(Dispatchers.IO) { heatRecorder.rebase(guid, landedMs) }
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -597,6 +617,12 @@ class PlaybackService : MediaSessionService() {
         val pos = player.currentPosition
         val dur = player.duration.takeIf { it > 0 } ?: 0L
         val now = System.currentTimeMillis()
+        // Ceiling for a plausible continuous-listen interval since the last
+        // heat tick, in MEDIA time: one tick interval at the current speed
+        // plus scheduling headroom. Snapshotted on the main thread with the
+        // rest of the player state.
+        val heatMaxSpanMs =
+            (SAVE_INTERVAL_MS * player.playbackParameters.speed * 1.6f).toLong()
         scope.launch(Dispatchers.IO) {
             val dao = (application as LofiPodApp).db.episodeStateDao()
             val row = dao.get(id)
@@ -612,10 +638,10 @@ class PlaybackService : MediaSessionService() {
             }
             // Replay heatmap: only real listen ticks accrue heat —
             // listenDelta == 0 is a save-on-pause/destroy snapshot where no
-            // time elapsed under this bucket. Raw player position on
+            // time elapsed under this interval. Raw player position on
             // purpose (heat is persistence-domain, like updatePosition).
             if (listenDelta > 0) {
-                heatRecorder.tick(id, pos, dur)
+                heatRecorder.tick(id, pos, dur, heatMaxSpanMs)
             }
         }
     }

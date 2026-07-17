@@ -47,6 +47,18 @@ import kotlinx.coroutines.delay
 /** Marker positioned by transcript-proportional fraction (approximate). */
 data class ScrubberMarker(val frac: Float, val label: String)
 
+/** One rendered cut mark: position fraction + length-scaled alpha. */
+private data class PauseTickSpec(val frac: Float, val alpha: Float)
+
+/** Cut-mark cap — same order as the scripture-marker cap; more reads as
+ *  a barcode on a phone-width bar. */
+private const val MAX_SCRUBBER_TICKS = 40
+
+/** Alpha range the shown ticks' relative lengths map onto: the longest
+ *  gap keeps the old full-strength tick, the shortest fades well back. */
+private const val TICK_MIN_ALPHA = 0.30f
+private const val TICK_MAX_ALPHA = 0.75f
+
 /**
  * The structured scrubber (v0.11) — replaces the Player's plain Slider
  * with a taller track carrying three information layers:
@@ -64,7 +76,12 @@ data class ScrubberMarker(val frac: Float, val label: String)
  *     an editing timeline. Sourced from the offline analyzer's scan
  *     when one exists (whole file, present the moment the screen
  *     opens); otherwise from the live PauseTap processor, which only
- *     knows regions the decoder visited this session.
+ *     knows regions the decoder visited this session. Spoken word has
+ *     an audible gap at nearly every sentence boundary, so only the
+ *     [MAX_SCRUBBER_TICKS] LONGEST gaps are drawn — the structural
+ *     breaks worth a glance — with each tick's alpha carrying its
+ *     relative length (the full list painted the bar like a barcode;
+ *     the expanded waveform panel still shows everything).
  *  3. SCRIPTURE MARKERS — chapter:verse landmarks from the transcript,
  *     placed by paragraph-proportional POSITION ESTIMATE (transcripts
  *     carry no timestamps; markers are landmarks, not chapter dividers —
@@ -118,11 +135,27 @@ fun StructuredScrubber(
     // own measured duration instead would drift the ticks off the
     // playhead by the two durations' ratio whenever they disagree (a VBR
     // file whose header the player trusts, say).
-    val pauseFracs: FloatArray = remember(analysis, pauses, durationMs) {
+    // Declutter before mapping: keep only the longest gaps (structural
+    // breaks), and let each survivor's alpha carry its relative length so
+    // a section break reads stronger than a long breath.
+    val pauseTicks: List<PauseTickSpec> = remember(analysis, pauses, durationMs) {
         val spans = analysis?.pauses?.takeIf { analysis.durationMs > 0 } ?: pauses
-        if (durationMs > 0) FloatArray(spans.size) { i ->
-            (spans[i].endMs.toFloat() / durationMs).coerceIn(0f, 1f)
-        } else FloatArray(0)
+        if (durationMs <= 0 || spans.isEmpty()) return@remember emptyList()
+        val shown =
+            if (spans.size <= MAX_SCRUBBER_TICKS) spans
+            else spans.sortedByDescending { it.endMs - it.startMs }
+                .subList(0, MAX_SCRUBBER_TICKS)
+        val minLen = shown.minOf { it.endMs - it.startMs }.toFloat()
+        val maxLen = shown.maxOf { it.endMs - it.startMs }.toFloat()
+        shown.map { s ->
+            val rel =
+                if (maxLen > minLen) ((s.endMs - s.startMs) - minLen) / (maxLen - minLen)
+                else 1f
+            PauseTickSpec(
+                frac = (s.endMs.toFloat() / durationMs).coerceIn(0f, 1f),
+                alpha = TICK_MIN_ALPHA + rel * (TICK_MAX_ALPHA - TICK_MIN_ALPHA),
+            )
+        }
     }
 
     // Hold the drag fraction through one position-poll cycle after release
@@ -143,8 +176,9 @@ fun StructuredScrubber(
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     val playedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
     // Cut marks stay neutral (plain onSurface, no hue) so they read as
-    // structure against any temperature the heat ramp paints beneath them.
-    val tickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+    // structure against any temperature the heat ramp paints beneath
+    // them; each tick applies its own length-scaled alpha at draw time.
+    val tickColor = MaterialTheme.colorScheme.onSurface
     val markerColor = MaterialTheme.colorScheme.tertiary
     val thumbColor = MaterialTheme.colorScheme.primary
 
@@ -283,10 +317,10 @@ fun StructuredScrubber(
             // them from the in-band layers at a glance.
             val tickW = 1.5.dp.toPx()
             val tickOver = 3.dp.toPx()
-            for (i in pauseFracs.indices) {
-                val x = pauseFracs[i] * w
+            for (t in pauseTicks) {
+                val x = t.frac * w
                 drawLine(
-                    color = tickColor,
+                    color = tickColor.copy(alpha = t.alpha),
                     start = Offset(x, bandTop - tickOver),
                     end = Offset(x, bandTop + bandH + tickOver),
                     strokeWidth = tickW,
@@ -458,38 +492,37 @@ private fun heatRampColor(t: Float): Color {
 }
 
 /**
- * Turn raw listen-tick buckets into gradient color stops, or null when
- * the episode carries no replay signal worth painting.
+ * Turn accrued listen-count buckets into gradient color stops, or null
+ * when the episode carries no replay signal worth painting.
  *
- * The buckets are noisy BY CONSTRUCTION: heat accrues one count per 10s
- * wall-clock save tick (PlaybackService's cadence), but a bucket spans
- * the episode's length over 200 — so even a single front-to-back listen deposits
- * alternating 1s and 2s (or 1s and 0s at higher speeds and on short
- * episodes) as the tick interval beats against the bucket width.
- * Rendered directly, that beat looks like stripes. Three steps turn it
+ * The recorder accrues +1 to every bucket the playhead CROSSES between
+ * save ticks (see EpisodeHeatRecorder's range accrual), so the data
+ * arrives with a clean invariant: a single front-to-back pass leaves
+ * each listened bucket at exactly 1 regardless of playback speed, a
+ * twice-heard stretch at 2, three times at 3. Three steps turn that
  * into a temperature field:
  *
  *  1. SMOOTH — a small triangular kernel (radius 2, ~1% of the bar)
- *     averages the beat away without blurring genuine replay bumps,
- *     which span tens of buckets.
+ *     gives hotspots soft edges and swallows one-bucket seams (a
+ *     rebased interval around a seek can leave a single bucket short
+ *     or a boundary bucket odd).
  *  2. SUBTRACT THE SINGLE PASS — the ramp answers "where did I spend
  *     time BEYOND one listen", so one full pass must render as zero.
- *     The single-pass tick rate is the MEDIAN of the visited buckets:
- *     for any normal listen the majority of visited buckets were visited
- *     exactly once, so their middle value IS the one-pass rate — and it
- *     self-calibrates to whatever speed was used. Heat accrues one tick
- *     per 10s of WALL clock, so a bucket collects half as many ticks at
- *     2x and nearly twice as many at 0.5x; the median tracks all of it,
- *     where a fixed theoretical-1x estimate would mislabel a slow single
- *     pass as a replay and paint the whole bar hot. A quarter-baseline
- *     dead band on top swallows whatever ripple the kernel couldn't.
+ *     The single-pass level is the MEDIAN of the visited buckets: for
+ *     any normal listen the majority of visited buckets were heard
+ *     exactly once, so their middle value IS the one-pass level (1,
+ *     under the recorder's invariant — but the median also stays
+ *     honest if most of an episode was heard twice: the baseline
+ *     becomes 2 and only the third pass paints). A quarter-baseline
+ *     dead band on top swallows the ripple smoothing leaves at replay
+ *     borders.
  *  3. NORMALIZE PER EPISODE — the hottest surviving bucket becomes full
  *     red; everything else ramps proportionally.
  *
- * The raw-max-below-2 guard rejects episodes that were merely skimmed:
- * scattered single ticks from tapping around are visits, not replays,
- * while a genuine replay always lands two-plus ticks somewhere in its
- * range at any playback speed.
+ * The raw-max-below-2 guard rejects episodes with no genuine replay:
+ * under range accrual a bucket only reaches 2 when some stretch was
+ * actually heard twice — scattered taps and single passes can't fake
+ * it, and a real re-listen (even a 30s rewind) reliably produces it.
  */
 private fun buildHeatStops(buckets: IntArray): Array<Pair<Float, Color>>? {
     val n = buckets.size
@@ -513,10 +546,9 @@ private fun buildHeatStops(buckets: IntArray): Array<Pair<Float, Color>>? {
 
     val visited = smoothed.filter { it > 0f }.sorted()
     if (visited.isEmpty()) return null
-    // Median of the visited buckets is the single-pass rate at whatever
-    // speed the listener used (see the doc above). No fixed 1x cap: that
-    // only ever equals the median at >=1x and wrongly undercuts it below
-    // 1x, which is exactly what painted a slow single pass as replay.
+    // Median of the visited buckets is the single-pass level (see the
+    // doc above) — 1 under the recorder's one-count-per-bucket-per-pass
+    // invariant, higher only when most of the episode was re-listened.
     val baseline = visited[visited.size / 2]
 
     val deadBand = baseline * 0.25f

@@ -476,7 +476,7 @@ interface LofiDownloadDao {
         EpisodeHeatEntity::class,
         EpisodeAnalysisEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -899,6 +899,25 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v19 → v20: wipe replay-heat rows (data only — schema is
+         * unchanged). v0.11.2 changed EpisodeHeatRecorder from point
+         * sampling (one +1 per 10s tick into the bucket under the
+         * playhead) to range accrual (+1 to every bucket crossed since
+         * the previous tick), and the renderer's statistics assume the
+         * new invariant of one count per bucket per pass. Old
+         * point-sampled rows mixed with range rows would read as
+         * phantom replays wherever the sparse old ticks overlap the new
+         * uniform ones. The table is derived decoration that rebuilds
+         * as episodes are listened to; dropping the data keeps history
+         * honest at the cost of forgetting pre-v0.11.2 replays.
+         */
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DELETE FROM episode_heat")
+            }
+        }
+
+        /**
          * v15 → v16: add lofi_download table. The OkHttp-based downloader's
          * persistent state — replaces Media3's StandaloneDatabaseProvider +
          * DownloadIndex which we ditched in v0.6.9 after four versions of
@@ -1003,7 +1022,8 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_11_12), timed(MIGRATION_12_13),
                         timed(MIGRATION_13_14), timed(MIGRATION_14_15),
                         timed(MIGRATION_15_16), timed(MIGRATION_16_17),
-                        timed(MIGRATION_17_18), timed(MIGRATION_18_19)
+                        timed(MIGRATION_17_18), timed(MIGRATION_18_19),
+                        timed(MIGRATION_19_20)
                     )
                     .build().also { instance = it }
             }
