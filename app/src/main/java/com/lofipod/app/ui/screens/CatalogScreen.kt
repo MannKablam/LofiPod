@@ -119,13 +119,6 @@ fun CatalogScreen(
         feedVisits.associate { it.feedUrl to it.lastVisitedAt }
     }
 
-    // "Continue listening": the most recent in-progress episode, straight
-    // from Room so the card appears even on a cold start where the player
-    // session hasn't restored yet. Re-emits on every 10s ticker save, so
-    // the card's progress creeps forward while the episode plays.
-    val resumeRow by app.db.episodeStateDao().observeMostRecentInProgress()
-        .collectAsState(initial = null)
-
     // Device-files card state: the user's device name (their own setting
     // when present, hardware model otherwise) + how many files they've
     // added so the card subtitle reads at a glance.
@@ -501,30 +494,16 @@ fun CatalogScreen(
                             contentPadding = PaddingValues(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                        // Continue listening — the fastest path back into the
-                        // episode in progress, pinned above everything: from
-                        // app open to resumed audio in one tap. Hidden when
-                        // nothing is mid-listen.
-                        resumeRow?.let { row ->
-                            item(key = "resume://listening") {
-                                val isCurrent = playerState.currentEpisodeGuid == row.guid
-                                ContinueListeningCard(
-                                    row = row,
-                                    isCurrent = isCurrent,
-                                    isPlaying = isCurrent && playerState.isPlaying,
-                                    onClick = {
-                                        if (isCurrent) {
-                                            // Already loaded: make sure audio is
-                                            // rolling, then just open the player.
-                                            if (!playerState.isPlaying) controller.togglePlay()
-                                        } else {
-                                            resumePlayback(app, controller, row)
-                                        }
-                                        onOpenNowPlaying()
-                                    },
-                                )
-                            }
-                        }
+                        // No "continue listening" card here, deliberately
+                        // (v0.11.0 added one; v0.11.1 removed it): the
+                        // cold-start restore loads the last episode into the
+                        // player within a second of launch, so the bottom
+                        // mini-player is effectively always present on this
+                        // screen and already IS the resume affordance — a
+                        // second one at the top just restated it. Restore
+                        // from git history if the restore behavior ever
+                        // changes.
+                        //
                         // Device card — the user's own phone as a source.
                         // Unique cool-slate chrome so it reads as hardware, not
                         // another feed.
@@ -866,115 +845,11 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
  *  plus the pod(s) it covers — one for a card, several for a group. */
 private data class MarkAllTarget(val label: String, val pods: List<Podcast>)
 
-/**
- * "Continue listening" — the most recent in-progress episode as a
- * one-tap resume card pinned to the catalog top. Reads straight off the
- * episode_state row (title/artwork were stamped at first play; position
- * advances with the ticker), so it renders before any feed has loaded.
- * primaryContainer chrome + a progress strip make it read as "your
- * place", not another feed.
- */
-@Composable
-private fun ContinueListeningCard(
-    row: EpisodeStateEntity,
-    isCurrent: Boolean,
-    isPlaying: Boolean,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-    ) {
-        Column {
-            Row(
-                modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ThemedArtwork(artworkUrl = row.artworkUrl, size = 56.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (isPlaying) "Now playing" else "Continue listening",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        row.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 2,
-                    )
-                    if (row.durationMs > 0) {
-                        val leftMin = ((row.durationMs - row.positionMs) / 60_000L)
-                            .coerceAtLeast(0L)
-                        Text(
-                            if (leftMin > 0) "$leftMin min left" else "Almost done",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                Icon(
-                    if (isPlaying) painterResource(R.drawable.graphic_eq_24)
-                    else painterResource(R.drawable.play_circle_24),
-                    contentDescription = if (isPlaying) "Now playing" else "Resume",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(36.dp),
-                )
-            }
-            // Progress strip along the card's bottom edge — the "how far
-            // in am I" read without any numbers.
-            if (row.durationMs > 0) {
-                LinearProgressIndicator(
-                    progress = {
-                        (row.positionMs.toFloat() / row.durationMs).coerceIn(0f, 1f)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    trackColor = MaterialTheme.colorScheme.primaryContainer,
-                )
-            }
-        }
-    }
-}
-
-/**
- * Resume an episode straight from its persisted state row — the Catalog
- * card's play path when the episode isn't already loaded in the player.
- * Mirrors MainActivity's playEntity: refresh the artwork against the live
- * feed cache when possible (the stamped row art can predate the feed's
- * channel image), fall back to a minimal Episode built from the row.
- * playEpisode's own smart-resume logic picks up the saved position.
- */
-private fun resumePlayback(
-    app: LofiPodApp,
-    controller: PlayerController,
-    e: EpisodeStateEntity,
-) {
-    val livePod = app.repo.cached(e.feedUrl)
-    val liveEp = livePod?.episodes?.find { it.guid == e.guid }
-    val resolvedEpArt = liveEp?.episodeArtworkUrl ?: e.artworkUrl
-    val resolvedPodArt = livePod?.artworkUrl ?: resolvedEpArt
-
-    val ep = liveEp ?: com.lofipod.app.data.model.Episode(
-        guid = e.guid,
-        feedUrl = e.feedUrl,
-        title = e.title,
-        description = null,
-        pubDateMillis = null,
-        audioUrl = e.audioUrl,
-        audioMimeType = null,
-        durationSeconds = null,
-        episodeArtworkUrl = resolvedEpArt,
-    )
-    controller.playEpisode(
-        ep,
-        podcastTitle = livePod?.title ?: "",
-        podcastArt = resolvedPodArt,
-    )
-}
+// ContinueListeningCard + its resumePlayback helper were removed in
+// v0.11.1 — the cold-start restore keeps the mini-player present on this
+// screen, which already carries the resume affordance. Restore both from
+// git history (tag v0.11.0) if a top-of-catalog resume card is ever
+// wanted again.
 
 /**
  * Top-level catalog card for a single feed. Reused for [SourceGroup] children

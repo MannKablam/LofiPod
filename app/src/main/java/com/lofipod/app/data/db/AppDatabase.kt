@@ -31,24 +31,6 @@ interface EpisodeStateDao {
     @Query("SELECT * FROM episode_state WHERE lastPlayedMillis > 0 ORDER BY lastPlayedMillis DESC LIMIT 1")
     suspend fun mostRecentlyPlayed(): EpisodeStateEntity?
 
-    /**
-     * Live view of the most recent episode still IN PROGRESS — played at
-     * some point, not archived, position past zero but short of the
-     * completion window. Drives the Catalog's "Continue listening" card;
-     * Room re-emits on every ticker save, so the card's progress bar
-     * advances while the episode plays. Rows with an unknown duration
-     * stay eligible (a stream whose duration never resolved is still
-     * resumable — the completion predicate can't be evaluated for it).
-     */
-    @Query(
-        "SELECT * FROM episode_state WHERE lastPlayedMillis > 0 " +
-            "AND archivedAt = 0 " +
-            "AND positionMs > 0 " +
-            "AND (durationMs <= 0 OR positionMs < durationMs - 5000) " +
-            "ORDER BY lastPlayedMillis DESC LIMIT 1"
-    )
-    fun observeMostRecentInProgress(): Flow<EpisodeStateEntity?>
-
     /** All episodes at exactly this favorite tier (1 = Excellent, 2 = Most-excellent). */
     @Query("SELECT * FROM episode_state WHERE favoriteTier = :tier ORDER BY lastPlayedMillis DESC")
     fun observeAtTier(tier: Int): Flow<List<EpisodeStateEntity>>

@@ -2,6 +2,21 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.11.1 — Continue-listening card removed (2026-07-16)
+
+Field feedback on v0.11.0, same day: the catalog showed the resume card
+at the top AND the mini-player at the bottom — two affordances for the
+same tap. The card lost, structurally: the cold-start restore
+(PlayerController.restoreLastEpisodeIfNeeded) loads the last episode
+into the player within a second of launch, so the mini-player is
+effectively always present on the catalog and already IS "continue
+listening". Gating the card on the mini-player's absence would only
+have produced a flash-then-vanish during the restore window on every
+cold start. Card, its resumePlayback helper, and the
+observeMostRecentInProgress DAO query all removed; tombstone comments
+point at the v0.11.0 tag if a top-of-catalog resume card is ever
+wanted again.
+
 ## v0.11.0 — Undo for bulk actions, waveform panel orientation (2026-07-16)
 
 The minor-bump release closing out the v0.11 UX era: everything since
