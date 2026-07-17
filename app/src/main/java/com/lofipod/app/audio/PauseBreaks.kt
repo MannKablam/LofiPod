@@ -16,17 +16,30 @@ package com.lofipod.app.audio
  * 10-minute study keeps a handful of marks and a 2-hour sermon tops
  * out at [MAX_BREAKS]. The sensitivity dialog still tunes the raw
  * detection underneath; selection rides on whatever it detects.
+ *
+ * Density is grounded in measurement, not guesswork (2026-07-16, the
+ * detector replicated offline at sensitivity 3 over canon episodes):
+ * a 40:42 Piper Romans sermon carries 365 detected gaps of which 100
+ * run >=1.2s and 40 run >=2s — at this density every selected break
+ * still measures >=1.9s, comfortably structural — while a 12:33 Ask
+ * Pastor John, edited tight, has NO gap over 1.8s and only 65 total,
+ * so its selection can never balloon. The earlier one-per-90s guess
+ * left the sermon with up to 4.8 MINUTES between jump targets.
  */
 object PauseBreaks {
 
-    /** Break density: one per this much episode. */
-    private const val MS_PER_BREAK = 90_000L
+    /** Break density: one per this much episode ("one per 30-45s may
+     *  be sufficient" — the user; 40s sits mid-range and, measured
+     *  against real canon audio, keeps every selected sermon gap
+     *  >=~1.9s). */
+    private const val MS_PER_BREAK = 40_000L
 
     /** Selection bounds: even a short clip keeps its few biggest gaps;
-     *  more than [MAX_BREAKS] reads as a barcode on a phone-width bar
-     *  (same order as the scrubber's scripture-marker cap). */
+     *  the cap covers a 40-minute sermon at full density (a 2h one
+     *  degrades to ~one per 2 minutes — the bar is out of pixels long
+     *  before that). */
     private const val MIN_BREAKS = 4L
-    private const val MAX_BREAKS = 40L
+    private const val MAX_BREAKS = 60L
 
     /** Land this far before speech resumes, inside the gap, so the next
      *  phrase starts cleanly without replaying the whole silence. */

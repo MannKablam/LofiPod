@@ -33,8 +33,8 @@ Both confirmed from the code.
   word, up to the analyzer's 2000-span cap, all drawn full-strength:
   the barcode, with the button hopping sentence-by-sentence through
   gaps the eye couldn't tell apart. New PauseBreaks defines the
-  structural break once — the LONGEST gaps, one per ~90s of episode
-  (min 4, cap 40; the pause before a new thought runs longer than the
+  structural break once — the LONGEST gaps, one per ~40s of episode
+  (min 4, cap 60; the pause before a new thought runs longer than the
   pause between sentences) — and both consumers run it: the collapsed
   scrubber draws exactly these ticks (alpha scaled by relative gap
   length, 0.30–0.75), and the pause-skip button walks back through
@@ -46,6 +46,18 @@ Both confirmed from the code.
   when no break is known behind the playhead; sensitivity long-press
   still tunes the raw detection underneath; the expanded waveform
   panel still shows the full detector list.
+- **Break density measured against real canon audio, not guessed.**
+  The detector was replicated offline (sensitivity-3 parameters:
+  peak < 1024/32768 sustained ≥700ms) over two downloaded episodes.
+  Piper Romans #1 (40:42, live preaching): 365 gaps, 100 of them
+  ≥1.2s, 40 ≥2s, longest 5.2s — long silences are real structure.
+  APJ 2026-07-16 (12:33, studio-edited): 65 gaps, LONGEST 1.79s —
+  editing removes big pauses entirely. The first-guess one-per-90s
+  density left the sermon with up to 4.8 minutes between jump
+  targets; per user ("one per 30-45 seconds may be sufficient") the
+  density is now one per 40s with the cap at 60, at which every
+  selected sermon break still measures ≥1.9s — structural, not
+  sentence gaps. Analysis script kept in session scratchpad.
 
 ## v0.11.1 — Metrics knows the canon; device-file removal stops playback; BMC black (2026-07-16)
 
