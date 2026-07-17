@@ -26,16 +26,26 @@ Both confirmed from the code.
   rebase lets through. MIGRATION_19_20 wipes episode_heat — old
   point-sampled rows mixed with range rows would read as phantom
   replays; the table is derived decoration and rebuilds on listening.
-- **Cut marks: top-40 longest only, length-scaled alpha.** The
-  analyzer flags every audible gap ≥700ms at default sensitivity —
-  in spoken word that's nearly every sentence boundary, up to its
-  2000-span cap, all drawn as full-strength ticks: the barcode. The
-  collapsed scrubber now draws only the 40 longest gaps (same cap
-  order as scripture markers), with each tick's alpha scaled by its
-  relative length (0.30–0.75) so a section break reads stronger than
-  a long breath. The expanded waveform panel still shows the full
-  analyzer list; skip-back-to-pause behavior is untouched (the
-  filter is render-side only).
+- **Breaks are ONE selection, shared by marks and button.** The point
+  of the cut marks is the dedicated button: jump back to the last
+  break/main idea. But the detector flags every audible gap ≥700ms at
+  default sensitivity — nearly every sentence boundary in spoken
+  word, up to the analyzer's 2000-span cap, all drawn full-strength:
+  the barcode, with the button hopping sentence-by-sentence through
+  gaps the eye couldn't tell apart. New PauseBreaks defines the
+  structural break once — the LONGEST gaps, one per ~90s of episode
+  (min 4, cap 40; the pause before a new thought runs longer than the
+  pause between sentences) — and both consumers run it: the collapsed
+  scrubber draws exactly these ticks (alpha scaled by relative gap
+  length, 0.30–0.75), and the pause-skip button walks back through
+  exactly this list (skipBackToPreviousBreak; PauseTapProcessor's
+  fine-grained previousPauseTargetBefore retired). Bonus: the button
+  now sees the analyzer's whole-file spans when a scan exists — it
+  used to know only regions decoded this session — so it works
+  immediately on a freshly opened scanned episode. Plain-15s fallback
+  when no break is known behind the playhead; sensitivity long-press
+  still tunes the raw detection underneath; the expanded waveform
+  panel still shows the full detector list.
 
 ## v0.11.1 — Metrics knows the canon; device-file removal stops playback; BMC black (2026-07-16)
 

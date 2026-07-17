@@ -2278,20 +2278,24 @@ class PlayerController(private val context: Context) {
     fun seekForward() { controller?.seekForward() }
 
     /**
-     * Seek back to just before the end of the previous audible pause
-     * (sentence/paragraph boundary), as recorded by the shared
-     * [com.lofipod.app.audio.PauseTapProcessor]. Repeated taps walk back
-     * through successive pauses (the tap's guard window excludes the pause
-     * we just landed after). Falls back to the plain 15 s [seekBack] when
-     * no pause is known behind the playhead — cold start, right after a
-     * cross-item transition, or content with no detectable gaps.
+     * Seek back to just before the end of the previous BREAK — the same
+     * selected gaps the scrubber draws as cut marks; the caller supplies
+     * that list (see [com.lofipod.app.audio.PauseBreaks]: the screen
+     * builds it from the analyzer scan when one exists, else the live
+     * tap's snapshot, so button and marks always agree). Repeated taps
+     * walk back through successive breaks (the guard window excludes the
+     * break just landed after). Falls back to the plain 15 s [seekBack]
+     * when no break is known behind the playhead — cold start, unscanned
+     * episode with an unvisited region, or content with no real gaps.
      *
-     * Returns true when a pause was found (UI can differentiate feedback).
+     * Returns true when a break was found (UI can differentiate feedback).
      */
-    fun skipBackToPreviousPause(): Boolean {
+    fun skipBackToPreviousBreak(
+        breaks: List<com.lofipod.app.audio.PauseTapProcessor.PauseSpan>,
+    ): Boolean {
         if (controller == null) return false
-        val target = PlaybackService.sharedPauseTap
-            .previousPauseTargetBefore(currentPositionMs())
+        val target = com.lofipod.app.audio.PauseBreaks
+            .targetBefore(breaks, currentPositionMs())
         return if (target != null) {
             seekTo(target)
             true

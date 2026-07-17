@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
 import com.lofipod.app.audio.EpisodeAnalysis
+import com.lofipod.app.audio.PauseBreaks
 import com.lofipod.app.audio.PauseTapProcessor
 import com.lofipod.app.bible.ScriptureTagger
 import com.lofipod.app.bible.SpokenScriptureExtractor
@@ -49,10 +50,6 @@ data class ScrubberMarker(val frac: Float, val label: String)
 
 /** One rendered cut mark: position fraction + length-scaled alpha. */
 private data class PauseTickSpec(val frac: Float, val alpha: Float)
-
-/** Cut-mark cap — same order as the scripture-marker cap; more reads as
- *  a barcode on a phone-width bar. */
-private const val MAX_SCRUBBER_TICKS = 40
 
 /** Alpha range the shown ticks' relative lengths map onto: the longest
  *  gap keeps the old full-strength tick, the shortest fades well back. */
@@ -71,17 +68,16 @@ private const val TICK_MAX_ALPHA = 0.75f
  *     listen leaves the track bare — only re-listened ranges heat up,
  *     and the episode's hottest range is always full red (per-episode
  *     normalization). See [buildHeatStops] for the statistics.
- *  2. PAUSE CUT MARKS — audible-silence boundaries as thin neutral
+ *  2. BREAK CUT MARKS — the [PauseBreaks] selection (the longest
+ *     audible gaps, count scaled to episode length) as thin neutral
  *     ticks that overshoot the band top and bottom, like cut points on
- *     an editing timeline. Sourced from the offline analyzer's scan
- *     when one exists (whole file, present the moment the screen
- *     opens); otherwise from the live PauseTap processor, which only
- *     knows regions the decoder visited this session. Spoken word has
- *     an audible gap at nearly every sentence boundary, so only the
- *     [MAX_SCRUBBER_TICKS] LONGEST gaps are drawn — the structural
- *     breaks worth a glance — with each tick's alpha carrying its
- *     relative length (the full list painted the bar like a barcode;
- *     the expanded waveform panel still shows everything).
+ *     an editing timeline. These are exactly the pause-skip button's
+ *     jump targets: mark and button share one selection. Sourced from
+ *     the offline analyzer's scan when one exists (whole file, present
+ *     the moment the screen opens); otherwise from the live PauseTap
+ *     processor, which only knows regions the decoder visited this
+ *     session. The raw detector list (every sentence gap — a barcode
+ *     if drawn) stays visible in the expanded waveform panel.
  *  3. SCRIPTURE MARKERS — chapter:verse landmarks from the transcript,
  *     placed by paragraph-proportional POSITION ESTIMATE (transcripts
  *     carry no timestamps; markers are landmarks, not chapter dividers —
@@ -135,19 +131,18 @@ fun StructuredScrubber(
     // own measured duration instead would drift the ticks off the
     // playhead by the two durations' ratio whenever they disagree (a VBR
     // file whose header the player trusts, say).
-    // Declutter before mapping: keep only the longest gaps (structural
-    // breaks), and let each survivor's alpha carry its relative length so
-    // a section break reads stronger than a long breath.
+    // The drawn ticks ARE the pause-skip button's targets: both run the
+    // same PauseBreaks.select over the same spans, so every mark is a
+    // place the button can land and nothing the button targets is
+    // invisible. Alpha carries each break's relative length so a section
+    // seam reads stronger than a long breath.
     val pauseTicks: List<PauseTickSpec> = remember(analysis, pauses, durationMs) {
         val spans = analysis?.pauses?.takeIf { analysis.durationMs > 0 } ?: pauses
-        if (durationMs <= 0 || spans.isEmpty()) return@remember emptyList()
-        val shown =
-            if (spans.size <= MAX_SCRUBBER_TICKS) spans
-            else spans.sortedByDescending { it.endMs - it.startMs }
-                .subList(0, MAX_SCRUBBER_TICKS)
-        val minLen = shown.minOf { it.endMs - it.startMs }.toFloat()
-        val maxLen = shown.maxOf { it.endMs - it.startMs }.toFloat()
-        shown.map { s ->
+        val breaks = PauseBreaks.select(spans, durationMs)
+        if (breaks.isEmpty()) return@remember emptyList()
+        val minLen = breaks.minOf { it.endMs - it.startMs }.toFloat()
+        val maxLen = breaks.maxOf { it.endMs - it.startMs }.toFloat()
+        breaks.map { s ->
             val rel =
                 if (maxLen > minLen) ((s.endMs - s.startMs) - minLen) / (maxLen - minLen)
                 else 1f

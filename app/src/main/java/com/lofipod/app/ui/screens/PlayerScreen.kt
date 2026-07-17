@@ -848,23 +848,34 @@ fun PlayerScreen(
                     // Drop them in preview so the transport row collapses to
                     // a single big Play button.
                     if (!isPreview) {
-                        // Pause-skip: tap = seek back to the previous audible
-                        // pause; long-press = sensitivity dialog. Box +
-                        // combinedClickable because IconButton has no
-                        // long-press slot.
+                        // Pause-skip: tap = seek back to the previous BREAK —
+                        // built from the same source and selection as the
+                        // scrubber's cut marks (PauseBreaks), so the button
+                        // lands exactly on what the bar shows. Long-press =
+                        // sensitivity dialog. Box + combinedClickable because
+                        // IconButton has no long-press slot.
                         Box(
                             modifier = Modifier
                                 .size(PauseSkipTouchTargetSize)
                                 .clip(androidx.compose.foundation.shape.CircleShape)
                                 .combinedClickable(
-                                    onClick = { controller.skipBackToPreviousPause() },
+                                    onClick = {
+                                        val analysis = episodeAnalysis
+                                        val spans = analysis?.pauses
+                                            ?.takeIf { analysis.durationMs > 0 }
+                                            ?: scrubberPauses
+                                        controller.skipBackToPreviousBreak(
+                                            com.lofipod.app.audio.PauseBreaks
+                                                .select(spans, durationMs)
+                                        )
+                                    },
                                     onLongClick = { pauseSkipDialogOpen = true },
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 painterResource(R.drawable.skip_previous_24),
-                                contentDescription = "Back to previous pause (hold to adjust sensitivity)",
+                                contentDescription = "Back to previous break (hold to adjust sensitivity)",
                                 modifier = Modifier.size(38.dp)
                             )
                         }

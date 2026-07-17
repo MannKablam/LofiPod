@@ -34,8 +34,8 @@ import kotlin.math.abs
  * Recorded pauses are absolute media positions for the CURRENT media item,
  * so they survive seeks (the list is only cleared on item transitions, via
  * [clearPauses]). Re-decoding a region after a skip-back re-records its
- * pauses; duplicates are harmless to the max-scan in
- * [previousPauseTargetBefore].
+ * pauses; duplicates are harmless to [PauseBreaks]' selection and target
+ * scan (they merely tie).
  */
 class PauseTapProcessor : BaseAudioProcessor() {
 
@@ -113,27 +113,10 @@ class PauseTapProcessor : BaseAudioProcessor() {
         synchronized(lock) { pauses.clear() }
     }
 
-    /**
-     * Seek target for "skip back to the previous audible pause": the tail
-     * of the most recent recorded pause that ended at least [guardMs]
-     * before [positionMs] (the guard makes repeated taps walk back through
-     * successive pauses instead of re-finding the same one). Null when
-     * nothing qualifies — caller should fall back to a plain skip.
-     */
-    fun previousPauseTargetBefore(positionMs: Long, guardMs: Long = 400L): Long? {
-        // Snapshot under the lock, scan outside — keeps the audio thread's
-        // recordPause from waiting on a main-thread scan of the ring.
-        val snapshot = synchronized(lock) { pauses.toList() }
-        val cutoff = positionMs - guardMs
-        var best: Pause? = null
-        for (p in snapshot) {
-            if (p.endMs <= cutoff && (best == null || p.endMs > best.endMs)) best = p
-        }
-        val b = best ?: return null
-        // Land inside the pause just before speech resumes, so the next
-        // phrase starts cleanly without replaying the whole gap.
-        return (b.endMs - PRE_ROLL_MS).coerceAtLeast(b.startMs)
-    }
+    // previousPauseTargetBefore (every recorded pause was a candidate)
+    // retired in v0.11.2: target math lives in PauseBreaks.targetBefore,
+    // which runs on the SELECTED breaks so the button lands only on the
+    // marks the scrubber draws.
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
@@ -235,7 +218,6 @@ class PauseTapProcessor : BaseAudioProcessor() {
     companion object {
         const val DEFAULT_SENSITIVITY = 3
         private const val MAX_PAUSES = 512
-        private const val PRE_ROLL_MS = 200L
 
         /**
          * Min-silence duration per sensitivity step. Public so the
