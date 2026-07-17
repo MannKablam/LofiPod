@@ -1,5 +1,8 @@
 package com.lofipod.app.ui.screens
 
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.animateDecay
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
@@ -17,6 +20,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
@@ -25,12 +29,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.R
 import com.lofipod.app.audio.EpisodeAnalysis
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -62,10 +72,17 @@ fun interface PlayheadPositionSource {
  * lands:
  *
  *  - PAN — a drag that starts away from the playhead slides the window
- *    along the episode. Playback is untouched; this is a viewport move,
- *    not a seek. Panning also switches off auto-follow, because a
- *    window that keeps re-centering itself while the user is trying to
- *    inspect somewhere else would fight the pan it just granted.
+ *    along the episode; a quick release flings it, decaying to a stop
+ *    (dead stop at either end — no bounce to misread as audio).
+ *    Playback is untouched; this is a viewport move, not a seek.
+ *    Panning also switches off auto-follow, because a window that keeps
+ *    re-centering itself while the user is trying to inspect somewhere
+ *    else would fight the pan it just granted.
+ *
+ * ORIENTATION lives along the bottom edge: a minimap strip showing the
+ * whole episode with the visible window highlighted and a playhead dot,
+ * and the window's start/end timestamps in the corners — so a deep pan
+ * into a two-hour sermon never loses "where am I".
  *  - PLAYHEAD DRAG — a drag that starts within a thumb's width of the
  *    playhead line picks the line up and moves it. The seek fires once
  *    on release, mirroring the scrubber's contract (per-move seeks
@@ -129,6 +146,12 @@ fun WaveformPanel(
     var followPlayhead by remember(analysis) { mutableStateOf(true) }
     val panStartBucket = remember(analysis) { mutableFloatStateOf(0f) }
     val dragPlayheadMs = remember(analysis) { mutableLongStateOf(-1L) }
+    // In-flight pan fling. Exactly one at a time: any new touch or a
+    // recenter kills it. Not keyed on analysis — an orphaned decay writes
+    // into the OLD episode's (discarded) pan state, which is harmless,
+    // while cancelling on every touch is what actually matters for feel.
+    val flingScope = rememberCoroutineScope()
+    var flingJob by remember { mutableStateOf<Job?>(null) }
 
     Column(modifier = modifier) {
         Row(
@@ -142,7 +165,12 @@ fun WaveformPanel(
                 modifier = Modifier.weight(1f),
             )
             if (!followPlayhead) {
-                IconButton(onClick = { followPlayhead = true }) {
+                IconButton(onClick = {
+                    // A decaying fling writing the pan while auto-follow
+                    // retakes the window would fight the recenter.
+                    flingJob?.cancel()
+                    followPlayhead = true
+                }) {
                     Icon(
                         painterResource(R.drawable.filter_center_focus_24),
                         contentDescription = "Recenter on playhead",
@@ -184,6 +212,16 @@ fun WaveformPanel(
             val playedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
             val remainingColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
             val playheadColor = MaterialTheme.colorScheme.primary
+            // Edge-timestamp machinery. The measurer's internal cache plus
+            // the per-second label cache keep the draw loop's steady state
+            // allocation-free: labels re-derive only when a window edge
+            // crosses a second boundary, and identical (text, style) pairs
+            // re-use the measurer's cached layout.
+            val textMeasurer = rememberTextMeasurer()
+            val timeTextStyle = MaterialTheme.typography.labelSmall.copy(
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+            )
+            val timeLabels = remember { TimeLabelCache() }
 
             Canvas(
                 modifier = Modifier
@@ -196,11 +234,15 @@ fun WaveformPanel(
                         // Gesture-local: which of the two drags this one is,
                         // decided once at finger-down, and a float accumulator
                         // for the playhead so sub-bucket motion isn't lost to
-                        // Long truncation move by move.
+                        // Long truncation move by move. The velocity tracker
+                        // feeds the pan fling; it resets per gesture.
                         var draggingPlayhead = false
                         var dragMsF = 0f
+                        val velocityTracker = VelocityTracker()
                         detectDragGestures(
                             onDragStart = { down ->
+                                flingJob?.cancel()
+                                velocityTracker.resetTracking()
                                 val w = size.width.toFloat()
                                 val windowBuckets = w / stride
                                 val heldMs = dragPlayheadMs.longValue
@@ -240,6 +282,7 @@ fun WaveformPanel(
                             },
                             onDrag = { change, amount ->
                                 change.consume()
+                                velocityTracker.addPosition(change.uptimeMillis, change.position)
                                 if (draggingPlayhead) {
                                     dragMsF = (dragMsF + amount.x / stride * msPerBucket)
                                         .coerceIn(0f, durationMs.toFloat())
@@ -266,6 +309,30 @@ fun WaveformPanel(
                                     onSeek(dragPlayheadMs.longValue)
                                     dragPlayheadMs.longValue = -1L
                                     draggingPlayhead = false
+                                } else {
+                                    // Pan fling: carry the window with the
+                                    // finger's exit velocity, decaying, clamped
+                                    // to the episode's ends (hitting an edge
+                                    // stops dead — no bounce to misread as
+                                    // audio). Velocity is finger px/s; the pan
+                                    // moves opposite the finger and in bucket
+                                    // units, hence the negated stride division.
+                                    val velocityX = velocityTracker.calculateVelocity().x
+                                    val maxStart =
+                                        (envelope.size - size.width.toFloat() / stride)
+                                            .coerceAtLeast(0f)
+                                    if (abs(velocityX) > MIN_FLING_VELOCITY_PX_S) {
+                                        flingJob = flingScope.launch {
+                                            AnimationState(
+                                                initialValue = panStartBucket.floatValue,
+                                                initialVelocity = -velocityX / stride,
+                                            ).animateDecay(exponentialDecay(frictionMultiplier = 1.1f)) {
+                                                val clamped = value.coerceIn(0f, maxStart)
+                                                panStartBucket.floatValue = clamped
+                                                if (value != clamped) cancelAnimation()
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             onDragCancel = {
@@ -338,6 +405,64 @@ fun WaveformPanel(
                     i++
                 }
 
+                // Minimap: the whole episode as a hairline strip along the
+                // bottom edge — the bright segment is the visible window,
+                // the dot the live playhead. "Where am I in the file" at a
+                // glance, and the pan/fling feedback that makes flying past
+                // unseen territory legible. Skipped when the window already
+                // shows everything (the map would just restate the canvas).
+                val mapInset = 10.dp.toPx()
+                val mapW = w - 2 * mapInset
+                val mapY = h - 5.dp.toPx()
+                if (windowBuckets < total.toFloat() && mapW > 0f) {
+                    drawLine(
+                        color = midlineColor,
+                        start = Offset(mapInset, mapY),
+                        end = Offset(mapInset + mapW, mapY),
+                        strokeWidth = 3.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+                    val winX0 = mapInset + (start / total) * mapW
+                    val winX1 = mapInset +
+                        ((start + windowBuckets).coerceAtMost(total.toFloat()) / total) * mapW
+                    drawLine(
+                        color = playheadColor.copy(alpha = 0.45f),
+                        start = Offset(winX0, mapY),
+                        end = Offset(winX1, mapY),
+                        strokeWidth = 3.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+                    drawCircle(
+                        color = playheadColor,
+                        radius = 2.5.dp.toPx(),
+                        center = Offset(
+                            mapInset + (liveBucket / total).coerceIn(0f, 1f) * mapW,
+                            mapY,
+                        ),
+                    )
+                }
+
+                // Edge timestamps: the window's start and end as media time,
+                // tucked into the bottom corners above the minimap. Rounded
+                // to whole seconds so the strings (and their cached layouts)
+                // hold still between second boundaries even while
+                // auto-follow slides the window every frame.
+                val startSec = (start * msPerBucket / 1000f).toLong()
+                val endSec = (((start + windowBuckets) * msPerBucket)
+                    .coerceAtMost(durationMs.toFloat()) / 1000f).toLong()
+                val startLayout = textMeasurer.measure(
+                    timeLabels.labelFor(0, startSec), timeTextStyle
+                )
+                val endLayout = textMeasurer.measure(
+                    timeLabels.labelFor(1, endSec), timeTextStyle
+                )
+                val labelY = mapY - 4.dp.toPx() - startLayout.size.height
+                drawText(startLayout, topLeft = Offset(mapInset, labelY))
+                drawText(
+                    endLayout,
+                    topLeft = Offset(mapInset + mapW - endLayout.size.width, labelY),
+                )
+
                 // Playhead: full-height line plus a grab tab at the top so
                 // it advertises its draggability. Skipped entirely when the
                 // viewport has been panned somewhere else.
@@ -391,4 +516,34 @@ private fun windowStartBuckets(
 ): Float {
     val raw = if (centered) playheadBucket - windowBuckets / 2f else panStart
     return raw.coerceIn(0f, (totalBuckets - windowBuckets).coerceAtLeast(0f))
+}
+
+/** Pan-fling ignition threshold. Below this the finger was placing the
+ *  window, not throwing it — matching the platform's own feel, where a
+ *  slow release parks exactly where it lifted. */
+private const val MIN_FLING_VELOCITY_PX_S = 200f
+
+/**
+ * Per-slot label cache for the edge timestamps. The window edges' labels
+ * change once per second at most, but the draw loop runs every frame —
+ * re-deriving the strings each frame would be sixty allocations a second
+ * for identical text. Slot 0 = window start, slot 1 = window end.
+ */
+private class TimeLabelCache {
+    private val secs = longArrayOf(-1L, -1L)
+    private val texts = arrayOf("", "")
+    fun labelFor(slot: Int, sec: Long): String {
+        if (secs[slot] != sec) {
+            secs[slot] = sec
+            texts[slot] = formatPanelTime(sec)
+        }
+        return texts[slot]
+    }
+}
+
+private fun formatPanelTime(totalSec: Long): String {
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

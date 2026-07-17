@@ -272,9 +272,17 @@ fun CatalogScreen(
                     val pods = target.pods
                     confirmMarkAll = null
                     scope.launch {
-                        var n = 0
-                        for (p in pods) n += markAllPlayed(app, p)
-                        snackbarHostState.showSnackbar("Marked $n played")
+                        val undos = pods.map { markAllPlayed(app, it) }
+                        val n = undos.sumOf { it.count }
+                        val result = snackbarHostState.showSnackbar(
+                            "Marked $n played",
+                            actionLabel = "Undo",
+                            duration = SnackbarDuration.Long,
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            for (u in undos) undoMarkAllPlayed(app, u)
+                            snackbarHostState.showSnackbar("Restored")
+                        }
                     }
                 }) { Text("Mark all") }
             },
@@ -751,18 +759,34 @@ private fun NewEpisodesBadge(count: Int) {
 }
 
 /**
+ * Undo snapshot for [markAllPlayed]: every row as it stood before the
+ * sweep (for rows that already existed) plus the duration written for
+ * rows the sweep created — enough to put back the exact (position,
+ * duration, lastPlayed) triple that updatePosition overwrote, or to
+ * return a created row to never-played.
+ */
+private class MarkAllPlayedUndo(
+    val prior: Map<String, EpisodeStateEntity>,
+    val written: Map<String, Long>,
+) {
+    val count: Int get() = written.size
+}
+
+/**
  * Mark every episode of [pod] played: ensure each has an episode_state
  * row, then pin position to the best-known duration so the derived
  * completion predicate (positionMs >= durationMs - 5s) holds — the same
  * mechanics as the Episodes screen's bulk mark-played, feed-wide. One
  * transaction: a deep archive is a thousand-plus rows, and row-at-a-time
- * commits would turn a tap into seconds of jank. Returns the count for
- * the confirmation snackbar.
+ * commits would turn a tap into seconds of jank. Returns the undo
+ * snapshot; [undoMarkAllPlayed] reverses the whole sweep.
  */
-private suspend fun markAllPlayed(app: LofiPodApp, pod: Podcast): Int =
+private suspend fun markAllPlayed(app: LofiPodApp, pod: Podcast): MarkAllPlayedUndo =
     withContext(Dispatchers.IO) {
         val dao = app.db.episodeStateDao()
         val now = System.currentTimeMillis()
+        val prior = mutableMapOf<String, EpisodeStateEntity>()
+        val written = mutableMapOf<String, Long>()
         app.db.withTransaction {
             for (ep in pod.episodes) {
                 val existing = dao.get(ep.guid)
@@ -776,14 +800,35 @@ private suspend fun markAllPlayed(app: LofiPodApp, pod: Podcast): Int =
                             artworkUrl = ep.episodeArtworkUrl ?: pod.artworkUrl,
                         )
                     )
+                } else {
+                    prior[ep.guid] = existing
                 }
                 val dur = existing?.durationMs?.takeIf { it > 0 }
                     ?: ep.durationSeconds?.let { it * 1000L }
                     ?: 1L
                 dao.updatePosition(ep.guid, dur, dur, now, 0L)
+                written[ep.guid] = dur
             }
         }
-        pod.episodes.size
+        MarkAllPlayedUndo(prior, written)
+    }
+
+/** Reverse one [markAllPlayed] sweep: previously-existing rows get their
+ *  captured triple back; rows the sweep created return to never-played
+ *  (position 0, lastPlayed 0 — keeping the learned duration is harmless). */
+private suspend fun undoMarkAllPlayed(app: LofiPodApp, undo: MarkAllPlayedUndo) =
+    withContext(Dispatchers.IO) {
+        val dao = app.db.episodeStateDao()
+        app.db.withTransaction {
+            for ((guid, dur) in undo.written) {
+                val p = undo.prior[guid]
+                if (p != null) {
+                    dao.updatePosition(guid, p.positionMs, p.durationMs, p.lastPlayedMillis, 0L)
+                } else {
+                    dao.updatePosition(guid, 0L, dur, 0L, 0L)
+                }
+            }
+        }
     }
 
 /**

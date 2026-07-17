@@ -2,7 +2,35 @@
 
 Running notes on what's changed and why. Newest at top.
 
-## v0.10.32 — Episode search reaches notes; unplayed chip retired (2026-07-16)
+## v0.11.0 — Undo for bulk actions, waveform panel orientation (2026-07-16)
+
+The minor-bump release closing out the v0.11 UX era: everything since
+v0.10.31 ships under this tag, and main catches up to dev with it.
+
+- **Every bulk action has Undo.** The selection-mode sweeps (archive,
+  download, mark played, mark unplayed, queue) and the catalog cards'
+  feed/group-wide "Mark all played" all show a long-duration snackbar
+  with an Undo action, and undo is a real restore, not a re-toggle:
+  mark-played/unplayed capture each row's (position, duration,
+  lastPlayed) triple before overwriting — updatePosition writes all
+  three — and put back exactly what was there; rows the action created
+  return to never-played. Bulk archive restores each row's PRIOR
+  archivedAt (an already-archived row re-archived under Show-archived
+  keeps its original timestamp), and its download cleanup is deferred
+  until the undo window closes, so an undone archive is lossless.
+  Download/queue undos remove only what that action started — anything
+  already in flight or queued stays put.
+- **Waveform panel: fling, minimap, timestamps.** A quick pan release
+  now flings the window with the finger's exit velocity (exponential
+  decay, dead stop at either end — no bounce to misread as audio).
+  Along the bottom edge: a minimap of the whole episode with the
+  visible window highlighted and a live playhead dot, plus the window's
+  start/end media-time stamps in the corners — deep pans into a
+  two-hour sermon keep their bearings. Timestamps round to whole
+  seconds and ride a two-slot label cache + the text measurer's layout
+  cache, keeping the draw loop's steady state allocation-free.
+
+## v0.10.32 (shipped in v0.11.0) — Episode search reaches notes; unplayed chip retired (2026-07-16)
 
 Field feedback on v0.10.31's filter bar, same day it shipped.
 

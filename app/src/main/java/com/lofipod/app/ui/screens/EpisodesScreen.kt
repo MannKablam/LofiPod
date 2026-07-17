@@ -300,15 +300,22 @@ fun EpisodesScreen(
                         }
                     },
                     actions = {
-                        // Bulk archive. Always archives (no toggle) — user
-                        // can use the per-row Unarchive in More menu to
-                        // reverse individual episodes.
+                        // Bulk archive. Always archives (no toggle); the
+                        // snackbar's Undo restores the prior archivedAt of
+                        // every row (an already-archived row re-archived
+                        // under showArchived keeps its ORIGINAL timestamp on
+                        // undo, not zero). Download cleanup is deferred until
+                        // the undo window closes so an undone archive is
+                        // lossless — nothing to re-download.
                         IconButton(onClick = {
                             val targets = selection.toList()
                             selection = emptySet()
                             scope.launch {
-                                withContext(Dispatchers.IO) {
+                                val priorUi = targets.associateWith { episodeStates[it] }
+                                val priorArchived = withContext(Dispatchers.IO) {
                                     val dao = app.db.episodeStateDao()
+                                    val prior = dao.getByGuids(targets)
+                                        .associate { it.guid to it.archivedAt }
                                     val now = System.currentTimeMillis()
                                     for (g in targets) {
                                         // Ensure row exists, then archive.
@@ -316,12 +323,7 @@ fun EpisodesScreen(
                                         upsertState(app, ep, pod)
                                         dao.setArchivedAt(g, now)
                                     }
-                                    // Archived episodes don't need their
-                                    // downloads taking up disk.
-                                    val haveDownloads = app.downloadsApi.byId.value.keys
-                                    for (g in targets) {
-                                        if (g in haveDownloads) app.downloadsApi.remove(g)
-                                    }
+                                    prior
                                 }
                                 // Update in-memory UI state so the rows
                                 // reflect archived immediately.
@@ -330,7 +332,34 @@ fun EpisodesScreen(
                                     episodeStates[g] = (episodeStates[g] ?: EpisodeUiState())
                                         .copy(archivedAt = now)
                                 }
-                                snackbarHostState.showSnackbar("Archived ${targets.size}")
+                                val result = snackbarHostState.showSnackbar(
+                                    "Archived ${targets.size}",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Long,
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    withContext(Dispatchers.IO) {
+                                        val dao = app.db.episodeStateDao()
+                                        for (g in targets) {
+                                            dao.setArchivedAt(g, priorArchived[g] ?: 0L)
+                                        }
+                                    }
+                                    for (g in targets) {
+                                        priorUi[g]?.let { episodeStates[g] = it }
+                                            ?: episodeStates.remove(g)
+                                    }
+                                } else {
+                                    // Committed: archived episodes don't need
+                                    // their downloads taking up disk. (If the
+                                    // user leaves the screen inside the undo
+                                    // window this cleanup is skipped — the
+                                    // auto-download TTL sweep still catches
+                                    // auto rows, and disk beats data.)
+                                    val haveDownloads = app.downloadsApi.byId.value.keys
+                                    for (g in targets) {
+                                        if (g in haveDownloads) app.downloadsApi.remove(g)
+                                    }
+                                }
                             }
                         }) {
                             Icon(
@@ -347,7 +376,7 @@ fun EpisodesScreen(
                             val targets = selection.toList()
                             selection = emptySet()
                             scope.launch {
-                                var started = 0
+                                val startedGuids = mutableListOf<String>()
                                 val byId = app.downloadsApi.byId.value
                                 for (g in targets) {
                                     val ep = pod?.episodes?.find { it.guid == g } ?: continue
@@ -367,12 +396,21 @@ fun EpisodesScreen(
                                         app.db.autoDownloadDao().delete(g)
                                     }
                                     app.downloadsApi.start(ep)
-                                    started++
+                                    startedGuids.add(g)
                                 }
-                                snackbarHostState.showSnackbar(
+                                val started = startedGuids.size
+                                val result = snackbarHostState.showSnackbar(
                                     if (started == targets.size) "Downloading ${targets.size}"
-                                    else "Downloading $started of ${targets.size} (rest already in flight)"
+                                    else "Downloading $started of ${targets.size} (rest already in flight)",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Long,
                                 )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    // Undo only what THIS action started —
+                                    // downloads that were already in flight
+                                    // before the tap are left alone.
+                                    for (g in startedGuids) app.downloadsApi.remove(g)
+                                }
                             }
                         }) {
                             Icon(
@@ -384,18 +422,24 @@ fun EpisodesScreen(
                         // Bulk mark-played. Pins position to duration so the
                         // isPlayed check (positionMs >= durationMs - 5_000)
                         // returns true and the row fades / line-throughs.
+                        // Undo restores each row's full prior (position,
+                        // duration, lastPlayed) triple — updatePosition
+                        // overwrites all three, so all three are captured.
                         IconButton(onClick = {
                             val targets = selection.toList()
                             selection = emptySet()
                             scope.launch {
-                                withContext(Dispatchers.IO) {
+                                val priorUi = targets.associateWith { episodeStates[it] }
+                                val (priorRows, written) = withContext(Dispatchers.IO) {
                                     val dao = app.db.episodeStateDao()
+                                    val prior = dao.getByGuids(targets).associateBy { it.guid }
                                     val now = System.currentTimeMillis()
+                                    val written = mutableMapOf<String, Long>()
                                     for (g in targets) {
                                         val ep = pod?.episodes?.find { it.guid == g } ?: continue
                                         upsertState(app, ep, pod)
-                                        val s = episodeStates[g]
-                                        val dur = (s?.durationMs?.takeIf { it > 0 })
+                                        val dur = (prior[g]?.durationMs?.takeIf { it > 0 })
+                                            ?: (episodeStates[g]?.durationMs?.takeIf { it > 0 })
                                             ?: ep.durationSeconds?.let { it * 1000L }
                                             ?: 1L
                                         dao.updatePosition(
@@ -405,17 +449,40 @@ fun EpisodesScreen(
                                             now = now,
                                             listenDelta = 0L,
                                         )
+                                        written[g] = dur
                                     }
+                                    Pair(prior, written)
                                 }
-                                for (g in targets) {
+                                for ((g, dur) in written) {
                                     val s = episodeStates[g] ?: EpisodeUiState()
-                                    val ep = pod?.episodes?.find { it.guid == g }
-                                    val dur = (s.durationMs.takeIf { it > 0 })
-                                        ?: ep?.durationSeconds?.let { it * 1000L }
-                                        ?: 1L
                                     episodeStates[g] = s.copy(positionMs = dur, durationMs = dur)
                                 }
-                                snackbarHostState.showSnackbar("Marked ${targets.size} played")
+                                val result = snackbarHostState.showSnackbar(
+                                    "Marked ${written.size} played",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Long,
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    withContext(Dispatchers.IO) {
+                                        val dao = app.db.episodeStateDao()
+                                        for ((g, dur) in written) {
+                                            val p = priorRows[g]
+                                            if (p != null) dao.updatePosition(
+                                                g, p.positionMs, p.durationMs,
+                                                p.lastPlayedMillis, 0L,
+                                            )
+                                            // Row created by this action:
+                                            // back to never-played (pos 0,
+                                            // lastPlayed 0; keeping the
+                                            // learned duration is harmless).
+                                            else dao.updatePosition(g, 0L, dur, 0L, 0L)
+                                        }
+                                    }
+                                    for (g in written.keys) {
+                                        priorUi[g]?.let { episodeStates[g] = it }
+                                            ?: episodeStates.remove(g)
+                                    }
+                                }
                             }
                         }) {
                             Icon(
@@ -452,8 +519,10 @@ fun EpisodesScreen(
                                     val targets = selection.toList()
                                     selection = emptySet()
                                     scope.launch {
-                                        withContext(Dispatchers.IO) {
+                                        val priorUi = targets.associateWith { episodeStates[it] }
+                                        val priorRows = withContext(Dispatchers.IO) {
                                             val dao = app.db.episodeStateDao()
+                                            val prior = dao.getByGuids(targets).associateBy { it.guid }
                                             val now = System.currentTimeMillis()
                                             for (g in targets) {
                                                 val ep = pod?.episodes?.find { it.guid == g } ?: continue
@@ -465,8 +534,7 @@ fun EpisodesScreen(
                                                 // map doesn't — zeroing it would break
                                                 // isPlayed/progress/auto-archive for
                                                 // this episode permanently).
-                                                val dbDur = dao.get(g)?.durationMs?.takeIf { it > 0 }
-                                                val dur = dbDur
+                                                val dur = prior[g]?.durationMs?.takeIf { it > 0 }
                                                     ?: episodeStates[g]?.durationMs?.takeIf { it > 0 }
                                                     ?: ep.durationSeconds?.let { it * 1000L }
                                                     ?: 0L
@@ -478,12 +546,33 @@ fun EpisodesScreen(
                                                     listenDelta = 0L,
                                                 )
                                             }
+                                            prior
                                         }
                                         for (g in targets) {
                                             val s = episodeStates[g] ?: EpisodeUiState()
                                             episodeStates[g] = s.copy(positionMs = 0L)
                                         }
-                                        snackbarHostState.showSnackbar("Marked ${targets.size} unplayed")
+                                        val result = snackbarHostState.showSnackbar(
+                                            "Marked ${targets.size} unplayed",
+                                            actionLabel = "Undo",
+                                            duration = SnackbarDuration.Long,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            withContext(Dispatchers.IO) {
+                                                val dao = app.db.episodeStateDao()
+                                                for (g in targets) {
+                                                    val p = priorRows[g] ?: continue
+                                                    dao.updatePosition(
+                                                        g, p.positionMs, p.durationMs,
+                                                        p.lastPlayedMillis, 0L,
+                                                    )
+                                                }
+                                            }
+                                            for (g in targets) {
+                                                priorUi[g]?.let { episodeStates[g] = it }
+                                                    ?: episodeStates.remove(g)
+                                            }
+                                        }
                                     }
                                 },
                             )
@@ -498,7 +587,7 @@ fun EpisodesScreen(
                                     selection = emptySet()
                                     scope.launch {
                                         val p = pod ?: return@launch
-                                        var added = 0
+                                        val added = mutableListOf<String>()
                                         val queued = queueSet
                                         for (g in targets) {
                                             if (g in queued) continue
@@ -508,12 +597,20 @@ fun EpisodesScreen(
                                                 podcastTitle = p.title,
                                                 podcastArt = p.artworkUrl,
                                             )
-                                            added++
+                                            added.add(g)
                                         }
-                                        snackbarHostState.showSnackbar(
-                                            if (added == targets.size) "Queued $added"
-                                            else "Queued $added of ${targets.size} (rest already queued)"
+                                        val result = snackbarHostState.showSnackbar(
+                                            if (added.size == targets.size) "Queued ${added.size}"
+                                            else "Queued ${added.size} of ${targets.size} (rest already queued)",
+                                            actionLabel = "Undo",
+                                            duration = SnackbarDuration.Long,
                                         )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            // Only what THIS action queued —
+                                            // rows that were already in the
+                                            // queue before stay put.
+                                            for (g in added) controller.removeFromQueue(g)
+                                        }
                                     }
                                 },
                             )
