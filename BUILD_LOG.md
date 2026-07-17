@@ -2,6 +2,26 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.10.32 — Episode search reaches notes; unplayed chip retired (2026-07-16)
+
+Field feedback on v0.10.31's filter bar, same day it shipped.
+
+- **Unplayed chip removed** — played episodes auto-archive within days,
+  so a dedicated unplayed filter mostly duplicated the archive
+  machinery. The global "show played" toggle survives in Settings; the
+  episodes screen just stops re-selling it.
+- **Search bar, proper** — the freed row is now a full-width pill
+  (28dp-rounded OutlinedTextField) that searches titles, descriptions
+  (raw, deliberately — stripping HTML per keystroke isn't worth the
+  occasional markup hit), and the user's own note entries for this
+  feed's episodes. Notes load once per feed off IO (getAll + in-memory
+  group-by; a personal journal is a few hundred rows at most).
+- **Note hits explain themselves** — a row that surfaced only because a
+  note matched shows a tinted quote pill under its title: note glyph,
+  italic excerpt windowed around the hit, the matched run bolded in
+  primary. Title/description matches stay unadorned (the evidence is
+  already on the card).
+
 ## v0.10.31 — Continue listening, unplayed chip, in-feed filter, more hold menus (2026-07-15)
 
 Second UX batch, building on v0.10.30's affordances — the four items the

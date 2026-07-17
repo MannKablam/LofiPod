@@ -7,14 +7,20 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.data.LofiDownload
@@ -94,10 +100,29 @@ fun EpisodesScreen(
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
-    // In-feed title filter (v0.11) — lives in the filter bar above the
-    // list. Keyed on the feed so navigating to another podcast never
-    // carries a stale query along.
+    // In-feed search (v0.11) — lives in the search bar above the list.
+    // Keyed on the feed so navigating to another podcast never carries a
+    // stale query along.
     var episodeFilter by remember(feedUrl) { mutableStateOf("") }
+
+    // Note texts per guid, so the search bar reaches into the user's own
+    // notes. One-shot per feed (same pattern as the kabod meta lines):
+    // notes are written from the Player, not while browsing this list, so
+    // a live observer would only buy staleness-proofing nobody needs.
+    // getAll + in-memory filter beats a per-episode query fan-out; a
+    // single user's whole journal is at most a few hundred rows.
+    var noteTextsByGuid by remember(feedUrl) {
+        mutableStateOf<Map<String, List<String>>>(emptyMap())
+    }
+    LaunchedEffect(pod) {
+        if (pod == null) return@LaunchedEffect
+        val guids = pod.episodes.mapTo(HashSet()) { it.guid }
+        noteTextsByGuid = withContext(Dispatchers.IO) {
+            app.db.episodeNoteEntryDao().getAll()
+                .filter { it.guid in guids }
+                .groupBy({ it.guid }, { it.text })
+        }
+    }
 
     // Kabod pack metadata per guid — "Part N · <scripture>" line shown on
     // each episode row, so the sermon-series structure that previously only
@@ -182,6 +207,20 @@ fun EpisodesScreen(
 
     val archivedCount = episodeStates.values.count { it.archivedAt > 0 }
     val filterQuery = episodeFilter.trim()
+    // Which episodes matched ONLY through a note needs to be knowable at
+    // render time, so the note search runs first into its own map: guid ->
+    // the first matching note's text, used both as a match source in the
+    // filter below and as the snippet the row surfaces. Recomputed per
+    // keystroke over the (small) notes map, never the episode list.
+    val noteMatchByGuid: Map<String, String> = remember(filterQuery, noteTextsByGuid) {
+        if (filterQuery.isEmpty()) emptyMap()
+        else buildMap {
+            for ((guid, texts) in noteTextsByGuid) {
+                val hit = texts.firstOrNull { it.contains(filterQuery, ignoreCase = true) }
+                if (hit != null) put(guid, hit)
+            }
+        }
+    }
     val filteredEpisodes = (pod?.episodes ?: emptyList()).filter { ep ->
         val s = episodeStates[ep.guid]
         val archived = (s?.archivedAt ?: 0L) > 0L
@@ -192,11 +231,16 @@ fun EpisodesScreen(
             !showPlayedInList && played -> false
             else -> true
         }
-        // Title-only match, deliberately: sermon titles carry the passage
-        // ("Leviticus 14:1-32"), and description matches would surface
-        // rows for no visible reason.
-        visibilityOk &&
-            (filterQuery.isEmpty() || ep.title.contains(filterQuery, ignoreCase = true))
+        // Titles, descriptions, and the user's notes. Descriptions are
+        // matched raw (HTML and all) — stripping every description on
+        // every keystroke would cost more than the occasional match on
+        // markup is worth, and real queries are words, not tag soup.
+        visibilityOk && (
+            filterQuery.isEmpty() ||
+                ep.title.contains(filterQuery, ignoreCase = true) ||
+                ep.description?.contains(filterQuery, ignoreCase = true) == true ||
+                noteMatchByGuid.containsKey(ep.guid)
+            )
     }
     // Sort AFTER filtering, per the feed's persisted preference. Feed
     // order (the default) is the RSS document's own sequence — most
@@ -565,63 +609,43 @@ fun EpisodesScreen(
             return@Scaffold
         }
         Column(Modifier.fillMaxSize().padding(padding)) {
-        // Filter bar (v0.11): the narrowing controls, always visible so
-        // they're discoverable — the top bar keeps the VIEW options
-        // (sort, archived). The chip surfaces the existing global
-        // "show played" setting as a one-tap toggle (selected = unplayed
-        // only), so the Settings toggle and this chip are the same
-        // switch seen from two places. The field filters titles within
-        // this feed — the fast path through a thousand-episode archive.
-        Row(
+        // Search bar (v0.11): full-width pill under the top bar — the top
+        // bar keeps the VIEW options (sort, archived). Searches this
+        // feed's titles, descriptions, AND the user's own notes; a row
+        // that matched only through a note says so with a highlighted
+        // snippet (see NoteMatchSnippet). The v0.11-era "Unplayed" chip
+        // that shared this row is gone: played episodes auto-archive
+        // within days, so a dedicated unplayed filter mostly duplicated
+        // the archive machinery (the global toggle survives in Settings).
+        OutlinedTextField(
+            value = episodeFilter,
+            onValueChange = { episodeFilter = it },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilterChip(
-                selected = !showPlayedInList,
-                onClick = {
-                    scope.launch { settings.setShowPlayedInList(!showPlayedInList) }
-                },
-                label = { Text("Unplayed") },
-                leadingIcon = if (!showPlayedInList) {
-                    {
+            shape = RoundedCornerShape(28.dp),
+            placeholder = { Text("Search titles, descriptions, notes") },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
+            leadingIcon = {
+                Icon(
+                    painterResource(R.drawable.search_24),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+            },
+            trailingIcon = if (episodeFilter.isNotEmpty()) {
+                {
+                    IconButton(onClick = { episodeFilter = "" }) {
                         Icon(
-                            painterResource(R.drawable.check_24),
-                            contentDescription = null,
-                            modifier = Modifier.size(FilterChipDefaults.IconSize),
+                            painterResource(R.drawable.close_24),
+                            contentDescription = "Clear search",
+                            modifier = Modifier.size(20.dp),
                         )
                     }
-                } else null,
-            )
-            Spacer(Modifier.width(8.dp))
-            OutlinedTextField(
-                value = episodeFilter,
-                onValueChange = { episodeFilter = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Filter titles") },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                leadingIcon = {
-                    Icon(
-                        painterResource(R.drawable.search_24),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                },
-                trailingIcon = if (episodeFilter.isNotEmpty()) {
-                    {
-                        IconButton(onClick = { episodeFilter = "" }) {
-                            Icon(
-                                painterResource(R.drawable.close_24),
-                                contentDescription = "Clear filter",
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    }
-                } else null,
-            )
-        }
+                }
+            } else null,
+        )
         Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -637,6 +661,8 @@ fun EpisodesScreen(
                     ep = ep,
                     podcastArt = pod.artworkUrl,
                     kabodLine = kabodLineByGuid[ep.guid],
+                    noteMatch = noteMatchByGuid[ep.guid],
+                    searchQuery = filterQuery,
                     state = s,
                     isQueued = ep.guid in queueSet,
                     download = downloadsByGuid[ep.guid],
@@ -808,10 +834,9 @@ fun EpisodesScreen(
                         Text(
                             when {
                                 filterQuery.isNotEmpty() ->
-                                    "No episodes match \"$filterQuery\"."
+                                    "No matches for \"$filterQuery\" in titles, descriptions, or notes."
                                 showArchived -> "No episodes."
-                                !showPlayedInList ->
-                                    "Nothing unplayed. Tap the Unplayed chip to show everything."
+                                !showPlayedInList -> "No unplayed episodes."
                                 else -> "All episodes are archived. Tap the archive icon to show them."
                             },
                             style = MaterialTheme.typography.bodyMedium,
@@ -855,6 +880,13 @@ private fun EpisodeRow(
     /** "Part N · <scripture>" meta line for Kabod-pack episodes; null for
      *  regular RSS episodes (and kabod rows without part/scripture tags). */
     kabodLine: String?,
+    /** When the search bar's query matched one of this episode's notes,
+     *  the matching note's text — the row surfaces a highlighted snippet
+     *  so the user can see WHY a row with an unrelated title appeared.
+     *  Null when not searching or the match came from title/description. */
+    noteMatch: String?,
+    /** The active search query, for highlighting inside [noteMatch]. */
+    searchQuery: String,
     state: EpisodeUiState,
     isQueued: Boolean,
     download: LofiDownload?,
@@ -1018,6 +1050,10 @@ private fun EpisodeRow(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp)
                 )
+            }
+            noteMatch?.let { note ->
+                Spacer(Modifier.height(6.dp))
+                NoteMatchSnippet(noteText = note, query = searchQuery)
             }
             ep.description?.stripHtml()?.takeIf { it.isNotBlank() }?.let { desc ->
                 Spacer(Modifier.height(6.dp))
@@ -1196,6 +1232,72 @@ private fun ArchivedChip() {
                 fontStyle = FontStyle.Italic
             )
         }
+    }
+}
+
+/**
+ * "Your note said so" — the search matched inside one of the user's own
+ * notes rather than the episode's metadata, and the row owes an
+ * explanation for why it surfaced. A tinted pill quotes the note around
+ * the match — the matched run bolded in primary — with the note glyph in
+ * front so the provenance reads before the words do.
+ */
+@Composable
+private fun NoteMatchSnippet(noteText: String, query: String) {
+    val highlight = MaterialTheme.colorScheme.primary
+    val snippet = remember(noteText, query, highlight) {
+        buildNoteSnippet(noteText, query, highlight)
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painterResource(R.drawable.edit_note_24),
+                contentDescription = "Matched in your note",
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                snippet,
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = FontStyle.Italic,
+                maxLines = 2,
+            )
+        }
+    }
+}
+
+/**
+ * Excerpt a note around the query's first hit: a little context before,
+ * more after (notes tend to lead into their point), ellipses when the
+ * window clips, and the matched run itself bolded in [highlight].
+ * Newlines flatten to spaces — the pill is one or two lines, not a
+ * journal page.
+ */
+private fun buildNoteSnippet(
+    noteText: String,
+    query: String,
+    highlight: androidx.compose.ui.graphics.Color,
+): AnnotatedString {
+    val flat = noteText.replace(Regex("\\s+"), " ").trim()
+    val idx = if (query.isEmpty()) -1 else flat.indexOf(query, ignoreCase = true)
+    if (idx < 0) return AnnotatedString(flat.take(90))
+    val start = (idx - 28).coerceAtLeast(0)
+    val end = (idx + query.length + 56).coerceAtMost(flat.length)
+    return buildAnnotatedString {
+        if (start > 0) append("…")
+        append(flat.substring(start, idx))
+        withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = highlight)) {
+            append(flat.substring(idx, idx + query.length))
+        }
+        append(flat.substring(idx + query.length, end))
+        if (end < flat.length) append("…")
     }
 }
 
