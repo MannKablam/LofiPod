@@ -1433,6 +1433,24 @@ class PlayerController(private val context: Context) {
      * snackbar is the second signal for cases where the ring isn't
      * obviously connected to the user's action.
      */
+    /**
+     * Hard-stop playback and unload the session. For when the thing being
+     * played is removed out from under the player — a device file taken
+     * off the list would otherwise keep playing, because the ExoPlayer
+     * source holds its own open descriptor and neither the DataStore list
+     * edit nor the released URI grant reaches it. Routes through [pause]
+     * first so both timers (sleep + autoplay-confirm) tear down exactly
+     * like an explicit pause, then stops and clears the media items so
+     * the session reads as empty: currentEpisodeGuid nulls out and the
+     * mini-player hides.
+     */
+    fun stopAndClear() {
+        val c = controller ?: return
+        pause()
+        c.stop()
+        c.clearMediaItems()
+    }
+
     fun togglePlay() {
         val c = controller ?: run {
             _transientMessages.tryEmit("Player isn't connected yet — try again in a moment.")

@@ -20,6 +20,7 @@ import com.lofipod.app.R
 import com.lofipod.app.data.Backup
 import com.lofipod.app.data.Sources
 import com.lofipod.app.data.db.EpisodeStateEntity
+import com.lofipod.app.ui.theme.ThemedArtwork
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,11 +44,39 @@ fun MetricsScreen(onBack: () -> Unit) {
 
     suspend fun reload() {
         rows = withContext(Dispatchers.IO) {
+            // This is a closed-canon app: every channel here is one WE
+            // chose, so the metrics rows should know them like the catalog
+            // does — artwork, author, how deep into the archive the
+            // listening has gone. Identity comes from the feed cache;
+            // hydrate first because Metrics is reachable straight from the
+            // top-bar menu on a cold start, before the Catalog primed it
+            // (kabod packs re-parse from assets via their own loader).
+            app.repo.hydrateFromDisk()
             val all = app.db.episodeStateDao().getAll()
+            val notesByGuid = app.db.episodeNoteEntryDao().getAll()
+                .groupingBy { it.guid }.eachCount()
             all.groupBy { it.feedUrl }.map { (feedUrl, episodes) ->
+                val pod = app.repo.cached(feedUrl)
+                    ?: app.kabodLoader.takeIf { it.isKabodFeed(feedUrl) }
+                        ?.loadIntoCache(feedUrl)
+                val artOverride = Sources.PODCAST_FEEDS
+                    .firstOrNull { it.feedUrl == feedUrl }?.customArtworkUrl
                 PodcastMetrics(
                     feedUrl = feedUrl,
-                    title = Sources.displayNameOf(feedUrl) ?: feedUrl.shortHost(),
+                    title = when {
+                        feedUrl == DEVICE_FEED_URL -> "This device"
+                        else -> Sources.displayNameOf(feedUrl)
+                            ?: pod?.title
+                            ?: feedUrl.shortHost()
+                    },
+                    author = pod?.author,
+                    artworkUrl = artOverride ?: pod?.artworkUrl,
+                    episodeCount = pod?.episodes?.size ?: 0,
+                    playedCount = episodes.count {
+                        it.durationMs > 0 && it.positionMs >= it.durationMs - 5_000
+                    },
+                    noteCount = episodes.sumOf { notesByGuid[it.guid] ?: 0 },
+                    lastPlayedMillis = episodes.maxOf { it.lastPlayedMillis },
                     totalListenedMs = episodes.sumOf { it.cumulativeListenMs },
                     hearted = episodes.filter { it.favoriteTier > 0 }
                         .sortedByDescending { it.favoriteTier * 1_000_000_000L + it.lastPlayedMillis }
@@ -116,20 +145,12 @@ fun MetricsScreen(onBack: () -> Unit) {
                         )
                     }
                 },
-                actions = {
-                    IconButton(onClick = {
-                        // Open the include-notes choice first; the export
-                        // launcher fires from inside the dialog.
-                        pendingExportUri = android.net.Uri.EMPTY
-                    }) {
-                        Icon(painterResource(R.drawable.file_download_24), contentDescription = "Export backup")
-                    }
-                    IconButton(onClick = {
-                        importLauncher.launch(arrayOf("application/json", "*/*"))
-                    }) {
-                        Icon(painterResource(R.drawable.file_upload_24), contentDescription = "Import backup")
-                    }
-                }
+                // Backup import/export used to be two bare top-bar icons —
+                // prime position for something done a few times a year, and
+                // nothing about a download glyph next to "Metrics" said
+                // "backup". They now live in a labeled Backup section at the
+                // bottom of the list (and in the empty state, where import
+                // is the only way a fresh install gets its history back).
             )
         }
     ) { padding ->
@@ -139,17 +160,32 @@ fun MetricsScreen(onBack: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) { CircularProgressIndicator() }
 
-            rows.isEmpty() -> Box(
-                Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
-            ) { Text("No listening data yet.") }
+            rows.isEmpty() -> Column(
+                Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("No listening data yet.")
+                Spacer(Modifier.height(16.dp))
+                // A fresh install's only road back to its history is the
+                // import button — it can't live solely under rows that
+                // don't exist yet.
+                BackupSection(
+                    onExport = { pendingExportUri = android.net.Uri.EMPTY },
+                    onImport = {
+                        importLauncher.launch(arrayOf("application/json", "*/*"))
+                    },
+                )
+            }
 
             else -> {
                 Column(Modifier.padding(padding)) {
                     val totalH = rows.sumOf { it.totalListenedMs } / 1000.0 / 3600.0
                     val totalHearted = rows.sumOf { it.hearted.size }
+                    val totalNotes = rows.sumOf { it.noteCount }
                     Text(
-                        "%.2f h listened across all podcasts • %d hearted".format(totalH, totalHearted),
+                        "%.2f h listened across all podcasts • %d hearted • %d notes"
+                            .format(totalH, totalHearted, totalNotes),
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -159,6 +195,14 @@ fun MetricsScreen(onBack: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(rows, key = { it.feedUrl }) { row -> PodcastMetricsCard(row) }
+                        item(key = "backup://footer") {
+                            BackupSection(
+                                onExport = { pendingExportUri = android.net.Uri.EMPTY },
+                                onImport = {
+                                    importLauncher.launch(arrayOf("application/json", "*/*"))
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -254,14 +298,63 @@ private fun PodcastMetricsCard(row: PodcastMetrics) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(Modifier.padding(12.dp)) {
-            Text(row.title, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(2.dp))
+            // Channel identity header — the same face the catalog shows.
+            // These are hand-picked canon feeds, not strangers; the row
+            // should look like the podcast, not like a URL's hostname.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ThemedArtwork(artworkUrl = row.artworkUrl, size = 48.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                    row.author?.takeIf { it.isNotBlank() }?.let { author ->
+                        Text(
+                            author,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             val hours = row.totalListenedMs / 1000.0 / 3600.0
             Text(
-                "%.2f h listened • %d hearted".format(hours, row.hearted.size),
+                buildString {
+                    append("%.2f h listened".format(hours))
+                    // "N of M played" reads archive depth against the
+                    // feed's real size when the cache knows it; a bare
+                    // played count is the fallback for feeds that
+                    // haven't hydrated (or the device pseudo-feed).
+                    if (row.episodeCount > 0) {
+                        append("  •  ${row.playedCount} of ${row.episodeCount} played")
+                    } else if (row.playedCount > 0) {
+                        append("  •  ${row.playedCount} played")
+                    }
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            val detailLine = buildString {
+                if (row.hearted.isNotEmpty()) append("${row.hearted.size} hearted")
+                if (row.noteCount > 0) {
+                    if (isNotEmpty()) append("  •  ")
+                    append("${row.noteCount} note${if (row.noteCount == 1) "" else "s"}")
+                }
+                if (row.lastPlayedMillis > 0) {
+                    if (isNotEmpty()) append("  •  ")
+                    append(
+                        "last " + SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
+                            .format(Date(row.lastPlayedMillis))
+                    )
+                }
+            }
+            if (detailLine.isNotEmpty()) {
+                Text(
+                    detailLine,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             if (row.hearted.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 row.hearted.forEach { ep ->
@@ -298,9 +391,57 @@ private fun PodcastMetricsCard(row: PodcastMetrics) {
     }
 }
 
+/**
+ * Backup import/export as a labeled section — lives at the bottom of the
+ * metrics list (and alone in the empty state). Export = save this
+ * install's history to a JSON file; import = merge one back in.
+ */
+@Composable
+private fun BackupSection(onExport: () -> Unit, onImport: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp)) {
+        Text("Backup", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Everything above — positions, hearts, archives, notes — as a " +
+                "JSON file. Import merges a backup back in.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onExport, modifier = Modifier.weight(1f)) {
+                Icon(
+                    painterResource(R.drawable.file_download_24),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Export")
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = onImport, modifier = Modifier.weight(1f)) {
+                Icon(
+                    painterResource(R.drawable.file_upload_24),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Import")
+            }
+        }
+    }
+}
+
 private data class PodcastMetrics(
     val feedUrl: String,
     val title: String,
+    val author: String?,
+    val artworkUrl: String?,
+    /** Feed's full episode count from the cache; 0 when unhydrated. */
+    val episodeCount: Int,
+    val playedCount: Int,
+    val noteCount: Int,
+    val lastPlayedMillis: Long,
     val totalListenedMs: Long,
     val hearted: List<EpisodeStateEntity>
 )

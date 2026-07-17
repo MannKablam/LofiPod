@@ -220,8 +220,30 @@ fun DeviceFilesScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    scope.launch { settings.removeDeviceFile(entry.uri) }
+                    val target = entry
                     removeTarget = null
+                    scope.launch {
+                        // The list edit alone never reaches the player: the
+                        // ExoPlayer source holds its own open descriptor, so
+                        // a removed file kept right on playing (and the next
+                        // cold-start restore would resurrect it from its
+                        // episode_state row after the URI grant was
+                        // released). Stop-and-unload when it's the loaded
+                        // item, then zero the row's lastPlayedMillis so the
+                        // restore never picks a file the app can no longer
+                        // open. Notes and hearts on the row survive — only
+                        // the recency signal is neutralized.
+                        if (playerState.currentEpisodeGuid == target.uri) {
+                            controller.stopAndClear()
+                        }
+                        settings.removeDeviceFile(target.uri)
+                        withContext(Dispatchers.IO) {
+                            val dao = app.db.episodeStateDao()
+                            dao.get(target.uri)?.let { row ->
+                                dao.updatePosition(target.uri, 0L, row.durationMs, 0L, 0L)
+                            }
+                        }
+                    }
                 }) { Text("Remove") }
             },
             dismissButton = {

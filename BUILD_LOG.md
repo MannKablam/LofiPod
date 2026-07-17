@@ -2,6 +2,40 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.11.1 — Metrics knows the canon; device-file removal stops playback; BMC black (2026-07-16)
+
+Second round of same-day v0.11.0 field feedback.
+
+- **Metrics rows look like the catalog now.** This is a closed-canon
+  app — every channel is one we chose — but the metrics cards rendered
+  bare display names like strangers. Each card now leads with the
+  channel's artwork + author (from the feed cache, hydrated on entry so
+  a cold start straight into Metrics still resolves; kabod packs load
+  via their own loader; the device pseudo-feed labels itself "This
+  device"), and the stats grew up: "N of M played" against the feed's
+  real episode count, note count, and last-listened date, with a notes
+  total in the screen header.
+- **Backup moved out of the top bar.** Export/import were two bare
+  icons in prime top-bar position — for something done a few times a
+  year, with nothing about a download glyph saying "backup". They're
+  now a labeled Backup section at the bottom of the metrics list, and
+  in the empty state too (a fresh install's only road back to its
+  history is import — it can't live under rows that don't exist yet).
+- **Removing a device file stops it playing.** The list edit never
+  reached the player — ExoPlayer's source holds its own descriptor, so
+  a removed file kept playing out of a list it was no longer on. Remove
+  now hard-stops and unloads the session when the removed file is the
+  loaded item (new PlayerController.stopAndClear: routes through
+  pause() so sleep/autoplay timers tear down, then stop +
+  clearMediaItems so the mini-player hides), and zeroes the row's
+  lastPlayedMillis so the cold-start restore can't resurrect a file
+  whose URI grant is gone. Notes and hearts on the row survive.
+- **Buy-me-a-coffee button on a black plate.** BMC's own presentation
+  is the yellow mark on black; the outlined ghost version read as just
+  another settings control. Now a filled black chip (theme-independent,
+  like the gold kabod card) with the yellow border keeping an edge on
+  Lowlight's near-black surface.
+
 ## v0.11.1 — Continue-listening card removed (2026-07-16)
 
 Field feedback on v0.11.0, same day: the catalog showed the resume card

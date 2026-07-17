@@ -265,8 +265,13 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            // Buy-Me-a-Coffee support button, ported style-for-style from
-            // Kontx's Settings (same URL, BMC brand-yellow outlined button).
+            // Buy-Me-a-Coffee support button — BMC's own presentation is
+            // the yellow mark on a black plate, and that's what this is:
+            // a filled black chip in every theme (deliberately theme-
+            // independent, like the gold kabod card), yellow border for
+            // an edge on the near-black Lowlight surface. The earlier
+            // outlined ghost version read as just another settings
+            // control instead of "the support button".
             SectionHeader("Support the developer")
             Text(
                 "LofiPod is free and ad-free. A small tip keeps new versions coming.",
@@ -274,7 +279,7 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(
+            Button(
                 onClick = {
                     val intent = android.content.Intent(
                         android.content.Intent.ACTION_VIEW,
@@ -282,7 +287,8 @@ fun SettingsScreen(
                     )
                     ctx.startActivity(intent)
                 },
-                colors = ButtonDefaults.outlinedButtonColors(
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Black,
                     contentColor = Color(0xFFFFDD57)
                 ),
                 border = androidx.compose.foundation.BorderStroke(
