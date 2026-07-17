@@ -30,7 +30,17 @@ import java.util.Locale
 import java.util.TimeZone
 
 @Composable
-fun MetricsScreen(onBack: () -> Unit) {
+fun MetricsScreen(
+    onBack: () -> Unit,
+    /**
+     * Settings' "Export play history" entry lands here with this set:
+     * the SAF save-file dialog opens on arrival (notes included — the
+     * full-fat default), so the shortcut really is tap -> pick where to
+     * save. The Backup section's own Export button remains the path to
+     * the include-notes choice.
+     */
+    autoStartExport: Boolean = false,
+) {
     val app = LocalContext.current.applicationContext as LofiPodApp
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -129,6 +139,15 @@ fun MetricsScreen(onBack: () -> Unit) {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) pendingImportUri = uri
+    }
+
+    // The Settings shortcut's whole point is zero extra taps: fire the
+    // save-file dialog the moment the screen lands. One-shot per entry —
+    // recompositions must not re-open a dialog the user dismissed.
+    LaunchedEffect(Unit) {
+        if (autoStartExport) {
+            exportLauncher.launch(defaultBackupFilename(exportIncludeNotes))
+        }
     }
 
     Scaffold(
@@ -238,11 +257,7 @@ fun MetricsScreen(onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     pendingExportUri = null
-                    val stamp = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-                        timeZone = TimeZone.getTimeZone("UTC")
-                    }.format(Date())
-                    val suffix = if (exportIncludeNotes) "" else "-no-notes"
-                    exportLauncher.launch("lofipod-backup-$stamp$suffix.json")
+                    exportLauncher.launch(defaultBackupFilename(exportIncludeNotes))
                 }) { Text("Export") }
             },
             dismissButton = {
@@ -445,6 +460,16 @@ private data class PodcastMetrics(
     val totalListenedMs: Long,
     val hearted: List<EpisodeStateEntity>
 )
+
+/** Suggested SAF filename: UTC date stamp, "-no-notes" marker when the
+ *  notes switch is off so the file says what it holds. */
+private fun defaultBackupFilename(includeNotes: Boolean): String {
+    val stamp = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }.format(Date())
+    val suffix = if (includeNotes) "" else "-no-notes"
+    return "lofipod-backup-$stamp$suffix.json"
+}
 
 private fun String.shortHost(): String = try {
     val u = java.net.URI(this)

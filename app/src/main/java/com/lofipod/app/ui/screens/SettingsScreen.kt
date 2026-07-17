@@ -55,6 +55,9 @@ fun SettingsScreen(
     onOpenAppDiagnostics: () -> Unit = {},
     onOpenTextSettings: () -> Unit = {},
     onOpenSources: () -> Unit = {},
+    /** Jumps to Metrics with the export save-file dialog already open —
+     *  the one-tap "get my play history out" path. */
+    onExportBackup: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -315,6 +318,13 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
+            // Shortcut into the Metrics screen's export with the save-file
+            // dialog already open — Settings is where people look for
+            // "get my data out", so the entry lives here too even though
+            // the machinery (and import) stays on Metrics.
+            TextButton(onClick = onExportBackup) {
+                Text("Export play history (backup)")
+            }
             TextButton(onClick = onOpenSources) {
                 Text("View sources document (read-only)")
             }

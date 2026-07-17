@@ -35,6 +35,13 @@ Second round of same-day v0.11.0 field feedback.
   another settings control. Now a filled black chip (theme-independent,
   like the gold kabod card) with the yellow border keeping an edge on
   Lowlight's near-black surface.
+- **Export reachable from Settings.** "Export play history (backup)" in
+  the About section jumps to Metrics via a `metrics/export` route that
+  opens the SAF save-file dialog on arrival (notes included — the
+  full-fat default), so the Settings tap IS the export with Metrics
+  behind it for context. The Backup section's own Export button remains
+  the path to the include-notes choice; the suggested-filename logic is
+  now shared (`defaultBackupFilename`).
 
 ## v0.11.1 — Continue-listening card removed (2026-07-16)
 

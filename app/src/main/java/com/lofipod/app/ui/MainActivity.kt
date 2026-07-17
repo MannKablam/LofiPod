@@ -614,6 +614,17 @@ private fun AppNav(
                 MetricsScreen(onBack = { smartBack(nav, "metrics") })
             }
 
+            // Settings' "Export play history" shortcut: same Metrics
+            // screen, but the SAF save-file dialog opens on arrival —
+            // the settings tap IS the export, with Metrics behind it
+            // for context (and back returns to Settings).
+            composable("metrics/export") {
+                MetricsScreen(
+                    onBack = { smartBack(nav, "metrics/export") },
+                    autoStartExport = true,
+                )
+            }
+
             composable("settings") {
                 SettingsScreen(
                     controller = controller,
@@ -624,6 +635,7 @@ private fun AppNav(
                     onOpenAppDiagnostics = { nav.navigate("appDiagnostics") },
                     onOpenTextSettings = { nav.navigate("textSettings") },
                     onOpenSources = { nav.navigate("sources") },
+                    onExportBackup = { nav.navigate("metrics/export") },
                 )
             }
 
