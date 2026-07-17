@@ -5,14 +5,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.audio.EqAudioProcessor
 import com.lofipod.app.audio.EqBand
 import com.lofipod.app.audio.EqPresets
@@ -40,6 +39,7 @@ import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
 import com.lofipod.app.player.PlayerController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import com.lofipod.app.audio.AudioChainTelemetry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -76,10 +76,13 @@ fun EqScreen(
     // (survives restart) and to the live processor (takes effect immediately
     // without a track transition). Mirrors the diagnostics screen's reset path.
     val dcBlockerEnabled by settings.dcBlockerEnabled.collectAsState(initial = false)
-    // EQ phase mode. False (default) = minimum-phase biquad cascade,
-    // ~6.4 ms latency. True = linear-phase 4096-tap FIR convolution,
-    // ~52 ms latency, preserves transient waveform shape exactly.
-    val phaseModeLinear by settings.phaseModeLinear.collectAsState(initial = false)
+    // EQ phase mode (v0.9.3 three-mode lineup):
+    //   PURE_IIR (default) — 10-band biquad cascade, ~6 ms total latency
+    //   MIN_FIR — UPC + cepstrum kernel, ~29 ms, no pre-ringing
+    //   LINEAR_FIR — UPC + symmetric kernel, ~70 ms, exact transient shape
+    val phaseModeKey by settings.phaseMode
+        .collectAsState(initial = Settings.PHASE_MODE_PURE_IIR)
+    val phaseMode = com.lofipod.app.audio.PhaseMode.fromStorageKey(phaseModeKey)
 
     // 250 ms poll for the live level meters. Same pattern as
     // AudioDiagnosticsScreen: audio thread updates @Volatile fields on every
@@ -100,6 +103,19 @@ fun EqScreen(
             AudioChainTelemetry.inputPeak,
             AudioChainTelemetry.outputPeak,
             AudioChainTelemetry.reductionDb,
+        )
+    }
+    // Voice-suite activity snapshot, same tick. De-esser/Leveler are gain
+    // mirrors (1.0 = idle); Warmth/Air are wet-signal activity envelopes
+    // (0.0 = idle). All four rest at idle when their stage is off or the
+    // chain is in passthrough — EqAudioProcessor's per-buffer mirror
+    // guarantees it.
+    val voiceSnap = remember(meterTick) {
+        VoiceMeterSnap(
+            deEsserGainLin = AudioChainTelemetry.deEsserGainLin,
+            levelerGainLin = AudioChainTelemetry.levelerGainLin,
+            warmthActivity = AudioChainTelemetry.warmthActivity,
+            airActivity = AudioChainTelemetry.airActivity,
         )
     }
 
@@ -251,7 +267,7 @@ fun EqScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -260,7 +276,7 @@ fun EqScreen(
                 actions = {
                     IconButton(onClick = { refMenuExpanded = true }) {
                         Icon(
-                            Icons.Filled.MoreVert,
+                            painterResource(R.drawable.more_vert_24),
                             contentDescription = "Reference and diagnostics",
                             modifier = Modifier.size(28.dp),
                         )
@@ -322,9 +338,9 @@ fun EqScreen(
                 Text("Audio enhancement", style = MaterialTheme.typography.titleMedium)
             }
             Text(
-                "EQ + master gain are global — they apply to every podcast and " +
-                    "every episode. For one-off shaping, use the toggles below " +
-                    "while an episode is playing.",
+                "Master switch for the whole audio chain. EQ bands are " +
+                    "per-podcast (each show keeps its own tuning); volume boost, " +
+                    "tone filters, and DC blocker are global.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -351,50 +367,362 @@ fun EqScreen(
             }
             Spacer(Modifier.height(16.dp))
 
-            // ---- Phase mode (Minimum / Linear) ----
-            // Switches the EQ stage between the default minimum-phase biquad
-            // cascade and the linear-phase FIR convolution. Distinct from
-            // the master toggle: that turns the chain off entirely; this
-            // chooses HOW the EQ shaping is implemented when the chain is
-            // on. Mid-playback switches have a brief audible artifact
-            // (~50 ms) at the transition since the two paths have different
-            // group delays. Could be smoothed with a parallel cross-fade
-            // later; acceptable for a manual-mode-switch affordance.
-            Text("Phase mode", style = MaterialTheme.typography.titleSmall)
+            // ---- Tone filters (v0.11) ----
+            // Zero-latency corrective stage upstream of the per-podcast EQ.
+            // Global (like the DC blocker): low-cut kills rumble, high-cut
+            // kills hiss, tilt is the classic one-knob dark<->bright. All
+            // three behave identically across the four phase modes because
+            // they run as minimum-phase IIR outside the FIR engine.
+            val toneLowCut by settings.toneLowCutHz.collectAsState(initial = 0f)
+            val toneHighCut by settings.toneHighCutHz.collectAsState(initial = 0f)
+            val toneTilt by settings.toneTiltDb.collectAsState(initial = 0f)
+            // Local mirror for the tilt slider so dragging feels live; the
+            // persisted value lands on release.
+            var tiltDrag by remember { mutableStateOf<Float?>(null) }
+
+            Text("Tone filters", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(2.dp))
             Text(
-                "Minimum: ~6.4 ms latency, transparent for nearly all listeners (default). " +
-                    "Linear: ~52 ms latency, preserves transient waveform shape exactly. " +
-                    "Higher CPU; opt-in for audiophile-grade A/B testing.",
+                "Corrective filters that run before the EQ in every phase mode. " +
+                    "Low cut removes rumble and plosive thumps, high cut tames " +
+                    "tape hiss on old recordings, tilt trades warmth against " +
+                    "presence with one control. Global, zero added latency.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
-            Row {
+            ToneCutChipRow(
+                label = "Low cut",
+                currentHz = toneLowCut,
+                optionsHz = listOf(40f, 60f, 80f, 120f),
+                onSelect = { hz ->
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setToneLowCutHz(hz) }
+                        eq.setLowCutHz(hz)
+                    }
+                },
+            )
+            // Slope selector for the low cut — 12 dB/oct (single Butterworth
+            // section, the original) vs 24 dB/oct (LR4, two cascaded
+            // sections) for stubborn rumble. Only shown while a low cut is
+            // engaged; the toggle is meaningless at "Off".
+            // Initial from the live processor (matches the voice-suite
+            // controls) so a persisted 24 dB/oct doesn't flash "12" for the
+            // first frame while DataStore emits.
+            val toneLowCutSteep by settings.toneLowCutSteep
+                .collectAsState(initial = eq.currentLowCutSteep())
+            if (toneLowCut > 0f) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(64.dp))
+                    FilterChip(
+                        selected = !toneLowCutSteep,
+                        onClick = {
+                            composeScope.launch {
+                                withContext(Dispatchers.IO) { settings.setToneLowCutSteep(false) }
+                                eq.setLowCutSteep(false)
+                            }
+                        },
+                        label = { Text("12 dB/oct") },
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(
+                        selected = toneLowCutSteep,
+                        onClick = {
+                            composeScope.launch {
+                                withContext(Dispatchers.IO) { settings.setToneLowCutSteep(true) }
+                                eq.setLowCutSteep(true)
+                            }
+                        },
+                        label = { Text("24 dB/oct") },
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            ToneCutChipRow(
+                label = "High cut",
+                currentHz = toneHighCut,
+                optionsHz = listOf(8_000f, 10_000f, 12_000f, 14_000f, 16_000f),
+                onSelect = { hz ->
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setToneHighCutHz(hz) }
+                        eq.setHighCutHz(hz)
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+            val tiltShown = tiltDrag ?: toneTilt
+            Text(
+                "Tilt: " + (if (tiltShown == 0f) "off"
+                    else "%+.1f dB %s".format(tiltShown, if (tiltShown < 0f) "(darker)" else "(brighter)")),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Slider(
+                value = tiltShown,
+                onValueChange = { v ->
+                    // Snap the detent at 0 so "off" is easy to land on.
+                    val snapped = if (abs(v) < 0.25f) 0f else v
+                    tiltDrag = snapped
+                    eq.setTiltDb(snapped)
+                },
+                onValueChangeFinished = {
+                    val v = tiltDrag ?: return@Slider
+                    tiltDrag = null
+                    composeScope.launch {
+                        withContext(Dispatchers.IO) { settings.setToneTiltDb(v) }
+                    }
+                },
+                valueRange = -6f..6f,
+                steps = 23,
+                colors = sliderColors,
+            )
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Voice suite (v0.11 premium stages) ----
+            // Four staged studio-style voice treatments, global like the
+            // tone filters and identical across all four phase modes:
+            //   De-esser — split-band sibilance tamer (level-independent
+            //     band-vs-band detector, reduction on >5.6 kHz only).
+            //   Warmth  — tube-style soft saturation, oversampled 2x so the
+            //     harmonics never alias.
+            //   Leveler — slow gain rider toward one comfortable level;
+            //     freezes on silence so noise floors don't get ridden up.
+            //   Air     — top-octave exciter (clean lift + gentle harmonics
+            //     above 7.2 kHz), also inside the 2x envelope.
+            // Initial = the live processor's level (mirrors the skip-silence
+            // control) so the buttons don't flash "off" for the first frame
+            // while DataStore emits. onCycle also computes `next` from the
+            // live level, NOT these mirrors — the mirror lags the DataStore
+            // round-trip, so rapid taps would otherwise re-read a stale
+            // value and drop cycles (three fast taps landing on L1, not L3).
+            val voiceDeEsser by settings.voiceDeEsserLevel
+                .collectAsState(initial = eq.currentDeEsserLevel())
+            val voiceWarmth by settings.voiceWarmthLevel
+                .collectAsState(initial = eq.currentWarmthLevel())
+            val voiceLeveler by settings.voiceLevelerLevel
+                .collectAsState(initial = eq.currentLevelerLevel())
+            val voiceAir by settings.voiceAirLevel
+                .collectAsState(initial = eq.currentAirLevel())
+
+            Text("Voice suite", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Studio-style voice treatment. De-esser tames sibilant " +
+                    "\"s\" spit, Warmth adds tube-style body, Leveler rides " +
+                    "quiet and hot recordings toward one comfortable level, " +
+                    "Air opens the top octave. Zero added latency; all four " +
+                    "work in every phase mode.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StagedLevelButton(
+                    currentLevel = voiceDeEsser,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentDeEsserLevel() + 1) % 4
+                        eq.setDeEsserLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceDeEsserLevel(next) }
+                        }
+                    },
+                    offLabel = "De-esser: off",
+                    onLabelPrefix = "De-esser",
+                    modifier = Modifier.weight(1f),
+                )
+                StagedLevelButton(
+                    currentLevel = voiceWarmth,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentWarmthLevel() + 1) % 4
+                        eq.setWarmthLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceWarmthLevel(next) }
+                        }
+                    },
+                    offLabel = "Warmth: off",
+                    onLabelPrefix = "Warmth",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StagedLevelButton(
+                    currentLevel = voiceLeveler,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentLevelerLevel() + 1) % 4
+                        eq.setLevelerLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceLevelerLevel(next) }
+                        }
+                    },
+                    offLabel = "Leveler: off",
+                    onLabelPrefix = "Leveler",
+                    modifier = Modifier.weight(1f),
+                )
+                StagedLevelButton(
+                    currentLevel = voiceAir,
+                    maxLevel = 3,
+                    onCycle = {
+                        val next = (eq.currentAirLevel() + 1) % 4
+                        eq.setAirLevel(next)
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) { settings.setVoiceAirLevel(next) }
+                        }
+                    },
+                    offLabel = "Air: off",
+                    onLabelPrefix = "Air",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+
+            // ---- Voice suite live activity ----
+            // Four mini-meters answering "is this stage actually doing
+            // anything right now?" — the stages are deliberately subtle, so
+            // ears alone can't always tell. De-esser: high-band gain
+            // reduction (fills during sibilance). Leveler: ride gain,
+            // diverging from center (right = boosting, left = taming).
+            // Warmth/Air: level of the wet signal each stage is mixing in.
+            // Meters read "off" when the stage is off and sit idle in
+            // passthrough. Same 250 ms tick as the Levels row below.
+            Row(modifier = Modifier.fillMaxWidth()) {
+                VoiceActivityMeter(
+                    label = "De-esser",
+                    db = 20.0 * log10(voiceSnap.deEsserGainLin.coerceAtLeast(1e-6)),
+                    kind = VoiceMeterKind.REDUCTION,
+                    active = voiceDeEsser > 0,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                VoiceActivityMeter(
+                    label = "Warmth",
+                    db = activityToDb(voiceSnap.warmthActivity),
+                    kind = VoiceMeterKind.ACTIVITY,
+                    active = voiceWarmth > 0,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                VoiceActivityMeter(
+                    label = "Leveler",
+                    db = 20.0 * log10(voiceSnap.levelerGainLin.coerceAtLeast(1e-6)),
+                    kind = VoiceMeterKind.RIDE,
+                    active = voiceLeveler > 0,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                VoiceActivityMeter(
+                    label = "Air",
+                    db = activityToDb(voiceSnap.airActivity),
+                    kind = VoiceMeterKind.ACTIVITY,
+                    active = voiceAir > 0,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Live activity: De-esser and Leveler in dB of gain change, " +
+                    "Warmth and Air as the level of what they add.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Phase mode (v0.9.5 four-mode lineup) ----
+            // PURE_IIR: 10-band biquad cascade, ~6 ms total chain latency.
+            // MIN_FIR: UPC + real-cepstrum kernel, ~29 ms, no pre-ringing.
+            // LINEAR_FIR: UPC + symmetric kernel, ~70 ms, transient-exact.
+            // MIXED: hybrid (min-phase < 120 Hz, linear-phase > 120 Hz),
+            //   ~70 ms latency, mastering-style flex.
+            //
+            // The three FIR modes share the UPC convolution engine; only
+            // the kernel synthesis differs. Mid-playback switches have a
+            // brief audible artifact (full chain reset). Acceptable for a
+            // manual-mode-switch affordance.
+            Text("Phase mode", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                when (phaseMode) {
+                    com.lofipod.app.audio.PhaseMode.PURE_IIR ->
+                        "Pure IIR: 10-band biquad cascade, fastest, lowest latency. " +
+                            "Transparent for nearly all listeners. Default."
+                    com.lofipod.app.audio.PhaseMode.MIN_FIR ->
+                        "Min-Phase FIR: real-cepstrum 4096-tap kernel via partitioned " +
+                            "convolution. No pre-ringing, sub-ms group delay across the " +
+                            "spectrum. Best for transient-heavy speech."
+                    com.lofipod.app.audio.PhaseMode.LINEAR_FIR ->
+                        "Linear-Phase FIR: symmetric 4096-tap kernel via partitioned " +
+                            "convolution. Preserves transient waveform shape exactly. " +
+                            "Audible pre-ringing on sharp transients; higher latency."
+                    com.lofipod.app.audio.PhaseMode.MIXED ->
+                        "Mixed: min-phase below 120 Hz (no bass pre-ringing) + linear-" +
+                            "phase above (transient-exact mids/highs), complementary " +
+                            "crossover. Mastering-style hybrid; same latency as Linear."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(
-                    selected = !phaseModeLinear,
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.PURE_IIR,
                     onClick = {
                         composeScope.launch {
                             withContext(Dispatchers.IO) {
-                                settings.setPhaseModeLinear(false)
+                                settings.setPhaseMode(Settings.PHASE_MODE_PURE_IIR)
                             }
-                            eq.setPhaseModeLinear(false)
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.PURE_IIR)
+                            // v0.10.1+: flush the AudioTrack so the 1.5-3 s of
+                            // pre-switch PCM queued ahead doesn't continue
+                            // playing through the old mode's settings.
+                            controller.flushAudio()
                         }
                     },
-                    label = { Text("Minimum") }
+                    label = { Text("Pure IIR") }
                 )
                 Spacer(Modifier.width(8.dp))
                 FilterChip(
-                    selected = phaseModeLinear,
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.MIN_FIR,
                     onClick = {
                         composeScope.launch {
                             withContext(Dispatchers.IO) {
-                                settings.setPhaseModeLinear(true)
+                                settings.setPhaseMode(Settings.PHASE_MODE_MIN_FIR)
                             }
-                            eq.setPhaseModeLinear(true)
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.MIN_FIR)
+                            controller.flushAudio()
                         }
                     },
-                    label = { Text("Linear") }
+                    label = { Text("Min FIR") }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.LINEAR_FIR,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseMode(Settings.PHASE_MODE_LINEAR_FIR)
+                            }
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.LINEAR_FIR)
+                            controller.flushAudio()
+                        }
+                    },
+                    label = { Text("Linear FIR") }
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = phaseMode == com.lofipod.app.audio.PhaseMode.MIXED,
+                    onClick = {
+                        composeScope.launch {
+                            withContext(Dispatchers.IO) {
+                                settings.setPhaseMode(Settings.PHASE_MODE_MIXED)
+                            }
+                            eq.setPhaseMode(com.lofipod.app.audio.PhaseMode.MIXED)
+                            controller.flushAudio()
+                        }
+                    },
+                    label = { Text("Mixed") }
                 )
             }
             Spacer(Modifier.height(20.dp))
@@ -692,6 +1020,49 @@ fun EqScreen(
                 onRelease = { eq.setEnabled(true) },
             )
             Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+/**
+ * One row of the tone-filter section: a fixed-width label + an "Off" chip +
+ * one chip per cutoff option. Selecting the active option again is a no-op
+ * (turn it off via the Off chip — explicit beats toggle-by-retap for
+ * controls the user sets rarely and reads often).
+ */
+@Composable
+private fun ToneCutChipRow(
+    label: String,
+    currentHz: Float,
+    optionsHz: List<Float>,
+    onSelect: (Float) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            modifier = Modifier.width(64.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            // Scrollable: the high-cut row grew to six chips (v0.11 adds
+            // 14k/16k), which overflows a 360dp screen with a fixed row.
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+        ) {
+            FilterChip(
+                selected = currentHz <= 0f,
+                onClick = { onSelect(0f) },
+                label = { Text("Off") },
+            )
+            optionsHz.forEach { hz ->
+                FilterChip(
+                    selected = currentHz == hz,
+                    onClick = { onSelect(hz) },
+                    label = { Text(formatHz(hz)) },
+                )
+            }
         }
     }
 }
@@ -1235,6 +1606,128 @@ private fun LevelMeter(
 /** Linear-amplitude peak (0..1) → dBFS, with a -60 dB floor for log10(0). */
 private fun peakToDb(peak: Double): Double =
     if (peak < 1e-6) -60.0 else 20.0 * log10(peak)
+
+/**
+ * One 250 ms-tick snapshot of the four voice-suite telemetry mirrors, so the
+ * four meters render one consistent moment (same rationale as [meterSnap]'s
+ * Triple for the Levels row).
+ */
+private data class VoiceMeterSnap(
+    val deEsserGainLin: Double,
+    val levelerGainLin: Double,
+    val warmthActivity: Double,
+    val airActivity: Double,
+)
+
+/** Wet-activity envelope (linear) → dBFS with a low floor; the ACTIVITY
+ *  meter treats anything under its visible range as idle. */
+private fun activityToDb(act: Double): Double =
+    if (act < 1e-6) -120.0 else 20.0 * log10(act)
+
+private enum class VoiceMeterKind {
+    /** Downward gain change, 0..-10 dB (de-esser GR). Fills as GR deepens. */
+    REDUCTION,
+    /** Bidirectional ride gain, -10..+10 dB (leveler). Diverges from center. */
+    RIDE,
+    /** Wet-signal level, dBFS (warmth/air). The audible range for these
+     *  stages' contributions on speech is roughly -50..-10 dBFS, so that's
+     *  the fill range — quieter than -50 reads as idle. */
+    ACTIVITY,
+}
+
+/**
+ * Mini activity meter for one voice-suite stage — same label/bar/value
+ * layout as [LevelMeter], sized for a four-across row. When [active] is
+ * false (stage level 0) the bar stays empty and the value reads "off", so
+ * "off" and "on but idle" are visually distinct.
+ */
+@Composable
+private fun VoiceActivityMeter(
+    label: String,
+    db: Double,
+    kind: VoiceMeterKind,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(modifier = modifier) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(2.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(colors.surfaceVariant)
+        ) {
+            if (kind == VoiceMeterKind.RIDE) {
+                // Diverging bar: fill grows rightward from center for boost,
+                // leftward for attenuation, against a faint center tick.
+                val frac = if (active) (db / 10.0).coerceIn(-1.0, 1.0).toFloat() else 0f
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterEnd) {
+                        if (frac < 0f) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(-frac)
+                                    .fillMaxHeight()
+                                    .background(colors.primary)
+                            )
+                        }
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+                        if (frac > 0f) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(frac)
+                                    .fillMaxHeight()
+                                    .background(colors.primary)
+                            )
+                        }
+                    }
+                }
+                Box(
+                    Modifier
+                        .align(Alignment.Center)
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(colors.onSurfaceVariant.copy(alpha = 0.6f))
+                )
+            } else {
+                val (fraction, fillColor) = when (kind) {
+                    // 0 dB GR = empty; -10 dB (the de-esser's max) = full.
+                    VoiceMeterKind.REDUCTION ->
+                        (-db / 10.0).coerceIn(0.0, 1.0).toFloat() to colors.error
+                    // -50..-10 dBFS wet level → 0..1 fill.
+                    else ->
+                        ((db + 50.0) / 40.0).coerceIn(0.0, 1.0).toFloat() to colors.primary
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth(if (active) fraction else 0f)
+                        .fillMaxHeight()
+                        .background(fillColor)
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            when {
+                !active -> "off"
+                kind == VoiceMeterKind.REDUCTION -> "%.1f dB".format(db)
+                kind == VoiceMeterKind.RIDE -> "%+.1f dB".format(db)
+                db <= -50.0 -> "idle"
+                else -> "%.0f dB".format(db)
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant,
+        )
+    }
+}
 
 /**
  * Reverse-derive which preset (if any) the EQ is currently set to by comparing

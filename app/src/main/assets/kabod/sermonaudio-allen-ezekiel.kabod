@@ -1,0 +1,456 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:kabod="https://lofipod.app/ns/kabod/1">
+  <channel>
+    <title>Ezekiel</title>
+    <link>https://www.sermonaudio.com/series/125189</link>
+    <description>Joe W. Allen Jr.'s verse-by-verse exposition of Ezekiel, preached at Grace Family Fellowship Reformed Baptist Church, Russell Springs, KY from May 2020 through May 2021.</description>
+    <language>en-US</language>
+    <itunes:author>Joe W. Allen Jr.</itunes:author>
+    <kabod:packId>sermonaudio-allen-ezekiel</kabod:packId>
+    <kabod:archived>true</kabod:archived>
+    <kabod:speaker>Joe W. Allen Jr.</kabod:speaker>
+    <kabod:bookOfBible>Ezekiel</kabod:bookOfBible>
+    <kabod:sourceSite>https://www.sermonaudio.com/series/125189</kabod:sourceSite>
+    <kabod:seriesStart>2020-05-17</kabod:seriesStart>
+    <kabod:seriesEnd>2021-05-09</kabod:seriesEnd>
+    <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
+    <kabod:packVersion>1</kabod:packVersion>
+    <kabod:packRevisionDate>2026-05-14</kabod:packRevisionDate>
+    <kabod:church>Grace Family Fellowship Reformed Baptist Church</kabod:church>
+    <kabod:churchLocation>Russell Springs, Kentucky, USA</kabod:churchLocation>
+    <kabod:partTotal>43</kabod:partTotal>
+    <kabod:advertisedTotal>77</kabod:advertisedTotal>
+    <kabod:audioHost>cloud.sermonaudio.com</kabod:audioHost>
+    <kabod:contentNotes>The source page advertises 77 sermons; this is inflated by ASL (American Sign Language) duplicates. The actual English audio catalogue is 43 sermons covering Ezekiel 1–48. Per-sermon scripture refs are mapped chronologically from the verse-by-verse cadence; the catalog feed does not carry individual passages.</kabod:contentNotes>
+    <item>
+      <title>Ezekiel: A Prophet in Exile</title>
+      <pubDate>Sun, 17 May 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/518201412404660</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/518201412404660.mp3" type="audio/mpeg" length="37271917"/>
+      <itunes:duration>51:37</itunes:duration>
+      <kabod:partNumber>1</kabod:partNumber>
+      <kabod:scripture>Ezekiel 1</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="1" startV="1" endCh="1" endV="28"/>
+    </item>
+    <item>
+      <title>A Vision of God's Glory</title>
+      <pubDate>Sun, 24 May 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/52520205401196</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/52520205401196.mp3" type="audio/mpeg" length="36634033"/>
+      <itunes:duration>50:43</itunes:duration>
+      <kabod:partNumber>2</kabod:partNumber>
+      <kabod:scripture>Ezekiel 2</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="2" startV="1" endCh="2" endV="10"/>
+    </item>
+    <item>
+      <title>Charged And Equipped</title>
+      <pubDate>Sun, 31 May 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/6120185357714</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/6120185357714.mp3" type="audio/mpeg" length="44745628"/>
+      <itunes:duration>1:01:58</itunes:duration>
+      <kabod:partNumber>3</kabod:partNumber>
+      <kabod:scripture>Ezekiel 3</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="3" startV="1" endCh="3" endV="27"/>
+    </item>
+    <item>
+      <title>To Be Or Not To Be</title>
+      <pubDate>Sun, 07 Jun 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/69201428544233</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/69201428544233.mp3" type="audio/mpeg" length="40781874"/>
+      <itunes:duration>56:29</itunes:duration>
+      <kabod:partNumber>4</kabod:partNumber>
+      <kabod:scripture>Ezekiel 4</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="4" startV="1" endCh="4" endV="17"/>
+    </item>
+    <item>
+      <title>You Shall Be Speechless</title>
+      <pubDate>Sun, 14 Jun 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/6162014490496</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/6162014490496.mp3" type="audio/mpeg" length="30750246"/>
+      <itunes:duration>42:34</itunes:duration>
+      <kabod:partNumber>5</kabod:partNumber>
+      <kabod:scripture>Ezekiel 5</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="5" startV="1" endCh="5" endV="17"/>
+    </item>
+    <item>
+      <title>You Want Me To Eat What!</title>
+      <pubDate>Sun, 28 Jun 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/62920155848521</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/62920155848521.mp3" type="audio/mpeg" length="35959671"/>
+      <itunes:duration>49:48</itunes:duration>
+      <kabod:partNumber>6</kabod:partNumber>
+      <kabod:scripture>Ezekiel 6</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="6" startV="1" endCh="6" endV="14"/>
+    </item>
+    <item>
+      <title>The Destruction of Jerusalem</title>
+      <pubDate>Sun, 05 Jul 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/77201230324580</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/77201230324580.mp3" type="audio/mpeg" length="41772237"/>
+      <itunes:duration>57:51</itunes:duration>
+      <kabod:partNumber>7</kabod:partNumber>
+      <kabod:scripture>Ezekiel 7</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="7" startV="1" endCh="7" endV="27"/>
+    </item>
+    <item>
+      <title>Judgment On Idolatry</title>
+      <pubDate>Sun, 12 Jul 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/71420148212851</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/71420148212851.mp3" type="audio/mpeg" length="43766311"/>
+      <itunes:duration>1:00:37</itunes:duration>
+      <kabod:partNumber>8</kabod:partNumber>
+      <kabod:scripture>Ezekiel 8</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="8" startV="1" endCh="8" endV="18"/>
+    </item>
+    <item>
+      <title>Day of Doom</title>
+      <pubDate>Sun, 19 Jul 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/72120134765161</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/72120134765161.mp3" type="audio/mpeg" length="40454898"/>
+      <itunes:duration>56:02</itunes:duration>
+      <kabod:partNumber>9</kabod:partNumber>
+      <kabod:scripture>Ezekiel 9</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="9" startV="1" endCh="9" endV="11"/>
+    </item>
+    <item>
+      <title>Putting A Branch To The Nose</title>
+      <pubDate>Sun, 26 Jul 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/729201619354190</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/729201619354190.mp3" type="audio/mpeg" length="45641180"/>
+      <itunes:duration>1:03:13</itunes:duration>
+      <kabod:partNumber>10</kabod:partNumber>
+      <kabod:scripture>Ezekiel 10</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="10" startV="1" endCh="10" endV="22"/>
+    </item>
+    <item>
+      <title>A Vision of God's Glory And the Promised Remnant</title>
+      <pubDate>Sun, 02 Aug 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/8420143311441</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/8420143311441.mp3" type="audio/mpeg" length="47880606"/>
+      <itunes:duration>1:06:20</itunes:duration>
+      <kabod:partNumber>11</kabod:partNumber>
+      <kabod:scripture>Ezekiel 11</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="11" startV="1" endCh="11" endV="25"/>
+    </item>
+    <item>
+      <title>Blind Eyes, Deaf Ears, and Hard Hearts</title>
+      <pubDate>Sun, 09 Aug 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/81320214021643</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/81320214021643.mp3" type="audio/mpeg" length="36060403"/>
+      <itunes:duration>49:56</itunes:duration>
+      <kabod:partNumber>12</kabod:partNumber>
+      <kabod:scripture>Ezekiel 12</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="12" startV="1" endCh="12" endV="28"/>
+    </item>
+    <item>
+      <title>False Visions And Flattering Divination</title>
+      <pubDate>Sun, 16 Aug 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/81920163557843</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/81920163557843.mp3" type="audio/mpeg" length="47704240"/>
+      <itunes:duration>1:06:05</itunes:duration>
+      <kabod:partNumber>13</kabod:partNumber>
+      <kabod:scripture>Ezekiel 13</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="13" startV="1" endCh="13" endV="23"/>
+    </item>
+    <item>
+      <title>The Heart of Obedience</title>
+      <pubDate>Sun, 23 Aug 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/8252015220273</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/8252015220273.mp3" type="audio/mpeg" length="42677130"/>
+      <itunes:duration>59:07</itunes:duration>
+      <kabod:partNumber>14</kabod:partNumber>
+      <kabod:scripture>Ezekiel 14</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="14" startV="1" endCh="14" endV="23"/>
+    </item>
+    <item>
+      <title>Inescapable Judgment</title>
+      <pubDate>Sun, 30 Aug 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/831201523104875</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/831201523104875.mp3" type="audio/mpeg" length="36640885"/>
+      <itunes:duration>50:44</itunes:duration>
+      <kabod:partNumber>15</kabod:partNumber>
+      <kabod:scripture>Ezekiel 15</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="15" startV="1" endCh="15" endV="8"/>
+    </item>
+    <item>
+      <title>The Wood of a Vine And The Branches of A Tree</title>
+      <pubDate>Mon, 07 Sep 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/97201447282932</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/97201447282932.mp3" type="audio/mpeg" length="35735996"/>
+      <itunes:duration>49:28</itunes:duration>
+      <kabod:partNumber>16</kabod:partNumber>
+      <kabod:scripture>Ezekiel 16</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="16" startV="1" endCh="16" endV="63"/>
+    </item>
+    <item>
+      <title>Jerusalem The Harlot</title>
+      <pubDate>Sun, 13 Sep 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/914201813214117</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/914201813214117.mp3" type="audio/mpeg" length="43191103"/>
+      <itunes:duration>59:50</itunes:duration>
+      <kabod:partNumber>17</kabod:partNumber>
+      <kabod:scripture>Ezekiel 17</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="17" startV="1" endCh="17" endV="24"/>
+    </item>
+    <item>
+      <title>Two Eagles, A Cedar, and A Vine</title>
+      <pubDate>Sun, 20 Sep 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/921201724226356</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/921201724226356.mp3" type="audio/mpeg" length="29283635"/>
+      <itunes:duration>40:32</itunes:duration>
+      <kabod:partNumber>18</kabod:partNumber>
+      <kabod:scripture>Ezekiel 18</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="18" startV="1" endCh="18" endV="32"/>
+    </item>
+    <item>
+      <title>Proverb No More</title>
+      <pubDate>Sun, 27 Sep 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/9282016513893</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9282016513893.mp3" type="audio/mpeg" length="44122400"/>
+      <itunes:duration>1:01:07</itunes:duration>
+      <kabod:partNumber>19</kabod:partNumber>
+      <kabod:scripture>Ezekiel 19</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="19" startV="1" endCh="19" endV="14"/>
+    </item>
+    <item>
+      <title>A Dirge for Judah</title>
+      <pubDate>Sun, 04 Oct 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/106201452595070</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/106201452595070.mp3" type="audio/mpeg" length="33853547"/>
+      <itunes:duration>46:52</itunes:duration>
+      <kabod:partNumber>20</kabod:partNumber>
+      <kabod:scripture>Ezekiel 20</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="20" startV="1" endCh="20" endV="49"/>
+    </item>
+    <item>
+      <title>For the Sake of My Name</title>
+      <pubDate>Sun, 11 Oct 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/101220135851243</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/101220135851243.mp3" type="audio/mpeg" length="42405710"/>
+      <itunes:duration>58:44</itunes:duration>
+      <kabod:partNumber>21</kabod:partNumber>
+      <kabod:scripture>Ezekiel 21</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="21" startV="1" endCh="21" endV="32"/>
+    </item>
+    <item>
+      <title>A Blazing Fire and A Sharpened Sword</title>
+      <pubDate>Sun, 18 Oct 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/1019201443534224</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1019201443534224.mp3" type="audio/mpeg" length="42178529"/>
+      <itunes:duration>58:25</itunes:duration>
+      <kabod:partNumber>22</kabod:partNumber>
+      <kabod:scripture>Ezekiel 22</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="22" startV="1" endCh="22" endV="31"/>
+    </item>
+    <item>
+      <title>All The Detestable Practices</title>
+      <pubDate>Sun, 25 Oct 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/10262015167685</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/10262015167685.mp3" type="audio/mpeg" length="40397510"/>
+      <itunes:duration>55:57</itunes:duration>
+      <kabod:partNumber>23</kabod:partNumber>
+      <kabod:scripture>Ezekiel 23</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="23" startV="1" endCh="23" endV="49"/>
+    </item>
+    <item>
+      <title>The Doom of Adulterous Sisters</title>
+      <pubDate>Sun, 01 Nov 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/11220167592122</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/11220167592122.mp3" type="audio/mpeg" length="41111415"/>
+      <itunes:duration>56:56</itunes:duration>
+      <kabod:partNumber>24</kabod:partNumber>
+      <kabod:scripture>Ezekiel 24</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="24" startV="1" endCh="24" endV="27"/>
+    </item>
+    <item>
+      <title>When God Strikes Home</title>
+      <pubDate>Sun, 06 Dec 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/12820164423283</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/12820164423283.mp3" type="audio/mpeg" length="40853108"/>
+      <itunes:duration>56:35</itunes:duration>
+      <kabod:partNumber>25</kabod:partNumber>
+      <kabod:scripture>Ezekiel 25</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="25" startV="1" endCh="25" endV="17"/>
+    </item>
+    <item>
+      <title>You Will Know I Am the Lord</title>
+      <pubDate>Sun, 13 Dec 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/121420134053753</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/121420134053753.mp3" type="audio/mpeg" length="29207070"/>
+      <itunes:duration>40:25</itunes:duration>
+      <kabod:partNumber>26</kabod:partNumber>
+      <kabod:scripture>Ezekiel 26</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="26" startV="1" endCh="26" endV="21"/>
+    </item>
+    <item>
+      <title>The Deceit of Riches</title>
+      <pubDate>Sun, 20 Dec 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/122120152353189</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/122120152353189.mp3" type="audio/mpeg" length="39758363"/>
+      <itunes:duration>55:03</itunes:duration>
+      <kabod:partNumber>27</kabod:partNumber>
+      <kabod:scripture>Ezekiel 27</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="27" startV="1" endCh="27" endV="36"/>
+    </item>
+    <item>
+      <title>Pride from Wisdom and Power</title>
+      <pubDate>Sun, 27 Dec 2020 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/1228201556494345</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1228201556494345.mp3" type="audio/mpeg" length="34730275"/>
+      <itunes:duration>48:05</itunes:duration>
+      <kabod:partNumber>28</kabod:partNumber>
+      <kabod:scripture>Ezekiel 28</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="28" startV="1" endCh="28" endV="26"/>
+    </item>
+    <item>
+      <title>The Doom of Egypt</title>
+      <pubDate>Sun, 03 Jan 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/14211859552111</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/14211859552111.mp3" type="audio/mpeg" length="45872371"/>
+      <itunes:duration>1:03:33</itunes:duration>
+      <kabod:partNumber>29</kabod:partNumber>
+      <kabod:scripture>Ezekiel 29</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="29" startV="1" endCh="29" endV="21"/>
+    </item>
+    <item>
+      <title>Broken Arms, A Cedar Tree, A Lion and A Crocodile, and the Underworld</title>
+      <pubDate>Sun, 10 Jan 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/111211554494083</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/111211554494083.mp3" type="audio/mpeg" length="40127656"/>
+      <itunes:duration>55:35</itunes:duration>
+      <kabod:partNumber>30</kabod:partNumber>
+      <kabod:scripture>Ezekiel 30</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="30" startV="1" endCh="30" endV="26"/>
+    </item>
+    <item>
+      <title>The Watchman</title>
+      <pubDate>Sun, 17 Jan 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/118211746346030</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/118211746346030.mp3" type="audio/mpeg" length="41476264"/>
+      <itunes:duration>57:27</itunes:duration>
+      <kabod:partNumber>31</kabod:partNumber>
+      <kabod:scripture>Ezekiel 31</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="31" startV="1" endCh="31" endV="18"/>
+    </item>
+    <item>
+      <title>Fat Sheep, Lean Sheep, and the True Shepherd</title>
+      <pubDate>Sun, 24 Jan 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/125211540141218</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/125211540141218.mp3" type="audio/mpeg" length="39151792"/>
+      <itunes:duration>54:13</itunes:duration>
+      <kabod:partNumber>32</kabod:partNumber>
+      <kabod:scripture>Ezekiel 32</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="32" startV="1" endCh="32" endV="32"/>
+    </item>
+    <item>
+      <title>Edom's Destruction and Judah's Future</title>
+      <pubDate>Sun, 31 Jan 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/2121164535439</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/2121164535439.mp3" type="audio/mpeg" length="36767662"/>
+      <itunes:duration>50:55</itunes:duration>
+      <kabod:partNumber>33</kabod:partNumber>
+      <kabod:scripture>Ezekiel 33</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="33" startV="1" endCh="33" endV="33"/>
+    </item>
+    <item>
+      <title>The New Covenant Promise</title>
+      <pubDate>Sun, 07 Feb 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/28211959541819</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/28211959541819.mp3" type="audio/mpeg" length="41335399"/>
+      <itunes:duration>57:15</itunes:duration>
+      <kabod:partNumber>34</kabod:partNumber>
+      <kabod:scripture>Ezekiel 34</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="34" startV="1" endCh="34" endV="31"/>
+    </item>
+    <item>
+      <title>The Valley of Dry Bones</title>
+      <pubDate>Sun, 14 Feb 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/215211733574491</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/215211733574491.mp3" type="audio/mpeg" length="41027576"/>
+      <itunes:duration>56:50</itunes:duration>
+      <kabod:partNumber>35</kabod:partNumber>
+      <kabod:scripture>Ezekiel 35</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="35" startV="1" endCh="35" endV="15"/>
+    </item>
+    <item>
+      <title>The Unity of the Gospel</title>
+      <pubDate>Sun, 28 Feb 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/3121179223024</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/3121179223024.mp3" type="audio/mpeg" length="40924028"/>
+      <itunes:duration>56:41</itunes:duration>
+      <kabod:partNumber>36</kabod:partNumber>
+      <kabod:scripture>Ezekiel 36</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="36" startV="1" endCh="36" endV="38"/>
+    </item>
+    <item>
+      <title>The Judgment Against Gog</title>
+      <pubDate>Sun, 07 Mar 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/38211445273770</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/38211445273770.mp3" type="audio/mpeg" length="39951347"/>
+      <itunes:duration>55:19</itunes:duration>
+      <kabod:partNumber>37</kabod:partNumber>
+      <kabod:scripture>Ezekiel 37</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="37" startV="1" endCh="37" endV="28"/>
+    </item>
+    <item>
+      <title>The New Temple of God</title>
+      <pubDate>Sun, 14 Mar 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/315211619121748</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/315211619121748.mp3" type="audio/mpeg" length="39015282"/>
+      <itunes:duration>54:02</itunes:duration>
+      <kabod:partNumber>38</kabod:partNumber>
+      <kabod:scripture>Ezekiel 38</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="38" startV="1" endCh="38" endV="23"/>
+    </item>
+    <item>
+      <title>The Glory Has Returned</title>
+      <pubDate>Sun, 21 Mar 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/32321145855246</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/32321145855246.mp3" type="audio/mpeg" length="42327263"/>
+      <itunes:duration>58:38</itunes:duration>
+      <kabod:partNumber>39</kabod:partNumber>
+      <kabod:scripture>Ezekiel 39</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="39" startV="1" endCh="39" endV="29"/>
+    </item>
+    <item>
+      <title>Holiness Perceived Through Entrances, Exits, and Access</title>
+      <pubDate>Sun, 28 Mar 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/329211458363749</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/329211458363749.mp3" type="audio/mpeg" length="44031115"/>
+      <itunes:duration>1:01:00</itunes:duration>
+      <kabod:partNumber>40</kabod:partNumber>
+      <kabod:scripture>Ezekiel 40</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="40" startV="1" endCh="40" endV="49"/>
+    </item>
+    <item>
+      <title>Theocentric Worship</title>
+      <pubDate>Sun, 11 Apr 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/412211458104393</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/412211458104393.mp3" type="audio/mpeg" length="44029573"/>
+      <itunes:duration>1:00:59</itunes:duration>
+      <kabod:partNumber>41</kabod:partNumber>
+      <kabod:scripture>Ezekiel 41</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="41" startV="1" endCh="41" endV="26"/>
+    </item>
+    <item>
+      <title>The River of Life</title>
+      <pubDate>Sun, 02 May 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/53211919413837</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/53211919413837.mp3" type="audio/mpeg" length="30334516"/>
+      <itunes:duration>41:59</itunes:duration>
+      <kabod:partNumber>42</kabod:partNumber>
+      <kabod:scripture>Ezekiel 42</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="42" startV="1" endCh="42" endV="20"/>
+    </item>
+    <item>
+      <title>The Lord Is There</title>
+      <pubDate>Sun, 09 May 2021 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/gracefamilyrs/sermons/51021142081615</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/51021142081615.mp3" type="audio/mpeg" length="36132238"/>
+      <itunes:duration>50:02</itunes:duration>
+      <kabod:partNumber>43</kabod:partNumber>
+      <kabod:scripture>Ezekiel 43</kabod:scripture>
+      <kabod:scriptureRef book="Ezekiel" startCh="43" startV="1" endCh="43" endV="27"/>
+    </item>
+  </channel>
+</rss>

@@ -23,11 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Forward30
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,6 +33,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.painterResource
+import com.lofipod.app.R
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -82,6 +79,19 @@ class MainActivity : ComponentActivity() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
+    /**
+     * Inbound shared-note deep links (lofipod://note?…), from either a
+     * direct link tap (ACTION_VIEW) or a share-into-LofiPod (ACTION_SEND
+     * with the link embedded in text). Same replay/buffer rationale as
+     * [openPlayerEvents]: a link that arrives before the NavController is
+     * collecting still gets delivered once it is.
+     */
+    private val noteLinkEvents = MutableSharedFlow<com.lofipod.app.util.NoteLinks.NoteLink>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* notification permission is best-effort */ }
@@ -96,11 +106,24 @@ class MainActivity : ComponentActivity() {
             notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        playerController = PlayerController(this)
+        // Borrowed, not owned: the controller is process-scoped (it lives
+        // on LofiPodApp) so the playback bookkeeping in its coroutine
+        // scope — the STATE_ENDED autoplay advance, the confirmation
+        // countdown, the sleep timer — survives this activity dying while
+        // the service plays on (swipe-from-recents). connect() below is
+        // recreation-safe: against a healthy controller it reuses the
+        // live MediaController connection instead of stacking a second
+        // one, so there is deliberately no matching release() in
+        // onDestroy — the process's death is the release.
+        playerController = (application as com.lofipod.app.LofiPodApp).playerController
 
         setContent {
             LofiPodTheme {
-                AppNav(playerController, openPlayerEvents.asSharedFlow())
+                AppNav(
+                    playerController,
+                    openPlayerEvents.asSharedFlow(),
+                    noteLinkEvents.asSharedFlow(),
+                )
             }
         }
 
@@ -122,13 +145,28 @@ class MainActivity : ComponentActivity() {
     private fun handleLaunchIntent(intent: Intent?) {
         if (intent?.action == PlaybackService.ACTION_OPEN_PLAYER) {
             openPlayerEvents.tryEmit(Unit)
+            return
+        }
+        // Shared-note deep link — direct tap (VIEW) or share-into-app (SEND).
+        val link = when (intent?.action) {
+            Intent.ACTION_VIEW -> com.lofipod.app.util.NoteLinks.parse(intent.data)
+            Intent.ACTION_SEND -> com.lofipod.app.util.NoteLinks.extractNoteLink(
+                intent.getStringExtra(Intent.EXTRA_TEXT)
+            )
+            else -> null
+        }
+        if (link != null) {
+            com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                "note_link_received",
+                "feed=${link.feedUrl} guid=${link.guid} t=${link.positionMs}",
+            )
+            noteLinkEvents.tryEmit(link)
         }
     }
 
-    override fun onDestroy() {
-        playerController.release()
-        super.onDestroy()
-    }
+    // No onDestroy override: the process-scoped playerController must NOT
+    // be released with the activity — see the comment at its assignment
+    // in onCreate.
 }
 
 /**
@@ -163,6 +201,8 @@ private val NESTED_PARENTS = mapOf(
     // single canonical parent.
     "appDiagnostics" to "settings",
     "notes/{guid}" to "notesBrowser",
+    // Sources viewer is only reachable from Settings' About section.
+    "sources" to "settings",
 )
 
 /**
@@ -210,6 +250,56 @@ private fun navigateToPlayerCleanly(nav: NavController) {
 }
 
 /**
+ * Feed-aware back from the Player route. Resolves the currently-loaded
+ * episode's feedUrl (carried on [com.lofipod.app.player.PlayerState.currentFeedUrl]
+ * via the MediaMetadata extras written by [com.lofipod.app.player.PlayerController.playEpisode]),
+ * pops everything back to Catalog, and pushes the matching `episodes/{feed}`
+ * destination. Result: the user always lands on the episodes screen of the
+ * episode they're hearing, regardless of how the back stack drifted across
+ * autoplay-across-feeds or mini-player-from-Catalog entries.
+ *
+ * Falls back to plain [smartBack] when feedUrl isn't known yet (cold-start
+ * window before MediaController syncs, or a legacy MediaItem that predates
+ * the EXTRA_FEED_URL write).
+ *
+ * Records a diagnostics breadcrumb so back-end triage can see when the
+ * fallback fires vs. when the feed-aware path runs.
+ */
+private fun feedAwareBackFromPlayer(nav: NavController, currentFeedUrl: String?) {
+    if (currentFeedUrl == null) {
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "back_nav_fallback",
+            "from=player feed=(unknown) — using smartBack (legacy MediaItem or pre-sync state)",
+        )
+        smartBack(nav, "player")
+        return
+    }
+    // Device files have no episodes screen — the synthetic device://files
+    // feed can never load there (EpisodesScreen would sit on "Loading
+    // feed…" forever). Their home is the Device files screen.
+    if (currentFeedUrl == com.lofipod.app.ui.screens.DEVICE_FEED_URL) {
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "back_nav_feed_aware",
+            "from=player feed=$currentFeedUrl (popping to catalog + deviceFiles)",
+        )
+        nav.popBackStack("catalog", inclusive = false)
+        nav.navigate("deviceFiles")
+        return
+    }
+    com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+        "back_nav_feed_aware",
+        "from=player feed=$currentFeedUrl (popping to catalog + navigating to episodes)",
+    )
+    // Pop everything back to catalog (inclusive=false so catalog itself
+    // survives), then push episodes/{feed} fresh. End-state stack:
+    // [catalog, episodes/{currentFeed}]. Back from there lands on
+    // catalog as it should.
+    nav.popBackStack("catalog", inclusive = false)
+    val encoded = URLEncoder.encode(currentFeedUrl, "UTF-8")
+    nav.navigate("episodes/$encoded")
+}
+
+/**
  * Single back-handler used by every screen + the system back gesture so the
  * stack walks the right way regardless of the historical navigation order.
  *
@@ -252,7 +342,8 @@ private fun smartBack(nav: NavController, currentRoute: String?) {
 @Composable
 private fun AppNav(
     controller: PlayerController,
-    openPlayerEvents: SharedFlow<Unit>
+    openPlayerEvents: SharedFlow<Unit>,
+    noteLinkEvents: SharedFlow<com.lofipod.app.util.NoteLinks.NoteLink>,
 ) {
     val nav = rememberNavController()
     val playerState by controller.state.collectAsState()
@@ -268,6 +359,16 @@ private fun AppNav(
     BackHandler(enabled = currentRoute != null && currentRoute !in PRIMARY_ROUTES) {
         smartBack(nav, currentRoute)
     }
+    // v0.10.15+: the player route's back chevron is gone (Home took its
+    // navigationIcon slot — see PlayerScreen). System back must therefore
+    // run the feed-aware-back logic that the chevron used to invoke, or
+    // we'd silently regress to plain popBackStack and land on the wrong
+    // episodes screen across autoplay-cross-feed sessions. Separate
+    // BackHandler block with a mutually-exclusive `enabled` predicate so
+    // only one handler fires per back press.
+    BackHandler(enabled = currentRoute == "player") {
+        feedAwareBackFromPlayer(nav, playerState.currentFeedUrl)
+    }
 
     // Route to the Player whenever the system media notification (or any other
     // out-of-Compose source) asks us to. Use the cleaning helper so the back
@@ -277,6 +378,47 @@ private fun AppNav(
         openPlayerEvents.collect {
             if (nav.currentDestination?.route != "player") {
                 navigateToPlayerCleanly(nav)
+            }
+        }
+    }
+
+    // Shared-note deep links: resolve (feedUrl, guid) against the local
+    // catalog and start playback at the note's position. Resolution order:
+    // in-memory cache → disk-cache hydration → kabod asset loader → a live
+    // one-off fetch of the feed (covers "recipient has the feed in their
+    // sources but hasn't refreshed yet" and "feed isn't in their sources at
+    // all" alike — the fetched feed isn't added to sources, just played).
+    val appCtx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    LaunchedEffect(Unit) {
+        noteLinkEvents.collect { link ->
+            val app = appCtx as com.lofipod.app.LofiPodApp
+            app.repo.hydrateFromDisk()
+            var pod = app.repo.cached(link.feedUrl)
+            if (pod == null && app.kabodLoader.isKabodFeed(link.feedUrl)) {
+                pod = app.kabodLoader.loadIntoCache(link.feedUrl)
+            }
+            if (pod == null) {
+                pod = runCatching {
+                    app.repo.fetchOne(
+                        com.lofipod.app.parser.SourceEntry(link.feedUrl, null)
+                    )
+                }.getOrNull()
+            }
+            val ep = pod?.episodes?.find { it.guid == link.guid }
+            if (pod != null && ep != null) {
+                controller.playEpisode(
+                    ep,
+                    podcastTitle = pod.title,
+                    podcastArt = pod.artworkUrl,
+                    forcedStartMs = link.positionMs,
+                )
+                navigateToPlayerCleanly(nav)
+            } else {
+                android.widget.Toast.makeText(
+                    appCtx,
+                    "Couldn't open shared note — episode not found in this library.",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
             }
         }
     }
@@ -335,6 +477,28 @@ private fun AppNav(
                     onOpenHistory = { nav.navigate("history") },
                     onOpenSearch = { nav.navigate("search") },
                     onOpenCanonBrowse = { nav.navigate("canonBrowse") },
+                    onOpenKabodPacks = { nav.navigate("kabodPacks") },
+                    onOpenDeviceFiles = { nav.navigate("deviceFiles") },
+                )
+            }
+
+            composable("kabodPacks") {
+                KabodPacksScreen(
+                    onBack = { smartBack(nav, "kabodPacks") },
+                    onPackClick = { pod ->
+                        val encoded = URLEncoder.encode(pod.feedUrl, "UTF-8")
+                        nav.navigate("episodes/$encoded")
+                    },
+                )
+            }
+
+            composable("deviceFiles") {
+                DeviceFilesScreen(
+                    controller = controller,
+                    onBack = { smartBack(nav, "deviceFiles") },
+                    onOpenPlayer = {
+                        nav.navigate("player") { launchSingleTop = true }
+                    },
                 )
             }
 
@@ -344,6 +508,10 @@ private fun AppNav(
                     onBack = { smartBack(nav, "search") },
                     onOpenPlayer = {
                         nav.navigate("player") { launchSingleTop = true }
+                    },
+                    onOpenTranscript = { guid ->
+                        val encoded = URLEncoder.encode(guid, "UTF-8")
+                        nav.navigate("player/transcript/$encoded")
                     }
                 )
             }
@@ -369,11 +537,24 @@ private fun AppNav(
             composable("player") {
                 PlayerScreen(
                     controller = controller,
-                    onBack = { smartBack(nav, "player") },
+                    onBack = {
+                        // Feed-aware: walks to episodes/{currentFeed}
+                        // rather than wherever the back stack happens
+                        // to point. See [feedAwareBackFromPlayer] for
+                        // the rationale (autoplay-across-feed and
+                        // mini-player-from-Catalog cases).
+                        feedAwareBackFromPlayer(nav, playerState.currentFeedUrl)
+                    },
                     onOpenEq = { nav.navigate("eq") },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
                     onOpenSettings = { nav.navigate("settings") },
+                    onOpenCatalog = {
+                        // One-tap pop-to-root from the Player's home icon
+                        // (v0.10.9+). Walks all the way back to "catalog"
+                        // without popping it.
+                        nav.popBackStack("catalog", inclusive = false)
+                    },
                     onOpenTranscript = { guid ->
                         val encoded = URLEncoder.encode(guid, "UTF-8")
                         nav.navigate("player/transcript/$encoded")
@@ -407,6 +588,9 @@ private fun AppNav(
                     onOpenHistory = { nav.navigate("history") },
                     onOpenMyLists = { nav.navigate("mylists") },
                     onOpenSettings = { nav.navigate("settings") },
+                    onOpenCatalog = {
+                        nav.popBackStack("catalog", inclusive = false)
+                    },
                     previewGuid = guid,
                     onOpenTranscript = { g ->
                         val enc = URLEncoder.encode(g, "UTF-8")
@@ -439,7 +623,12 @@ private fun AppNav(
                     onOpenLofiNotes = { nav.navigate("lofiNotes") },
                     onOpenAppDiagnostics = { nav.navigate("appDiagnostics") },
                     onOpenTextSettings = { nav.navigate("textSettings") },
+                    onOpenSources = { nav.navigate("sources") },
                 )
+            }
+
+            composable("sources") {
+                SourcesScreen(onBack = { smartBack(nav, "sources") })
             }
 
             composable("audioDiagnostics") {
@@ -620,7 +809,7 @@ private fun MiniPlayer(
             ) {
                 IconButton(onClick = { controller.seekBack() }) {
                     Icon(
-                        Icons.Filled.Replay,
+                        painterResource(R.drawable.replay_24),
                         contentDescription = "Back 15s",
                         modifier = Modifier.size(28.dp)
                     )
@@ -636,7 +825,7 @@ private fun MiniPlayer(
                             Spacer(Modifier.size(36.dp))
                         } else {
                             Icon(
-                                if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                if (state.isPlaying) painterResource(R.drawable.pause_24) else painterResource(R.drawable.play_arrow_24),
                                 contentDescription = "Play/Pause",
                                 modifier = Modifier.size(36.dp)
                             )
@@ -668,7 +857,7 @@ private fun MiniPlayer(
                 }
                 IconButton(onClick = { controller.seekForward() }) {
                     Icon(
-                        Icons.Filled.Forward30,
+                        painterResource(R.drawable.forward_30_24),
                         contentDescription = "Forward 30s",
                         modifier = Modifier.size(28.dp)
                     )
@@ -690,6 +879,20 @@ private fun playEntity(
     controller: PlayerController,
     e: com.lofipod.app.data.db.EpisodeStateEntity
 ) {
+    // Artwork fallback chain (full): per-episode → podcast → first
+    // episode with art. EpisodeStateEntity.artworkUrl was set at first
+    // play time and may be stale (e.g., feed's channel image landed AFTER
+    // first play). Refresh against the live podcast cache before handing
+    // to playEpisode so the MediaMetadata gets the best available art.
+    // Cheap — in-memory lookup, already hydrated on startup.
+    val app = com.lofipod.app.LofiPodApp.instance
+    val livePod = app.repo.cached(e.feedUrl)
+    val liveEp = livePod?.episodes?.find { it.guid == e.guid }
+    val liveEpArt = liveEp?.episodeArtworkUrl
+    val livePodArt = livePod?.artworkUrl
+    val resolvedEpArt = liveEpArt ?: e.artworkUrl
+    val resolvedPodArt = livePodArt ?: liveEpArt ?: e.artworkUrl
+
     val ep = com.lofipod.app.data.model.Episode(
         guid = e.guid,
         feedUrl = e.feedUrl,
@@ -699,7 +902,11 @@ private fun playEntity(
         audioUrl = e.audioUrl,
         audioMimeType = null,
         durationSeconds = null,
-        episodeArtworkUrl = e.artworkUrl
+        episodeArtworkUrl = resolvedEpArt,
     )
-    controller.playEpisode(ep, podcastTitle = "", podcastArt = e.artworkUrl)
+    controller.playEpisode(
+        ep,
+        podcastTitle = livePod?.title ?: "",
+        podcastArt = resolvedPodArt,
+    )
 }

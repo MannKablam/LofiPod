@@ -119,6 +119,16 @@ class BeepPlayer(private val player: Player) {
         // BEFORE pausing so we can correctly restore on the way out — we
         // don't want to auto-resume if the user had already paused before
         // the beep window started.
+        //
+        // History: prior to v0.10.13 this pause was silently denied by
+        // PlaybackService.AutoplayConfirmCallback — the autoplay-
+        // confirmation intercept treated our own MediaController's pause
+        // as a remote-controller play/pause press, fired
+        // confirmAutoplayContinuation, and cancelled the timer (and
+        // therefore the in-flight beep coroutine). v0.10.13 added a
+        // controller.uid == Process.myUid() check in onPlayerCommandRequest
+        // so our own process's pauses always pass through. See
+        // PlaybackService.AutoplayConfirmCallback for the full history.
         val wasPlaying = runCatching { player.isPlaying }.getOrDefault(false)
         if (wasPlaying) {
             runCatching { player.pause() }

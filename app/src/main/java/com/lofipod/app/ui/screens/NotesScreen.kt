@@ -6,21 +6,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.player.PlayerController
@@ -35,6 +31,7 @@ fun NotesScreen(
     onBack: () -> Unit
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { Settings(app) }
 
@@ -47,11 +44,19 @@ fun NotesScreen(
     var editEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var deleteEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var resumeAfterDialog by remember { mutableStateOf(false) }
+    var studySheetGuid by remember { mutableStateOf<String?>(null) }
+
+    StudySheetDialogHost(
+        episodeGuid = studySheetGuid,
+        onDone = { studySheetGuid = null },
+    )
 
     fun openAdd() {
         if (pauseOnNote && controller.state.value.isPlaying) {
             resumeAfterDialog = true
-            controller.pause()
+            // Transient bracket, not an "I'm done" pause — preserves an
+            // armed sleep timer (play() below never re-arms one).
+            controller.pauseTransient()
         }
         addOpen = true
     }
@@ -72,15 +77,26 @@ fun NotesScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
                     }
                 },
                 actions = {
+                    // Study sheet export — the whole point of taking notes.
+                    // Disabled until there's at least one note to export.
+                    IconButton(
+                        onClick = { studySheetGuid = episodeGuid },
+                        enabled = entries.isNotEmpty(),
+                    ) {
+                        Icon(
+                            painterResource(R.drawable.share_24),
+                            contentDescription = "Share study sheet"
+                        )
+                    }
                     IconButton(onClick = ::openAdd) {
-                        Icon(Icons.Filled.Add, contentDescription = "Add note")
+                        Icon(painterResource(R.drawable.add_24), contentDescription = "Add note")
                     }
                 }
             )
@@ -103,7 +119,7 @@ fun NotesScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-            Divider()
+            HorizontalDivider()
 
             if (entries.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -128,7 +144,8 @@ fun NotesScreen(
                                 }
                                 editEntry = entry
                             },
-                            onDelete = { deleteEntry = entry }
+                            onDelete = { deleteEntry = entry },
+                            onShare = { scope.launch { shareNoteEntry(ctx, entry) } },
                         )
                     }
                 }

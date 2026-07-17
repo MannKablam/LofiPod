@@ -51,6 +51,53 @@ class LofiPodApp : Application() {
             autoDownloadDao = db.autoDownloadDao(),
         )
     }
+
+    /**
+     * Audio-file-size prober for episodes whose RSS feed reports
+     * `length="0"` (Megaphone, some Castos shows). Uses HTTP HEAD with
+     * Range fallback to learn the real size, caches results on disk so
+     * subsequent launches render without re-probing. See
+     * [com.lofipod.app.data.EpisodeSizeProber] for the strategy.
+     */
+    val episodeSizes: com.lofipod.app.data.EpisodeSizeProber by lazy {
+        com.lofipod.app.data.EpisodeSizeProber(
+            context = this,
+            httpClient = downloads.httpClient,
+        )
+    }
+
+    /**
+     * Read-ahead episode analyzer: offline MediaCodec decode of an
+     * episode's audio into pause marks + a waveform envelope, cached in
+     * Room for the player's scrubber to draw. Scans run one at a time
+     * on a dedicated lowest-priority thread, so live playback never
+     * competes with them. The player screen calls `ensureAnalyzed(...)`
+     * for the displayed episode and observes `analysisFor(guid)`; no
+     * scan means the flow stays null and the UI draws no marks.
+     */
+    val episodeAnalysis: com.lofipod.app.data.EpisodeAnalysisRepository by lazy {
+        com.lofipod.app.data.EpisodeAnalysisRepository(
+            context = this,
+            dao = db.episodeAnalysisDao(),
+            downloader = downloadsApi,
+        )
+    }
+
+    /**
+     * Process-lifetime player controller. MainActivity borrows this
+     * instance rather than constructing its own because everything the
+     * controller runs in its coroutine scope — the STATE_ENDED autoplay
+     * advance, the confirmation countdown, the sleep timer — has to keep
+     * working after the activity is destroyed while [com.lofipod.app.player.PlaybackService]
+     * plays on; swipe-from-recents mid-episode is the everyday shape of
+     * that. An activity-owned controller took all of it down in
+     * onDestroy, so episodes just stopped at their end whenever the app
+     * wasn't on screen. Lazy: cold start pays nothing until the first
+     * activity asks.
+     */
+    val playerController: com.lofipod.app.player.PlayerController by lazy {
+        com.lofipod.app.player.PlayerController(this)
+    }
     lateinit var kabodLoader: KabodAssetLoader
         private set
     lateinit var transcripts: TranscriptRepository

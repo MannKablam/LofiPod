@@ -18,6 +18,7 @@ import com.lofipod.app.parser.SourceGroup
  *   CCM — Sunday Morning Service        — podcastindex 6316408
  *   CCM — Sunday Evening Service        — podcastindex 6316409
  *   BibleThinker (Mike Winger)          — podcastindex 5128808
+ *   Compelled (Paul Hastings)           — iTunes 1412479643
  *   Now That We're A Family             — podcastindex 4469282
  *   Simple Farmhouse Life               — podcastindex 691589
  *   Ask Pastor John                     — iTunes 618132843
@@ -41,6 +42,24 @@ object Sources {
         SourceEntry(
             feedUrl = "kabod://desiringgod-piper-romans",
             displayName = null  // pack file's own title wins
+        ),
+        // Verse-by-verse Old-Testament expositions, ordered Pentateuch →
+        // Prophets. One pack per book: the 2026-07 curation kept only Mark
+        // Chanski's Leviticus series and retired the William Still, Cities
+        // Church (Parnell) and Andy Davis Leviticus packs — see
+        // [com.lofipod.app.data.KabodAssetLoader.RETIRED_PACK_IDS] for the
+        // DB cleanup that removes them from existing installs.
+        SourceEntry(
+            feedUrl = "kabod://sermonaudio-chanski-leviticus",
+            displayName = null
+        ),
+        SourceEntry(
+            feedUrl = "kabod://sermonaudio-allen-ezekiel",
+            displayName = null
+        ),
+        SourceEntry(
+            feedUrl = "kabod://monergism-still-hosea",
+            displayName = null
         ),
     )
 
@@ -100,6 +119,14 @@ object Sources {
         ),
         SourceEntry(
             feedUrl = "https://feeds.castos.com/41z28",
+            displayName = null
+        ),
+        // Compelled (Paul Hastings) — long-form conversion testimonies, one
+        // guest per episode. This is the Megaphone feed behind
+        // compelledpodcast.com; the feed's own title carries the full
+        // "Christian Stories & Testimonies" subtitle.
+        SourceEntry(
+            feedUrl = "https://feeds.megaphone.fm/compelled",
             displayName = null
         ),
         SourceEntry(

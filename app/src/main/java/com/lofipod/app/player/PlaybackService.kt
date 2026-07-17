@@ -42,6 +42,11 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var saveTickerJob: Job? = null
+    // Replay-heatmap write-side. Lazy: touching the DB in field init would
+    // race Room's create path on cold start; first use is a ticker tick.
+    private val heatRecorder by lazy {
+        com.lofipod.app.data.EpisodeHeatRecorder((application as LofiPodApp).db)
+    }
 
     /**
      * Held while the player is actively playing. Acquiring a PARTIAL_WAKE_LOCK
@@ -60,6 +65,34 @@ class PlaybackService : MediaSessionService() {
      */
     private var playbackWakeLock: PowerManager.WakeLock? = null
 
+    /**
+     * Ring buffer of wake-lock acquire timestamps. Used to detect rapid
+     * oscillation — when the player flips between isPlaying=true and false
+     * faster than once every 5 seconds, the wake lock is acquired/released
+     * on the same cadence. That cadence is a strong signal for DSP-side
+     * stalls (BUFFERING↔READY oscillation under thermal / clock pressure)
+     * because the user's intent (playWhenReady) hasn't changed but the
+     * actual isPlaying flag is bouncing. Surfaced as a single
+     * AppDiagnostics event per minute so we have a back-end-readable
+     * record of the oscillation pattern alongside the stall watchdog's
+     * arm-C trigger.
+     */
+    private val recentAcquireTimestamps = ArrayDeque<Long>()
+    private var lastOscillationLogAtMs: Long = 0L
+
+    /**
+     * Throttled AudioTrack-underrun tracking. ExoPlayer's
+     * AnalyticsListener.onAudioUnderrun fires once per underrun event from
+     * the audio sink's POV; in a chronic-underrun storm (the user-reported
+     * 3-5s loop) that can be many per second. Aggregate into 30-second
+     * windows and log a single AppDiagnostics entry per window with
+     * (count, worst-buffer-drained-by-ms) so the diagnostics ring isn't
+     * flooded.
+     */
+    private var underrunWindowStartMs: Long = 0L
+    private var underrunWindowCount: Int = 0
+    private var underrunWindowWorstElapsedMs: Long = 0L
+
     companion object {
         // Shared EQ instance — UI can grab it via app-level holder
         val sharedEq = EqAudioProcessor()
@@ -67,6 +100,11 @@ class PlaybackService : MediaSessionService() {
         // setLevel(0..3), defaults off. Lives next to sharedEq so the EQ
         // screen can mutate both via PlaybackService.<X>.
         val sharedSkipSilence = SilenceSkippingProcessor()
+        // Shared pause tap — records media positions of audible pauses for
+        // the "skip back to previous pause" control. Sensitivity is set from
+        // the player UI (long-press on the pause-skip button) and persisted
+        // via Settings.pauseSkipSensitivity.
+        val sharedPauseTap = com.lofipod.app.audio.PauseTapProcessor()
         private const val SAVE_INTERVAL_MS = 10_000L
 
         /**
@@ -87,6 +125,32 @@ class PlaybackService : MediaSessionService() {
         /** Intent action used by the media-session tap target to ask MainActivity
          *  to navigate straight to the Player screen instead of resuming on Catalog. */
         const val ACTION_OPEN_PLAYER = "com.lofipod.app.OPEN_PLAYER"
+
+        /** Window over which we count wake-lock acquires for oscillation
+         *  detection. 30 s aligns with the sticky stall-watchdog arm so
+         *  the two signals corroborate cleanly in the diagnostics log. */
+        private const val WAKE_LOCK_OSCILLATION_WINDOW_MS = 30_000L
+
+        /** Acquire-count within the window that's considered "thrashing."
+         *  5 acquires/30 s = an isPlaying flip every ~6 s, which is right
+         *  in the band of the user-reported 3-5 s playback loops. Normal
+         *  playback has 1 acquire per actual user play action — well
+         *  under threshold even across short pause-and-resume sessions. */
+        private const val WAKE_LOCK_OSCILLATION_THRESHOLD = 5
+
+        /** Minimum gap between oscillation log entries. Prevents a
+         *  sustained underrun from flooding the diagnostics ring with one
+         *  entry per acquire. Same magnitude as the stall-snackbar
+         *  throttle in PlayerController. */
+        private const val WAKE_LOCK_OSCILLATION_COOLDOWN_MS = 60_000L
+
+        /** Aggregation window for AudioTrack underrun events. Within a
+         *  30s window we keep a count + worst-elapsed-feed-gap and emit
+         *  ONE diagnostics entry summarising the window. Matches the
+         *  arm-C sticky-stall window and the wake-lock oscillation
+         *  window — same time base across all three signals so a
+         *  reader can correlate by looking at "ago" timestamps. */
+        private const val AUDIO_UNDERRUN_WINDOW_MS = 30_000L
     }
 
     override fun onCreate() {
@@ -109,35 +173,32 @@ class PlaybackService : MediaSessionService() {
         val dataSourceFactory = (application as LofiPodApp).downloads.dataSourceFactory
         val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory)
 
-        // Audio buffer sizes — significantly larger than Media3 defaults
-        // because we play at variable speed. The buffer durations here are
-        // in MEDIA TIME (the duration of audio held), not wall-clock; at 2x
-        // playback, source material is consumed at 2x wall-clock rate. So
-        // a 60s media-time buffer drains in 30s wall-clock at 2x, and any
-        // network slowdown longer than that starves the renderer.
+        // Audio buffer sizes. The previous v0.6.x→v0.8.0 config (min=180s,
+        // max=600s, prioritize-time=true) was sized to survive ~5 min of
+        // wall-clock at 2× without rebuffering, but on local file:// sources
+        // the Loader read continuously until the time threshold, pulling up
+        // to ~600 s media-time of decoded audio into SampleQueue allocations
+        // — at 256 kbps stereo that's ~106 MB of decoded PCM, dangerously
+        // close to OOM on 1–2 GB devices and a real GC-pause source on the
+        // audio thread. See _LOFIPOD_V1_BRIEF.md §E2.
         //
-        // Symptom (v0.6.x reports): at 2x for ~7 min the playback would
-        // stall with the position cycling through the last ~5s of decoded
-        // audio (renderer underrun loop), then resume after a flush. At
-        // 1.75x, the same effect appeared as severe stuttering. Both were
-        // network slowdowns landing while the buffer was already small.
-        //
-        // New thresholds give 5 min wall-clock headroom at 2x (10 min
-        // media-time max), and require 8s of buffer after a rebuffer
-        // before resuming so the audio doesn't immediately re-stall.
-        // Memory cost: ~10 min of audio at 256 kbps stereo is ~19 MB.
-        // Acceptable on any modern phone.
+        // 30/60 s with prioritize-time disabled re-engages the byte ceiling
+        // (8 MB ≈ 4 min @256 kbps stereo PCM) and is plenty for podcasts at
+        // 64–256 kbps even at 2× playback. bufferForPlayback stays at
+        // 2 s / 5 s — same fast-start feel as the prior config without the
+        // pathological local-file fill.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 180_000,
-                /* maxBufferMs = */ 600_000,
-                /* bufferForPlaybackMs = */ 5_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 8_000
+                /* minBufferMs = */ 30_000,
+                /* maxBufferMs = */ 60_000,
+                /* bufferForPlaybackMs = */ 2_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 5_000
             )
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setPrioritizeTimeOverSizeThresholds(false)
+            .setTargetBufferBytes(8 * 1024 * 1024)
             .build()
 
-        val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq, sharedSkipSilence))
+        val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq, sharedSkipSilence, sharedPauseTap))
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -163,9 +224,183 @@ class PlaybackService : MediaSessionService() {
                     startSaveTicker(player)
                 } else {
                     stopSaveTicker()
-                    saveCurrent(player, listenDelta = 0L)
+                    // At a natural end (READY -> ENDED) isPlaying flips false in
+                    // the same event batch as the ENDED transition. Skip the
+                    // save here in that case: onPlaybackStateChanged(ENDED) owns
+                    // the final write via saveEnded, which pins the position up
+                    // to the duration. A raw saveCurrent racing it on the IO
+                    // pool could commit last and rewrite the position short of
+                    // the end, un-marking a completed episode whose playhead
+                    // parks below the declared duration (a VBR file whose header
+                    // overstates length). Every non-end pause still saves.
+                    if (player.playbackState != Player.STATE_ENDED) {
+                        saveCurrent(player, listenDelta = 0L)
+                    }
                     releasePlaybackWakeLock()
                 }
+            }
+
+            // --- PauseTap anchoring -------------------------------------
+            // The pause tap reconstructs media positions from PCM frame
+            // counts and needs an authoritative position for the first
+            // frame after every pipeline flush. Every event below reports
+            // the position that the post-flush (or post-restart) stream
+            // begins at; the tap adopts the freshest post at its next
+            // buffer, so posting generously is safe.
+            override fun onMediaItemTransition(
+                mediaItem: androidx.media3.common.MediaItem?,
+                reason: Int,
+            ) {
+                // New item ⇒ old pauses are meaningless.
+                sharedPauseTap.clearPauses()
+                sharedPauseTap.postAnchor(player.currentPosition)
+                // Never show stale chapters against the wrong episode.
+                ChapterBridge.chapters.value = null
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                // ID3 CHAP frames ride the audio track's Format.metadata on
+                // progressive MP3. Read them HERE (the real player) — the
+                // MediaController side never sees Format.metadata (dropped
+                // in binder marshaling). See ChapterBridge.
+                val found = mutableListOf<PodChapter>()
+                for (group in tracks.groups) {
+                    if (group.type != C.TRACK_TYPE_AUDIO) continue
+                    for (i in 0 until group.length) {
+                        val md = group.getTrackFormat(i).metadata ?: continue
+                        for (e in 0 until md.length()) {
+                            val entry = md.get(e)
+                            if (entry is androidx.media3.extractor.metadata.id3.ChapterFrame) {
+                                var title: String? = null
+                                for (s in 0 until entry.subFrameCount) {
+                                    val sub = entry.getSubFrame(s)
+                                    if (sub is androidx.media3.extractor.metadata.id3.TextInformationFrame &&
+                                        sub.id == "TIT2"
+                                    ) {
+                                        title = sub.values.firstOrNull()
+                                        break
+                                    }
+                                }
+                                val startMs = entry.startTimeMs.toLong()
+                                if (startMs >= 0) found.add(PodChapter(title, startMs))
+                            }
+                        }
+                    }
+                }
+                // Guard against degenerate single-CHAP encoders: one chapter
+                // spanning the whole file is noise, not navigation.
+                if (found.size >= 2) {
+                    val id = player.currentMediaItem?.mediaId ?: return
+                    ChapterBridge.chapters.value =
+                        ChapterPayload(id, found.sortedBy { it.startMs })
+                }
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                sharedPauseTap.postAnchor(newPosition.positionMs)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                // Covers flushes with no discontinuity (route changes etc.):
+                // after the pipeline refills, position hasn't advanced, so
+                // it's a valid anchor for the restarted stream.
+                if (playbackState == Player.STATE_READY) {
+                    sharedPauseTap.postAnchor(player.currentPosition)
+                }
+                if (playbackState == Player.STATE_ENDED) {
+                    // Natural end of stream. Two service-side duties, both of
+                    // which must hold even when no activity (and therefore no
+                    // PlayerController) is alive to run the autoplay advance:
+                    //
+                    // 1. Mark the episode played. The isPlaying=false save
+                    //    above covers most ends, but a BUFFERING -> ENDED hop
+                    //    (isPlaying was already false when the source ran
+                    //    out) fires no save at all, leaving the newest row a
+                    //    ticker write up to 10 s short of the end — outside
+                    //    the 5 s completion window. Write the final position
+                    //    explicitly, pinned to the best-known duration, so
+                    //    the derived completion predicate always holds.
+                    saveEnded(player)
+                    // 2. Leave the playing state. ExoPlayer parks at ENDED
+                    //    with playWhenReady still true — "wants to play, has
+                    //    nothing left" — which keeps every intent-to-play
+                    //    consumer armed: the controller-side stall watchdog
+                    //    keeps polling a position pinned at the duration
+                    //    (and would eventually seek the player back OUT of
+                    //    ENDED to "recover" it), and onTaskRemoved reads the
+                    //    session as active and keeps the service alive after
+                    //    a swipe-from-recents. Dropping playWhenReady makes
+                    //    end-of-stream an honest pause: the play/pause icon
+                    //    flips to "play" everywhere, and when the advance
+                    //    picks a next episode it calls play() a beat later,
+                    //    exactly as if the user had tapped it.
+                    player.pause()
+                }
+            }
+
+            override fun onPlaybackParametersChanged(
+                playbackParameters: androidx.media3.common.PlaybackParameters,
+            ) {
+                // Speed changes can rebuild the sink pipeline without a
+                // position discontinuity or READY transition; re-anchor so
+                // the pause tap isn't left waiting until the next
+                // incidental event.
+                sharedPauseTap.postAnchor(player.currentPosition)
+            }
+        })
+
+        // ExoPlayer AnalyticsListener — surfaces low-level audio events
+        // the regular Player.Listener doesn't expose: AudioTrack
+        // underruns (the kernel-layer "audio HAL ran dry" event that
+        // showed up as "AudioTrack: getTimestamp_l device stall time
+        // corrected" in field logs (LofiPod log 7d4b926806be.txt:607,
+        // 664, 687, ...)) and audio-format-change / decoder-error
+        // breadcrumbs. Throttled in the recordAudioUnderrun helper so
+        // a chronic-underrun storm doesn't fill the diagnostics ring.
+        player.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onAudioUnderrun(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                bufferSize: Int,
+                bufferSizeMs: Long,
+                elapsedSinceLastFeedMs: Long,
+            ) {
+                recordAudioUnderrun(bufferSize, bufferSizeMs, elapsedSinceLastFeedMs)
+            }
+
+            override fun onAudioSinkError(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioSinkError: Exception,
+            ) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_sink_error",
+                    "${audioSinkError.javaClass.simpleName}: ${audioSinkError.message ?: "(no message)"}",
+                )
+            }
+
+            override fun onAudioCodecError(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioCodecError: Exception,
+            ) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_codec_error",
+                    "${audioCodecError.javaClass.simpleName}: ${audioCodecError.message ?: "(no message)"}",
+                )
+            }
+
+            override fun onAudioDecoderInitialized(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_decoder_init",
+                    "decoder=$decoderName init_ms=$initializationDurationMs",
+                )
             }
         })
 
@@ -176,21 +411,34 @@ class PlaybackService : MediaSessionService() {
         scope.launch {
             val settings = com.lofipod.app.data.Settings(this@PlaybackService)
             sharedSkipSilence.setLevel(settings.skipSilenceLevel.first())
+            sharedPauseTap.setSensitivity(settings.pauseSkipSensitivity.first())
 
-            // EQ bands — CSV of 10 gain values, one per ISO band. If the
-            // CSV is missing or malformed, leave the processor at FLAT
-            // defaults rather than half-loading a bad config.
-            val csv = settings.eqBandsCsv.first()
-            if (csv != null) {
-                val gains = csv.split(",").mapNotNull { it.trim().toFloatOrNull() }
-                if (gains.size == com.lofipod.app.audio.EqPresets.DEFAULT_BANDS.size) {
-                    val rehydrated = com.lofipod.app.audio.EqPresets.DEFAULT_BANDS
-                        .mapIndexed { i, b -> b.copy(gainDb = gains[i]) }
-                    sharedEq.setBands(rehydrated)
-                }
-            }
+            // EQ bands deliberately NOT rehydrated here. Since the v0.6.12
+            // reshape there is no global EQ — bands live per-podcast
+            // (podcast_state.eqBandsCsvOverride) with optional per-episode
+            // branches, and PlayerController.applyEqOverrideFor installs the
+            // right curve on every MediaItem transition (including the
+            // cold-start restore's setMediaItem). The old code here read the
+            // LEGACY global `eq_bands` DataStore key — which nothing writes
+            // anymore — so a stale pre-v0.6.12 curve could audibly flash
+            // between service start and the first transition. FLAT until the
+            // first applyEqOverrideFor is the correct boot state.
 
             sharedEq.setGainDb(settings.gainDb.first())
+
+            // Tone filters (low-cut / high-cut / tilt) — global corrective
+            // stage, same persistence model as the DC blocker below.
+            sharedEq.setLowCutHz(settings.toneLowCutHz.first())
+            sharedEq.setHighCutHz(settings.toneHighCutHz.first())
+            sharedEq.setTiltDb(settings.toneTiltDb.first())
+            sharedEq.setLowCutSteep(settings.toneLowCutSteep.first())
+
+            // Voice suite (v0.11) — global staged effects, same persistence
+            // model as the tone filters.
+            sharedEq.setDeEsserLevel(settings.voiceDeEsserLevel.first())
+            sharedEq.setWarmthLevel(settings.voiceWarmthLevel.first())
+            sharedEq.setLevelerLevel(settings.voiceLevelerLevel.first())
+            sharedEq.setAirLevel(settings.voiceAirLevel.first())
 
             // Master "Audio enhancement" enable. PlayerController.applyEqOverrideFor
             // re-evaluates this on every track transition and ANDs it with the
@@ -204,12 +452,18 @@ class PlaybackService : MediaSessionService() {
             // DC-offset-y feeds can flip it on.
             sharedEq.setDcBlockerEnabled(settings.dcBlockerEnabled.first())
 
-            // EQ phase mode (Phase C). False = minimum-phase biquad (default,
-            // ~6.4 ms latency); true = linear-phase FIR convolution (~52 ms).
-            // Rehydrated here so the user's preference survives a process
-            // restart — without this, the chain would always start in
-            // minimum-phase regardless of the saved setting.
-            sharedEq.setPhaseModeLinear(settings.phaseModeLinear.first())
+            // EQ phase mode (v0.9.3+ enum). The new key reads the explicit
+            // `phase_mode` string and falls back to the legacy
+            // `phase_mode_linear` Boolean if the new key is absent (first-
+            // run-after-upgrade case). v0.9.0–v0.9.2 force-suppressed the
+            // saved value to always boot PURE_IIR while the linear chip was
+            // hidden; v0.9.3 lifts that suppression now that the 3-chip
+            // lineup is back and FIR modes are powered by the rebuilt
+            // UPC convolver (FirEq).
+            val savedMode = com.lofipod.app.audio.PhaseMode.fromStorageKey(
+                settings.phaseMode.first()
+            )
+            sharedEq.setPhaseMode(savedMode)
         }
 
         // Notification tap target: route through MainActivity with a custom
@@ -239,7 +493,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Intercepts `Player.COMMAND_PLAY_PAUSE` arriving from any controller
+     * Intercepts `Player.COMMAND_PLAY_PAUSE` arriving from REMOTE controllers
      * (BT headphones, vehicle transport, system media notification) while
      * the autoplay-confirmation timer is active. The activity-side
      * [PlayerController] writes the timer state, [AutoplayConfirmBridge]
@@ -250,22 +504,65 @@ class PlaybackService : MediaSessionService() {
      * activity-side controller has already been told to clear the timer in
      * the same call, so the next play/pause press goes through normally.
      *
-     * Our own activity-side controller never lands here while the timer is
-     * active: [PlayerController.togglePlay] short-circuits to
-     * confirmAutoplayContinuation before issuing player commands, and the
-     * timer's own auto-pause pre-clears the timer state before calling
-     * `pause()` so the bridge no longer reports active by the time the
-     * command arrives.
+     * **Controller-source filtering (v0.10.13 fix).** Pause/play commands
+     * originating from OUR OWN process must NEVER be intercepted. The earlier
+     * "togglePlay short-circuits to confirmAutoplayContinuation" comment
+     * accounted for the public PlayerController.togglePlay path, but missed
+     * [com.lofipod.app.audio.BeepPlayer.duckedBeep] which also calls
+     * `player.pause()` directly to silence the podcast under the beep tone.
+     * That pause arrived here, the timer was active, the bridge interpreted
+     * it as a remote BT press, fired confirmAutoplayContinuation (cancelling
+     * the timer + the in-flight beep coroutine), and Media3 then tried to
+     * build a SessionResult Bundle from RESULT_INFO_SKIPPED — which fails
+     * an internal assertion at SessionResult.java:227, producing the
+     * "Ignoring malformed Bundle for SessionResult" warning observed in
+     * field logs (LofiPod log 7d4b926806be.txt:619-658).
+     *
+     * Net effect of the old code: every autoplay-induced episode was
+     * silently uninterruptible after T=60s (first beep). Beep #2 / #3 and
+     * the T=190s auto-pause never fired because the timer had been
+     * inadvertently confirmed by our own pause-for-beep.
+     *
+     * Fix: gate the intercept on `controller.uid != Process.myUid()`.
+     * Same-uid pauses (BeepPlayer, togglePlay, the timer's auto-pause,
+     * future code paths we haven't thought of yet) always pass through to
+     * default handling. Only true remote controllers hit the intercept.
      */
     private object AutoplayConfirmCallback : MediaSession.Callback {
+        // Media3 1.5 deprecated this MediaSession.Callback.onPlayerCommandRequest
+        // override in favor of a slightly different signature. The functional
+        // behavior of intercepting COMMAND_PLAY_PAUSE while the autoplay-
+        // confirmation timer is active still works correctly — Media3 calls
+        // both the new and the deprecated signature internally for back-compat.
+        // When we revisit MediaSession integration in a future tag we can
+        // migrate to the non-deprecated overload; for now @Suppress keeps the
+        // build clean.
+        @Suppress("DEPRECATION")
         override fun onPlayerCommandRequest(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
             playerCommand: Int,
         ): Int {
-            if (playerCommand == Player.COMMAND_PLAY_PAUSE &&
-                AutoplayConfirmBridge.handleMediaButtonPlayPause()
-            ) {
+            if (playerCommand != Player.COMMAND_PLAY_PAUSE) {
+                return SessionResult.RESULT_SUCCESS
+            }
+            // Same-uid = our own MediaController (or anything else in our
+            // process). Let it through unconditionally — the public
+            // PlayerController.togglePlay / pause paths already handle the
+            // autoplay-timer confirmation themselves; internal pauses from
+            // BeepPlayer must not be intercepted because the resulting
+            // confirm + timer-cancel would self-defeat the beep window.
+            val ownUid = android.os.Process.myUid()
+            if (controller.uid == ownUid) {
+                return SessionResult.RESULT_SUCCESS
+            }
+            // Remote controller — apply the bridge intercept.
+            if (AutoplayConfirmBridge.handleMediaButtonPlayPause()) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "autoplay_confirm_remote",
+                    "remote controller pause/play intercepted as autoplay confirm " +
+                        "(uid=${controller.uid} pkg=${controller.packageName})",
+                )
                 return SessionResult.RESULT_INFO_SKIPPED
             }
             return SessionResult.RESULT_SUCCESS
@@ -302,9 +599,61 @@ class PlaybackService : MediaSessionService() {
         val now = System.currentTimeMillis()
         scope.launch(Dispatchers.IO) {
             val dao = (application as LofiPodApp).db.episodeStateDao()
-            if (dao.get(id) != null) {
-                dao.updatePosition(id, pos, dur, now, listenDelta)
+            val row = dao.get(id)
+            if (row != null) {
+                // A live duration snapshot can legitimately read TIME_UNSET
+                // (mapped to 0 above) around item transitions and degenerate
+                // sources. updatePosition overwrites durationMs
+                // unconditionally, so writing that zero would silently
+                // un-mark a completed episode — the derived "played"
+                // predicate requires durationMs > 0. Prefer the last known
+                // duration whenever the player can't supply one.
+                dao.updatePosition(id, pos, if (dur > 0) dur else row.durationMs, now, listenDelta)
             }
+            // Replay heatmap: only real listen ticks accrue heat —
+            // listenDelta == 0 is a save-on-pause/destroy snapshot where no
+            // time elapsed under this bucket. Raw player position on
+            // purpose (heat is persistence-domain, like updatePosition).
+            if (listenDelta > 0) {
+                heatRecorder.tick(id, pos, dur)
+            }
+        }
+    }
+
+    /**
+     * Final save for a stream that reached STATE_ENDED. Companion to
+     * [saveCurrent] with end-of-stream semantics: the row's position is
+     * pinned up to the best-known duration so the derived completion
+     * predicate (positionMs >= durationMs - 5s) holds no matter how the
+     * last live snapshot landed.
+     *
+     * Two realities this compensates for:
+     *   - isPlaying can already be false when ENDED arrives (a
+     *     BUFFERING -> ENDED hop after a near-end underrun, or a
+     *     truncated source), so the save-on-pause path never fires and
+     *     the freshest row is a ticker write up to 10 s behind the end.
+     *   - player.duration can read TIME_UNSET on the same degenerate
+     *     sources; the previously persisted durationMs is then the only
+     *     usable end mark, so prefer it over zero. When neither side
+     *     knows a duration there is nothing to pin against — the plain
+     *     position write is still recorded, and the episode simply
+     *     can't satisfy a predicate that requires a duration.
+     *
+     * No listen delta and no heat tick: this is a bookkeeping
+     * correction, not elapsed listening — the ticker already accounted
+     * for the real time spent.
+     */
+    private fun saveEnded(player: Player) {
+        val id = player.currentMediaItem?.mediaId ?: return
+        val pos = player.currentPosition
+        val dur = player.duration.takeIf { it > 0 } ?: 0L
+        val now = System.currentTimeMillis()
+        scope.launch(Dispatchers.IO) {
+            val dao = (application as LofiPodApp).db.episodeStateDao()
+            val row = dao.get(id) ?: return@launch
+            val endDur = if (dur > 0) dur else row.durationMs
+            val endPos = if (endDur > 0) maxOf(pos, endDur) else pos
+            dao.updatePosition(id, endPos, endDur, now, 0L)
         }
     }
 
@@ -313,7 +662,15 @@ class PlaybackService : MediaSessionService() {
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         val player = mediaSession?.player
         if (player != null) {
-            saveCurrent(player, listenDelta = 0L)
+            // Parked at ENDED, the final write must stay pinned to the
+            // duration (saveEnded), not overwritten with the raw parked
+            // position (saveCurrent) — otherwise a swipe-from-recents after
+            // an episode finished un-marks it as played.
+            if (player.playbackState == Player.STATE_ENDED) {
+                saveEnded(player)
+            } else {
+                saveCurrent(player, listenDelta = 0L)
+            }
             if (!player.playWhenReady || player.mediaItemCount == 0) {
                 stopSelf()
             }
@@ -321,7 +678,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        mediaSession?.player?.let { saveCurrent(it, listenDelta = 0L) }
+        mediaSession?.player?.let {
+            // Preserve the completion pin at end-of-stream (see onTaskRemoved).
+            if (it.playbackState == Player.STATE_ENDED) saveEnded(it)
+            else saveCurrent(it, listenDelta = 0L)
+        }
         stopSaveTicker()
         releasePlaybackWakeLock()
         mediaSession?.run {
@@ -345,9 +706,70 @@ class PlaybackService : MediaSessionService() {
         try {
             if (!wl.isHeld) wl.acquire()
             wakeLockHeld = wl.isHeld
+            recordAcquireForOscillationDetection()
         } catch (t: Throwable) {
             Log.w("LofiPodPlayback", "WakeLock acquire failed: ${t.message}")
             wakeLockHeld = false
+        }
+    }
+
+    /**
+     * Throttled aggregator for [AnalyticsListener.onAudioUnderrun]
+     * events. The user-reported 3-5s playback loop appears at the audio-
+     * HAL layer as repeated AudioTrack underruns; logging each one
+     * individually would flood the diagnostics ring. Aggregate in a
+     * 30s window and emit one entry per window with the count + worst
+     * "elapsed since last feed" measurement so we can see severity at a
+     * glance without losing the signal.
+     */
+    private fun recordAudioUnderrun(bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
+        val now = System.currentTimeMillis()
+        if (underrunWindowStartMs == 0L || now - underrunWindowStartMs > AUDIO_UNDERRUN_WINDOW_MS) {
+            // Flush the previous window if it had any events, then start fresh.
+            if (underrunWindowCount > 0) {
+                com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                    "audio_underrun_window",
+                    "$underrunWindowCount underruns in " +
+                        "${AUDIO_UNDERRUN_WINDOW_MS / 1000}s — worst gap " +
+                        "${underrunWindowWorstElapsedMs}ms (buffer sized ${bufferSizeMs}ms)",
+                )
+            }
+            underrunWindowStartMs = now
+            underrunWindowCount = 0
+            underrunWindowWorstElapsedMs = 0L
+        }
+        underrunWindowCount++
+        if (elapsedSinceLastFeedMs > underrunWindowWorstElapsedMs) {
+            underrunWindowWorstElapsedMs = elapsedSinceLastFeedMs
+        }
+    }
+
+    /**
+     * Push the current wall-clock onto [recentAcquireTimestamps], trim
+     * anything outside the oscillation window, and if the resulting
+     * acquire-count breaches the threshold AND we haven't logged within
+     * the last cooldown, drop a single diagnostics breadcrumb. Throttled
+     * so a chronic stall doesn't paper the diagnostics ring with one
+     * entry per second.
+     */
+    private fun recordAcquireForOscillationDetection() {
+        val now = System.currentTimeMillis()
+        recentAcquireTimestamps.addLast(now)
+        while (recentAcquireTimestamps.isNotEmpty() &&
+            now - recentAcquireTimestamps.first() > WAKE_LOCK_OSCILLATION_WINDOW_MS
+        ) {
+            recentAcquireTimestamps.removeFirst()
+        }
+        if (recentAcquireTimestamps.size >= WAKE_LOCK_OSCILLATION_THRESHOLD &&
+            now - lastOscillationLogAtMs >= WAKE_LOCK_OSCILLATION_COOLDOWN_MS
+        ) {
+            lastOscillationLogAtMs = now
+            com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+                "wake_lock_oscillation",
+                "${recentAcquireTimestamps.size} acquires in " +
+                    "${WAKE_LOCK_OSCILLATION_WINDOW_MS / 1000}s window — " +
+                    "isPlaying is flip-flopping, likely DSP underrun / network rebuffer cycle",
+            )
         }
     }
 

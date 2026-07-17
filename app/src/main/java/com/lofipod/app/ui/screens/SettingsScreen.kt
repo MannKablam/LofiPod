@@ -14,10 +14,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,11 +24,14 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.LofiTheme
 import com.lofipod.app.data.Settings
 import com.lofipod.app.player.PlaybackService
@@ -43,6 +42,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Public BMC link — same account as the Kontx app's support button. */
+private const val BUY_ME_COFFEE_URL = "https://buymeacoffee.com/dev.laroix"
+
 @Composable
 fun SettingsScreen(
     controller: PlayerController,
@@ -52,6 +54,7 @@ fun SettingsScreen(
     onOpenLofiNotes: () -> Unit = {},
     onOpenAppDiagnostics: () -> Unit = {},
     onOpenTextSettings: () -> Unit = {},
+    onOpenSources: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
@@ -62,7 +65,7 @@ fun SettingsScreen(
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
     val autoPlayNextInFeed by settings.autoPlayNextInFeed.collectAsState(initial = true)
     val autoplayConfirmEnabled by settings.autoplayConfirmEnabled.collectAsState(initial = true)
-    val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
+    val smartResume by settings.smartResumeEnabled.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val textScale by settings.textScale.collectAsState(initial = 1.0f)
 
@@ -73,7 +76,7 @@ fun SettingsScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -124,12 +127,18 @@ fun SettingsScreen(
                     "play/pause press) to confirm. Stops indefinite background playback.",
                 onCheckedChange = { v -> scope.launch { settings.setAutoplayConfirmEnabled(v) } }
             )
+            // "Show played episodes" moved to the Episodes screen's list
+            // menu (v0.11, per user direction): it only affects browsing
+            // that list, so its switch lives where it acts. The DataStore
+            // setting itself is unchanged.
             SwitchRow(
-                checked = showPlayedInList,
-                title = "Show played episodes",
-                subtitle = "Already-finished episodes stay visible (dimmed and " +
-                    "struck through) instead of disappearing from the per-podcast list.",
-                onCheckedChange = { v -> scope.launch { settings.setShowPlayedInList(v) } }
+                checked = smartResume,
+                title = "Smart resume",
+                subtitle = "After a pause, playback steps back a little before " +
+                    "continuing — nothing for quick pauses, a few seconds after " +
+                    "minutes away, up to 45 seconds after a day — so the thread " +
+                    "of the message is re-established without manual rewinding.",
+                onCheckedChange = { v -> scope.launch { settings.setSmartResumeEnabled(v) } }
             )
 
             Spacer(Modifier.height(8.dp))
@@ -208,6 +217,12 @@ fun SettingsScreen(
             // the mini-player visible at the bottom for transport while
             // you read.
             DiagnosticsTabToggleRow()
+            // Manual flush-valve button in Player. Off by default; on for
+            // users who want a one-tap audio reset (clears the AudioTrack
+            // buffer and re-seeks). Useful for diagnosing audio-chain state
+            // issues or when something sounds contaminated and you want a
+            // clean restart without disrupting position much (~50 ms rewind).
+            FlushButtonToggleRow()
             // App-wide bug telemetry — feed failures, download failures,
             // scripture-tag skips, etc. Distinct from Audio diagnostics
             // (chain-specific). Lands here so a user can capture concrete
@@ -250,12 +265,61 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(20.dp))
+            // Buy-Me-a-Coffee support button, ported style-for-style from
+            // Kontx's Settings (same URL, BMC brand-yellow outlined button).
+            SectionHeader("Support the developer")
+            Text(
+                "LofiPod is free and ad-free. A small tip keeps new versions coming.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    val intent = android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(BUY_ME_COFFEE_URL)
+                    )
+                    ctx.startActivity(intent)
+                },
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = Color(0xFFFFDD57)
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp, Color(0xFFFFDD57).copy(alpha = 0.5f)
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "To keep updates flowing: ☕ Buy me a coffee",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("About")
             Text(
                 "LofiPod — a personal-canon podcast app. Backups + restore live " +
                     "in Metrics. Theme, queue auto-play, archive, and EQ-per-episode " +
                     "preferences persist across reinstalls only when the new build " +
                     "is signed with the same key as the previous one (see BUILD_LOG).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onOpenSources) {
+                Text("View sources document (read-only)")
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Open-source audio libraries: " +
+                    "PFFFT (FFT + UPC inner loop, BSD-3-Clause, Julien Pommier / NCAR) — " +
+                    "JTransforms (kernel-synth FFT, BSD-2-Clause, Piotr Wendykier). " +
+                    "Icons: Material Symbols (Apache-2.0, Google). " +
+                    "Full license texts ship inside the APK under " +
+                    "assets/licenses/.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -329,6 +393,41 @@ private fun DiagnosticsTabToggleRow() {
             )
             Text(
                 "Adds a 4th tab next to Notes / Details / Transcript with live audio-chain health, watchpoints, and a one-tap snapshot-to-note. Includes a full-screen mode that keeps the mini-player visible for transport.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Toggle for the manual flush-valve icon shown in the player. Lives next
+ * to DiagnosticsTabToggleRow because both are "Player UI affordance" flags
+ * with similar plumbing.
+ */
+@Composable
+private fun FlushButtonToggleRow() {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as LofiPodApp
+    val settings = remember { Settings(app) }
+    val scope = rememberCoroutineScope()
+    val enabled by settings.showFlushButtonInPlayer.collectAsState(initial = false)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Switch(
+            checked = enabled,
+            onCheckedChange = { v -> scope.launch { settings.setShowFlushButtonInPlayer(v) } },
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Show manual flush button on Player",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                "Adds a flush-valve icon to the right of the speed chip. Tapping it forces an AudioTrack flush + brief re-seek (~50 ms), clearing any pre-flush PCM in the buffer. Useful when something sounds off and a clean restart is the fastest fix.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -422,12 +521,41 @@ private fun AudioDiagnosticsRow(controller: PlayerController) {
                             .joinToString(",") { it.gainDb.toString() }
                     )
                     settings.setSkipSilenceLevel(0)
+                    settings.setPauseSkipSensitivity(
+                        com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                    )
+                    // v0.11: cover the tone filters, DC blocker and voice
+                    // suite too — this reset previously lagged the fuller
+                    // one on the Audio-diagnostics screen, so "reset to
+                    // defaults" here left tone cuts and the DC blocker
+                    // silently engaged.
+                    settings.setDcBlockerEnabled(false)
+                    settings.setToneLowCutHz(0f)
+                    settings.setToneHighCutHz(0f)
+                    settings.setToneTiltDb(0f)
+                    settings.setToneLowCutSteep(false)
+                    settings.setVoiceDeEsserLevel(0)
+                    settings.setVoiceWarmthLevel(0)
+                    settings.setVoiceLevelerLevel(0)
+                    settings.setVoiceAirLevel(0)
                 }
                 // Push the new values into the live processors so the
                 // change takes effect without restarting the service.
                 eq.setBands(com.lofipod.app.audio.EqPresets.FLAT)
                 eq.setGainDb(0f)
+                eq.setDcBlockerEnabled(false)
+                eq.setLowCutHz(0f)
+                eq.setHighCutHz(0f)
+                eq.setTiltDb(0f)
+                eq.setLowCutSteep(false)
+                eq.setDeEsserLevel(0)
+                eq.setWarmthLevel(0)
+                eq.setLevelerLevel(0)
+                eq.setAirLevel(0)
                 PlaybackService.sharedSkipSilence.setLevel(0)
+                PlaybackService.sharedPauseTap.setSensitivity(
+                    com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                )
                 playerState.currentEpisodeGuid?.let {
                     controller.applyEqOverrideFor(it)
                 }
@@ -704,7 +832,7 @@ private fun ShareApkRow() {
                 ctx.startActivity(Intent.createChooser(send, "Share LofiPod"))
             }
         ) {
-            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(painterResource(R.drawable.share_24), contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Share link")
         }
@@ -1126,7 +1254,7 @@ private fun ThemeRow(
         }
         if (selected) {
             Icon(
-                Icons.Filled.Check,
+                painterResource(R.drawable.check_24),
                 contentDescription = "Selected",
                 tint = MaterialTheme.colorScheme.primary
             )

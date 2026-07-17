@@ -1,24 +1,31 @@
 package com.lofipod.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
-import androidx.compose.material.icons.filled.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.data.LofiDownload
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.ui.theme.ThemedArtwork
 import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.data.model.Episode
@@ -60,7 +67,26 @@ fun EpisodesScreen(
     onPreview: (Episode) -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
-    val pod = remember(feedUrl) { app.repo.cached(feedUrl) }
+    // Resolve the podcast from the in-memory cache, falling back to a disk
+    // hydration (cold start where this screen is reached before the Catalog
+    // populated the cache — deep links, process-death restore) and, for
+    // kabod:// feeds, to the bundled-asset loader (kabod packs aren't part
+    // of the feed disk cache; they re-parse from assets in a few ms).
+    // Previously this was a plain `remember { app.repo.cached(feedUrl) }`,
+    // which rendered a permanent "Feed not loaded." on those paths.
+    var podState by remember(feedUrl) { mutableStateOf(app.repo.cached(feedUrl)) }
+    LaunchedEffect(feedUrl) {
+        if (podState == null) {
+            app.repo.hydrateFromDisk()
+            podState = app.repo.cached(feedUrl)
+                ?: app.kabodLoader.takeIf { it.isKabodFeed(feedUrl) }
+                    ?.loadIntoCache(feedUrl)
+        }
+    }
+    // Plain local val so the existing smart-cast-dependent code below keeps
+    // compiling (delegated state properties can't be smart cast). Refreshes
+    // on every recomposition, including the one triggered by the load above.
+    val pod = podState
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val playerState by controller.state.collectAsState()
@@ -69,12 +95,69 @@ fun EpisodesScreen(
     val showPlayedInList by settings.showPlayedInList.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val autoplayDirectionUp by settings.autoplayDirectionUp.collectAsState(initial = true)
+    val sortOrders by settings.episodeSortOrders.collectAsState(initial = emptyMap())
+    val sortOrder = sortOrders[feedUrl] ?: com.lofipod.app.data.Settings.EPISODE_SORT_FEED
 
     val episodeStates = remember { mutableStateMapOf<String, EpisodeUiState>() }
     var showArchived by remember { mutableStateOf(false) }
-    var speedDialogOpen by remember { mutableStateOf(false) }
-    val podcastState by app.db.podcastStateDao().observe(feedUrl).collectAsState(initial = null)
-    val currentDefaultSpeed = podcastState?.defaultSpeed
+    // In-feed search (v0.11) — lives in the search bar above the list.
+    // Keyed on the feed so navigating to another podcast never carries a
+    // stale query along.
+    var episodeFilter by remember(feedUrl) { mutableStateOf("") }
+
+    // Note texts per guid, so the search bar reaches into the user's own
+    // notes. One-shot per feed (same pattern as the kabod meta lines):
+    // notes are written from the Player, not while browsing this list, so
+    // a live observer would only buy staleness-proofing nobody needs.
+    // getAll + in-memory filter beats a per-episode query fan-out; a
+    // single user's whole journal is at most a few hundred rows.
+    var noteTextsByGuid by remember(feedUrl) {
+        mutableStateOf<Map<String, List<String>>>(emptyMap())
+    }
+    LaunchedEffect(pod) {
+        if (pod == null) return@LaunchedEffect
+        val guids = pod.episodes.mapTo(HashSet()) { it.guid }
+        noteTextsByGuid = withContext(Dispatchers.IO) {
+            app.db.episodeNoteEntryDao().getAll()
+                .filter { it.guid in guids }
+                .groupBy({ it.guid }, { it.text })
+        }
+    }
+
+    // Kabod pack metadata per guid — "Part N · <scripture>" line shown on
+    // each episode row, so the sermon-series structure that previously only
+    // surfaced in the Player's Details tab is visible while browsing the
+    // pack. Empty for regular RSS feeds (single indexed query, kabod only).
+    var kabodLineByGuid by remember(feedUrl) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(feedUrl) {
+        if (!feedUrl.startsWith("kabod://")) return@LaunchedEffect
+        val packId = feedUrl.removePrefix("kabod://")
+        val rows = withContext(Dispatchers.IO) {
+            app.db.episodeKabodDao().getForPack(packId)
+        }
+        kabodLineByGuid = rows.mapNotNull { row ->
+            val parts = listOfNotNull(
+                row.partNumber?.let { "Part $it" },
+                row.scripture?.takeIf { it.isNotBlank() },
+            )
+            if (parts.isEmpty()) null else row.guid to parts.joinToString(" · ")
+        }.toMap()
+    }
+
+    // Bulk-selection mode (v0.10.15+). Long-press any episode row to
+    // enter; selection set tracks chosen guids. Top bar transforms while
+    // non-empty (count + Done + bulk actions). Tap in selection mode
+    // toggles the tapped row's membership rather than opening the row.
+    var selection by remember { mutableStateOf(emptySet<String>()) }
+    val inSelectionMode = selection.isNotEmpty()
+
+    // System back gesture exits selection mode rather than navigating
+    // away. The user's mental model after entering selection mode is
+    // "I'm in a sub-mode of this screen" — popping the screen would
+    // discard their selection silently.
+    BackHandler(enabled = inSelectionMode) {
+        selection = emptySet()
+    }
 
     // Sweep + load. Auto-archive runs every time the screen is entered (cheap —
     // single indexed query). Then we hydrate per-episode state into the map.
@@ -123,16 +206,56 @@ fun EpisodesScreen(
     val queueSet = remember(queueGuids) { queueGuids.map { it.guid }.toSet() }
 
     val archivedCount = episodeStates.values.count { it.archivedAt > 0 }
-    val visibleEpisodes = (pod?.episodes ?: emptyList()).filter { ep ->
+    val filterQuery = episodeFilter.trim()
+    // Which episodes matched ONLY through a note needs to be knowable at
+    // render time, so the note search runs first into its own map: guid ->
+    // the first matching note's text, used both as a match source in the
+    // filter below and as the snippet the row surfaces. Recomputed per
+    // keystroke over the (small) notes map, never the episode list.
+    val noteMatchByGuid: Map<String, String> = remember(filterQuery, noteTextsByGuid) {
+        if (filterQuery.isEmpty()) emptyMap()
+        else buildMap {
+            for ((guid, texts) in noteTextsByGuid) {
+                val hit = texts.firstOrNull { it.contains(filterQuery, ignoreCase = true) }
+                if (hit != null) put(guid, hit)
+            }
+        }
+    }
+    val filteredEpisodes = (pod?.episodes ?: emptyList()).filter { ep ->
         val s = episodeStates[ep.guid]
         val archived = (s?.archivedAt ?: 0L) > 0L
         val played = s?.isPlayed == true
-        when {
+        val visibilityOk = when {
             showArchived -> true
             archived -> false
             !showPlayedInList && played -> false
             else -> true
         }
+        // Titles, descriptions, and the user's notes. Descriptions are
+        // matched raw (HTML and all) — stripping every description on
+        // every keystroke would cost more than the occasional match on
+        // markup is worth, and real queries are words, not tag soup.
+        visibilityOk && (
+            filterQuery.isEmpty() ||
+                ep.title.contains(filterQuery, ignoreCase = true) ||
+                ep.description?.contains(filterQuery, ignoreCase = true) == true ||
+                noteMatchByGuid.containsKey(ep.guid)
+            )
+    }
+    // Sort AFTER filtering, per the feed's persisted preference. Feed
+    // order (the default) is the RSS document's own sequence — most
+    // shows publish newest-first, but series feeds and kabod packs run
+    // in reading/part order, which is why this is a per-feed choice.
+    // Undated episodes sink to the bottom under either explicit sort
+    // (sortedBy is stable, so they keep their feed order among
+    // themselves). Display-only: the autoplay feed-walk works over the
+    // feed's own order + the direction setting, never this list.
+    val visibleEpisodes = when (sortOrder) {
+        com.lofipod.app.data.Settings.EPISODE_SORT_NEWEST ->
+            filteredEpisodes.sortedByDescending { it.pubDateMillis ?: Long.MIN_VALUE }
+        com.lofipod.app.data.Settings.EPISODE_SORT_OLDEST ->
+            filteredEpisodes.sortedBy { it.pubDateMillis ?: Long.MAX_VALUE }
+        else -> filteredEpisodes
     }
 
     // Scroll-to-now-playing on entry. One-shot per screen instance: when the
@@ -158,79 +281,548 @@ fun EpisodesScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text(pod?.title ?: "Loading…", maxLines = 1) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            modifier = Modifier.size(28.dp)
-                        )
+            // Top bar morphs in selection mode (v0.10.15+):
+            //   normal       — [back] Podcast title | [Archive-visibility-toggle]
+            //   selection-on — [X close] "N selected" | [Archive] [Download] [Mark played]
+            // Speed icon was removed in v0.10.15 per user direction. The
+            // per-podcast default-speed override still applies if previously
+            // set (lives in podcast_state); no in-app UI to edit it now.
+            if (inSelectionMode) {
+                TopAppBar(
+                    title = { Text("${selection.size} selected", maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = { selection = emptySet() }) {
+                            Icon(
+                                painterResource(R.drawable.close_24),
+                                contentDescription = "Clear selection",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                    },
+                    actions = {
+                        // Bulk archive. Always archives (no toggle); the
+                        // snackbar's Undo restores the prior archivedAt of
+                        // every row (an already-archived row re-archived
+                        // under showArchived keeps its ORIGINAL timestamp on
+                        // undo, not zero). Download cleanup is deferred until
+                        // the undo window closes so an undone archive is
+                        // lossless — nothing to re-download.
+                        IconButton(onClick = {
+                            val targets = selection.toList()
+                            selection = emptySet()
+                            scope.launch {
+                                val priorUi = targets.associateWith { episodeStates[it] }
+                                val priorArchived = withContext(Dispatchers.IO) {
+                                    val dao = app.db.episodeStateDao()
+                                    val prior = dao.getByGuids(targets)
+                                        .associate { it.guid to it.archivedAt }
+                                    val now = System.currentTimeMillis()
+                                    for (g in targets) {
+                                        // Ensure row exists, then archive.
+                                        val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                        upsertState(app, ep, pod)
+                                        dao.setArchivedAt(g, now)
+                                    }
+                                    prior
+                                }
+                                // Update in-memory UI state so the rows
+                                // reflect archived immediately.
+                                val now = System.currentTimeMillis()
+                                for (g in targets) {
+                                    episodeStates[g] = (episodeStates[g] ?: EpisodeUiState())
+                                        .copy(archivedAt = now)
+                                }
+                                val result = snackbarHostState.showSnackbar(
+                                    "Archived ${targets.size}",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Long,
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    withContext(Dispatchers.IO) {
+                                        val dao = app.db.episodeStateDao()
+                                        for (g in targets) {
+                                            dao.setArchivedAt(g, priorArchived[g] ?: 0L)
+                                        }
+                                    }
+                                    for (g in targets) {
+                                        priorUi[g]?.let { episodeStates[g] = it }
+                                            ?: episodeStates.remove(g)
+                                    }
+                                } else {
+                                    // Committed: archived episodes don't need
+                                    // their downloads taking up disk. (If the
+                                    // user leaves the screen inside the undo
+                                    // window this cleanup is skipped — the
+                                    // auto-download TTL sweep still catches
+                                    // auto rows, and disk beats data.)
+                                    val haveDownloads = app.downloadsApi.byId.value.keys
+                                    for (g in targets) {
+                                        if (g in haveDownloads) app.downloadsApi.remove(g)
+                                    }
+                                }
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.archive_24),
+                                contentDescription = "Archive selected",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        // Bulk download. Starts downloads for any selected
+                        // episodes that don't already have one in flight /
+                        // completed. Manual user-driven, so we use the
+                        // inline start path (no autoplay delayed-fire).
+                        IconButton(onClick = {
+                            val targets = selection.toList()
+                            selection = emptySet()
+                            scope.launch {
+                                val startedGuids = mutableListOf<String>()
+                                val byId = app.downloadsApi.byId.value
+                                for (g in targets) {
+                                    val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                    val existing = byId[g]
+                                    if (existing != null &&
+                                        existing.state != LofiDownload.State.FAILED
+                                    ) {
+                                        // QUEUED / DOWNLOADING / COMPLETED — skip.
+                                        continue
+                                    }
+                                    withContext(Dispatchers.IO) {
+                                        upsertState(app, ep, pod)
+                                        // Bulk-download is explicit user
+                                        // intent; clear any auto-download
+                                        // flag so the finished-TTL sweep
+                                        // doesn't auto-remove it later.
+                                        app.db.autoDownloadDao().delete(g)
+                                    }
+                                    app.downloadsApi.start(ep)
+                                    startedGuids.add(g)
+                                }
+                                val started = startedGuids.size
+                                val result = snackbarHostState.showSnackbar(
+                                    if (started == targets.size) "Downloading ${targets.size}"
+                                    else "Downloading $started of ${targets.size} (rest already in flight)",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Long,
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    // Undo only what THIS action started —
+                                    // downloads that were already in flight
+                                    // before the tap are left alone.
+                                    for (g in startedGuids) app.downloadsApi.remove(g)
+                                }
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.download_24),
+                                contentDescription = "Download selected",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        // Bulk mark-played. Pins position to duration so the
+                        // isPlayed check (positionMs >= durationMs - 5_000)
+                        // returns true and the row fades / line-throughs.
+                        // Undo restores each row's full prior (position,
+                        // duration, lastPlayed) triple — updatePosition
+                        // overwrites all three, so all three are captured.
+                        IconButton(onClick = {
+                            val targets = selection.toList()
+                            selection = emptySet()
+                            scope.launch {
+                                val priorUi = targets.associateWith { episodeStates[it] }
+                                val (priorRows, written) = withContext(Dispatchers.IO) {
+                                    val dao = app.db.episodeStateDao()
+                                    val prior = dao.getByGuids(targets).associateBy { it.guid }
+                                    val now = System.currentTimeMillis()
+                                    val written = mutableMapOf<String, Long>()
+                                    for (g in targets) {
+                                        val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                        upsertState(app, ep, pod)
+                                        val dur = (prior[g]?.durationMs?.takeIf { it > 0 })
+                                            ?: (episodeStates[g]?.durationMs?.takeIf { it > 0 })
+                                            ?: ep.durationSeconds?.let { it * 1000L }
+                                            ?: 1L
+                                        dao.updatePosition(
+                                            guid = g,
+                                            pos = dur,
+                                            dur = dur,
+                                            now = now,
+                                            listenDelta = 0L,
+                                        )
+                                        written[g] = dur
+                                    }
+                                    Pair(prior, written)
+                                }
+                                for ((g, dur) in written) {
+                                    val s = episodeStates[g] ?: EpisodeUiState()
+                                    episodeStates[g] = s.copy(positionMs = dur, durationMs = dur)
+                                }
+                                val result = snackbarHostState.showSnackbar(
+                                    "Marked ${written.size} played",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Long,
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    withContext(Dispatchers.IO) {
+                                        val dao = app.db.episodeStateDao()
+                                        for ((g, dur) in written) {
+                                            val p = priorRows[g]
+                                            if (p != null) dao.updatePosition(
+                                                g, p.positionMs, p.durationMs,
+                                                p.lastPlayedMillis, 0L,
+                                            )
+                                            // Row created by this action:
+                                            // back to never-played (pos 0,
+                                            // lastPlayed 0; keeping the
+                                            // learned duration is harmless).
+                                            else dao.updatePosition(g, 0L, dur, 0L, 0L)
+                                        }
+                                    }
+                                    for (g in written.keys) {
+                                        priorUi[g]?.let { episodeStates[g] = it }
+                                            ?: episodeStates.remove(g)
+                                    }
+                                }
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.check_circle_24),
+                                contentDescription = "Mark selected played",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        // Overflow: the less-frequent bulk actions live in a
+                        // labeled menu — five bare icons would crowd a 360dp
+                        // top bar, and "mark unplayed" needs words to not be
+                        // mistaken for a rewind. Box wrapper anchors the menu
+                        // to this icon (matches the app's other overflows).
+                        var bulkMenuOpen by remember { mutableStateOf(false) }
+                        Box {
+                        IconButton(onClick = { bulkMenuOpen = true }) {
+                            Icon(
+                                painterResource(R.drawable.more_vert_24),
+                                contentDescription = "More bulk actions",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = bulkMenuOpen,
+                            onDismissRequest = { bulkMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Mark as unplayed") },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.replay_24), contentDescription = null)
+                                },
+                                onClick = {
+                                    bulkMenuOpen = false
+                                    val targets = selection.toList()
+                                    selection = emptySet()
+                                    scope.launch {
+                                        val priorUi = targets.associateWith { episodeStates[it] }
+                                        val priorRows = withContext(Dispatchers.IO) {
+                                            val dao = app.db.episodeStateDao()
+                                            val prior = dao.getByGuids(targets).associateBy { it.guid }
+                                            val now = System.currentTimeMillis()
+                                            for (g in targets) {
+                                                val ep = pod?.episodes?.find { it.guid == g } ?: continue
+                                                upsertState(app, ep, pod)
+                                                // Position back to zero; PRESERVE the
+                                                // known duration (updatePosition writes
+                                                // durationMs unconditionally, and the DB
+                                                // often knows a duration the UI-state
+                                                // map doesn't — zeroing it would break
+                                                // isPlayed/progress/auto-archive for
+                                                // this episode permanently).
+                                                val dur = prior[g]?.durationMs?.takeIf { it > 0 }
+                                                    ?: episodeStates[g]?.durationMs?.takeIf { it > 0 }
+                                                    ?: ep.durationSeconds?.let { it * 1000L }
+                                                    ?: 0L
+                                                dao.updatePosition(
+                                                    guid = g,
+                                                    pos = 0L,
+                                                    dur = dur,
+                                                    now = now,
+                                                    listenDelta = 0L,
+                                                )
+                                            }
+                                            prior
+                                        }
+                                        for (g in targets) {
+                                            val s = episodeStates[g] ?: EpisodeUiState()
+                                            episodeStates[g] = s.copy(positionMs = 0L)
+                                        }
+                                        val result = snackbarHostState.showSnackbar(
+                                            "Marked ${targets.size} unplayed",
+                                            actionLabel = "Undo",
+                                            duration = SnackbarDuration.Long,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            withContext(Dispatchers.IO) {
+                                                val dao = app.db.episodeStateDao()
+                                                for (g in targets) {
+                                                    val p = priorRows[g] ?: continue
+                                                    dao.updatePosition(
+                                                        g, p.positionMs, p.durationMs,
+                                                        p.lastPlayedMillis, 0L,
+                                                    )
+                                                }
+                                            }
+                                            for (g in targets) {
+                                                priorUi[g]?.let { episodeStates[g] = it }
+                                                    ?: episodeStates.remove(g)
+                                            }
+                                        }
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Add to queue") },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.playlist_add_24), contentDescription = null)
+                                },
+                                onClick = {
+                                    bulkMenuOpen = false
+                                    val targets = selection.toList()
+                                    selection = emptySet()
+                                    scope.launch {
+                                        val p = pod ?: return@launch
+                                        val added = mutableListOf<String>()
+                                        val queued = queueSet
+                                        for (g in targets) {
+                                            if (g in queued) continue
+                                            val ep = p.episodes.find { it.guid == g } ?: continue
+                                            controller.enqueue(
+                                                ep,
+                                                podcastTitle = p.title,
+                                                podcastArt = p.artworkUrl,
+                                            )
+                                            added.add(g)
+                                        }
+                                        val result = snackbarHostState.showSnackbar(
+                                            if (added.size == targets.size) "Queued ${added.size}"
+                                            else "Queued ${added.size} of ${targets.size} (rest already queued)",
+                                            actionLabel = "Undo",
+                                            duration = SnackbarDuration.Long,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            // Only what THIS action queued —
+                                            // rows that were already in the
+                                            // queue before stay put.
+                                            for (g in added) controller.removeFromQueue(g)
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                        }
                     }
-                },
-                actions = {
-                    // Default-speed shortcut. Tinted primary when an override
-                    // is set so the user can see at a glance that this
-                    // podcast plays at a non-default speed.
-                    IconButton(onClick = { speedDialogOpen = true }) {
-                        Icon(
-                            Icons.Filled.Speed,
-                            contentDescription = currentDefaultSpeed?.let {
-                                "Default speed for this podcast: ${"%.2fx".format(it)}"
-                            } ?: "Default speed for this podcast (no override)",
-                            tint = if (currentDefaultSpeed != null)
-                                MaterialTheme.colorScheme.primary
-                            else LocalContentColor.current,
-                            modifier = Modifier.size(26.dp)
-                        )
+                )
+            } else {
+                TopAppBar(
+                    title = { Text(pod?.title ?: "Loading…", maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                painterResource(R.drawable.arrow_back_24),
+                                contentDescription = "Back",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    },
+                    actions = {
+                        // List menu: sort order plus played-visibility — every
+                        // "how does this list read" knob in one place. A menu
+                        // rather than blind cycle-toggles so the states are
+                        // visible and labeled; the icon tints primary while
+                        // ANY non-default view is active (sorted, or played
+                        // hidden), matching the archive toggle's treatment.
+                        Box {
+                            var sortMenuOpen by remember { mutableStateOf(false) }
+                            IconButton(onClick = { sortMenuOpen = true }) {
+                                Icon(
+                                    painterResource(R.drawable.swap_vert_24),
+                                    contentDescription = "List options",
+                                    tint = if (
+                                        sortOrder != com.lofipod.app.data.Settings.EPISODE_SORT_FEED ||
+                                        !showPlayedInList
+                                    ) MaterialTheme.colorScheme.primary
+                                    else LocalContentColor.current,
+                                    modifier = Modifier.size(26.dp),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = sortMenuOpen,
+                                onDismissRequest = { sortMenuOpen = false },
+                            ) {
+                                // "Feed order" label deliberately vague about
+                                // direction — it IS whatever the publisher
+                                // chose (part order for kabod packs).
+                                val options = listOf(
+                                    com.lofipod.app.data.Settings.EPISODE_SORT_FEED to "Feed order",
+                                    com.lofipod.app.data.Settings.EPISODE_SORT_NEWEST to "Newest first",
+                                    com.lofipod.app.data.Settings.EPISODE_SORT_OLDEST to "Oldest first",
+                                )
+                                for ((value, label) in options) {
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        trailingIcon = if (sortOrder == value) {
+                                            {
+                                                Icon(
+                                                    painterResource(R.drawable.check_24),
+                                                    contentDescription = "Active",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                        } else null,
+                                        onClick = {
+                                            sortMenuOpen = false
+                                            scope.launch {
+                                                settings.setEpisodeSortOrder(feedUrl, value)
+                                            }
+                                        },
+                                    )
+                                }
+                                HorizontalDivider()
+                                // Visibility, not order — but the same "how
+                                // this list reads" menu. Moved here from
+                                // Settings (v0.11, per user direction): the
+                                // toggle only affects browsing this list, so
+                                // its switch lives where it acts. The check
+                                // marks the ON state; the list changes behind
+                                // the closing menu as feedback.
+                                DropdownMenuItem(
+                                    text = { Text("Show played") },
+                                    trailingIcon = if (showPlayedInList) {
+                                        {
+                                            Icon(
+                                                painterResource(R.drawable.check_24),
+                                                contentDescription = "On",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    } else null,
+                                    onClick = {
+                                        sortMenuOpen = false
+                                        scope.launch {
+                                            settings.setShowPlayedInList(!showPlayedInList)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        // Archive visibility toggle. The icon flips between open and
+                        // closed-archive boxes so the active state reads at a glance.
+                        IconButton(onClick = { showArchived = !showArchived }) {
+                            Icon(
+                                if (showArchived) painterResource(R.drawable.unarchive_24) else painterResource(R.drawable.archive_24),
+                                contentDescription = if (showArchived)
+                                    "Hide archived ($archivedCount)"
+                                else "Show archived ($archivedCount)",
+                                tint = if (showArchived) MaterialTheme.colorScheme.primary
+                                       else LocalContentColor.current,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
                     }
-                    // Archive visibility toggle. The icon flips between open and
-                    // closed-archive boxes so the active state reads at a glance.
-                    IconButton(onClick = { showArchived = !showArchived }) {
-                        Icon(
-                            if (showArchived) Icons.Filled.Unarchive else Icons.Filled.Archive,
-                            contentDescription = if (showArchived)
-                                "Hide archived ($archivedCount)"
-                            else "Show archived ($archivedCount)",
-                            tint = if (showArchived) MaterialTheme.colorScheme.primary
-                                   else LocalContentColor.current,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                }
-            )
+                )
+            }
         }
     ) { padding ->
         if (pod == null) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("Feed not loaded.")
+                Text("Loading feed…")
             }
             return@Scaffold
         }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+        // Search bar (v0.11): full-width pill under the top bar — the top
+        // bar keeps the VIEW options (list menu, archived). Searches this
+        // feed's titles, descriptions, AND the user's own notes; a row
+        // that matched only through a note says so with a highlighted
+        // snippet (see NoteMatchSnippet). The v0.11-era "Unplayed" chip
+        // that shared this row is gone: played episodes auto-archive
+        // within days, so a dedicated unplayed filter mostly duplicated
+        // the archive machinery (played-visibility now lives in the list
+        // menu above).
+        OutlinedTextField(
+            value = episodeFilter,
+            onValueChange = { episodeFilter = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            shape = RoundedCornerShape(28.dp),
+            placeholder = { Text("Search titles, descriptions, notes") },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
+            leadingIcon = {
+                Icon(
+                    painterResource(R.drawable.search_24),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+            },
+            trailingIcon = if (episodeFilter.isNotEmpty()) {
+                {
+                    IconButton(onClick = { episodeFilter = "" }) {
+                        Icon(
+                            painterResource(R.drawable.close_24),
+                            contentDescription = "Clear search",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            } else null,
+        )
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.padding(padding),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             items(visibleEpisodes, key = { it.guid }) { ep ->
                 val s = episodeStates[ep.guid] ?: EpisodeUiState()
                 val isCurrent = playerState.currentEpisodeGuid == ep.guid
+                val isSelected = ep.guid in selection
                 EpisodeRow(
                     ep = ep,
                     podcastArt = pod.artworkUrl,
+                    kabodLine = kabodLineByGuid[ep.guid],
+                    noteMatch = noteMatchByGuid[ep.guid],
+                    searchQuery = filterQuery,
                     state = s,
                     isQueued = ep.guid in queueSet,
                     download = downloadsByGuid[ep.guid],
                     isCurrent = isCurrent,
                     isPlaying = isCurrent && playerState.isPlaying,
                     autoplayDirectionUp = autoplayDirectionUp,
+                    inSelectionMode = inSelectionMode,
+                    isSelected = isSelected,
+                    onLongPress = {
+                        // Toggle this guid in the selection set. Entering
+                        // selection mode if previously empty; staying in
+                        // it otherwise.
+                        selection = if (ep.guid in selection) selection - ep.guid
+                                    else selection + ep.guid
+                    },
                     onPlay = {
-                        if (isCurrent) controller.togglePlay()
+                        if (inSelectionMode) {
+                            selection = if (ep.guid in selection) selection - ep.guid
+                                        else selection + ep.guid
+                        } else if (isCurrent) controller.togglePlay()
                         else onPlay(ep, pod)
                     },
-                    onPreviewTitle = { onPreview(ep) },
+                    onPreviewTitle = {
+                        // In selection mode, a title tap toggles selection
+                        // rather than opening the preview — consistent
+                        // with the rest of the row's tap targets so the
+                        // user doesn't escape selection mode by accident.
+                        if (inSelectionMode) {
+                            selection = if (ep.guid in selection) selection - ep.guid
+                                        else selection + ep.guid
+                        } else onPreview(ep)
+                    },
                     onShare = { ctx.shareEnclosure(ep.audioUrl, ep.title) },
                     onToggleAutoplayDirection = {
                         val nextUp = !autoplayDirectionUp
@@ -241,9 +833,12 @@ fun EpisodesScreen(
                             // Snackbar dismisses on its own after ~3 seconds
                             // (Material Short duration). Sticking to a single
                             // line so it doesn't crowd out the cards behind.
+                            // Date-based wording (not "up/down the list"):
+                            // the sort control can flip the list's visual
+                            // direction, but the walk is always by date.
                             snackbarHostState.showSnackbar(
-                                if (nextUp) "Autoplay: next newer episode (up the list)"
-                                else "Autoplay: next older episode (down the list)",
+                                if (nextUp) "Autoplay: toward newer episodes"
+                                else "Autoplay: toward older episodes",
                                 duration = SnackbarDuration.Short
                             )
                         }
@@ -253,6 +848,15 @@ fun EpisodesScreen(
                         episodeStates[ep.guid] = s.copy(favoriteTier = next)
                         scope.launch {
                             upsertState(app, ep, pod, newTier = next)
+                            // Promotions surface in the notes system as a
+                            // canned auto-note (no-op on the clear-to-0 leg).
+                            // Position: live player position if this episode
+                            // is loaded, else its persisted resume position.
+                            val posMs = if (playerState.currentEpisodeGuid == ep.guid)
+                                controller.currentPositionMs() else s.positionMs
+                            com.lofipod.app.data.recordPromotionNote(
+                                app.db, ep.guid, next, posMs
+                            )
                             // Promotion to tier 2 drops a checkpoint into the
                             // global history so the moment of anointment is
                             // recoverable later. Snackbar gives the user a
@@ -356,8 +960,14 @@ fun EpisodesScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            if (showArchived) "No episodes."
-                            else "All episodes are archived. Tap the archive icon to show them.",
+                            when {
+                                filterQuery.isNotEmpty() ->
+                                    "No matches for \"$filterQuery\" in titles, descriptions, or notes."
+                                showArchived -> "No episodes."
+                                !showPlayedInList ->
+                                    "Played episodes are hidden. Turn on Show played in the list menu."
+                                else -> "All episodes are archived. Tap the archive icon to show them."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -365,93 +975,67 @@ fun EpisodesScreen(
                 }
             }
         }
-    }
-
-    if (speedDialogOpen) {
-        DefaultSpeedDialog(
-            current = currentDefaultSpeed,
-            onDismiss = { speedDialogOpen = false },
-            onPick = { picked ->
-                speedDialogOpen = false
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        val dao = app.db.podcastStateDao()
-                        if (dao.get(feedUrl) == null) {
-                            dao.upsert(com.lofipod.app.data.db.PodcastStateEntity(feedUrl, picked))
-                        } else {
-                            dao.setDefaultSpeed(feedUrl, picked)
-                        }
-                    }
-                    snackbarHostState.showSnackbar(
-                        if (picked == null) "Default speed cleared (uses 1.00x)"
-                        else "Default speed set to ${"%.2fx".format(picked)}"
-                    )
+        // Quick-scroll: draggable thumb on the right edge for long archives.
+        // The bubble shows the publish month (MM/yy) of the episode under
+        // the thumb; kabod parts without a pubDate fall back to "n / total".
+        val bubbleDateFmt = remember { SimpleDateFormat("MM/yy", Locale.getDefault()) }
+        FastScroller(
+            listState = listState,
+            itemCount = visibleEpisodes.size,
+            bubbleText = { idx ->
+                visibleEpisodes.getOrNull(idx)?.let { ep ->
+                    ep.pubDateMillis?.let { bubbleDateFmt.format(Date(it)) }
+                        ?: "${idx + 1} / ${visibleEpisodes.size}"
                 }
-            }
+            },
         )
-    }
-}
-
-/**
- * Per-podcast default-speed picker. Same six values as the Player speed chip
- * (so the user has one mental model for "valid speeds"), plus a "Clear"
- * action that nulls out the override and reverts to 1.00x.
- */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun DefaultSpeedDialog(
-    current: Float?,
-    onDismiss: () -> Unit,
-    onPick: (Float?) -> Unit
-) {
-    val choices = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Default speed for this podcast") },
-        text = {
-            Column {
-                Text(
-                    "Applied automatically every time you start an episode of this podcast. Set independently per show.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(12.dp))
-                androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    choices.forEach { v ->
-                        val active = current != null && kotlin.math.abs(v - current) < 0.01f
-                        FilterChip(
-                            selected = active,
-                            onClick = { onPick(v) },
-                            label = { Text("%.2fx".format(v)) }
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onPick(null) }, enabled = current != null) {
-                Text("Clear override")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
         }
-    )
+        }
+    }
+
 }
 
+// DefaultSpeedDialog + speed-icon entry point removed in v0.10.15 per
+// user direction. The per-podcast default-speed override still applies
+// if previously set (stored in podcast_state.defaultSpeed; respected
+// by PlayerController.playEpisode); there's just no in-app UI to edit
+// it now. Restore from git history if a new entry point is desired.
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun EpisodeRow(
     ep: Episode,
     podcastArt: String?,
+    /** "Part N · <scripture>" meta line for Kabod-pack episodes; null for
+     *  regular RSS episodes (and kabod rows without part/scripture tags). */
+    kabodLine: String?,
+    /** When the search bar's query matched one of this episode's notes,
+     *  the matching note's text — the row surfaces a highlighted snippet
+     *  so the user can see WHY a row with an unrelated title appeared.
+     *  Null when not searching or the match came from title/description. */
+    noteMatch: String?,
+    /** The active search query, for highlighting inside [noteMatch]. */
+    searchQuery: String,
     state: EpisodeUiState,
     isQueued: Boolean,
     download: LofiDownload?,
     isCurrent: Boolean,
     isPlaying: Boolean,
     autoplayDirectionUp: Boolean,
+    /** v0.10.15+: true when ANY row on the screen is selected.
+     *  Drives the card's interaction model (taps toggle selection rather
+     *  than expand) and a subtle background tint on selected rows. */
+    inSelectionMode: Boolean,
+    /** v0.10.15+: true when this specific row is part of the current
+     *  selection. Tints the card with primaryContainer + shows a check
+     *  glyph in front of the title so the user can see at a glance
+     *  which rows are queued for a bulk action. */
+    isSelected: Boolean,
+    /** v0.10.15+: long-press anywhere on the card toggles this row's
+     *  membership in the selection set. Used both to enter selection
+     *  mode (when nothing was selected) and to add/remove individual
+     *  rows once selection mode is active. */
+    onLongPress: () -> Unit,
     onPlay: () -> Unit,
     onPreviewTitle: () -> Unit,
     onShare: () -> Unit,
@@ -470,20 +1054,34 @@ private fun EpisodeRow(
     // Played-but-not-active rows fade to a softer surface and dim the text so
     // the user's eye skips them when scanning. The "playing now" tint always
     // wins over the played gray-out so the current row stays prominent.
+    // Selected rows (bulk-select mode, v0.10.15+) take a tertiaryContainer
+    // tint so they're visually distinct from both the live "now playing"
+    // primaryContainer and the regular surfaceVariant of unselected rows.
     val containerColor = when {
+        isSelected -> MaterialTheme.colorScheme.tertiaryContainer
         isCurrent -> MaterialTheme.colorScheme.primaryContainer
         isPlayed || isArchived -> MaterialTheme.colorScheme.surface
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    val textAlpha = if (!isCurrent && (isPlayed || isArchived)) 0.55f else 1f
-    val titleDecoration = if (isPlayed && !isCurrent) TextDecoration.LineThrough
+    val textAlpha = if (!isCurrent && !isSelected && (isPlayed || isArchived)) 0.55f else 1f
+    val titleDecoration = if (isPlayed && !isCurrent && !isSelected) TextDecoration.LineThrough
                           else TextDecoration.None
 
     Card(
         colors = CardDefaults.cardColors(containerColor = containerColor),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { expanded = !expanded }
+            .combinedClickable(
+                onClick = {
+                    // In selection mode the card tap toggles selection
+                    // (delegated to onLongPress's same effect for
+                    // consistency — we re-use that callback rather than
+                    // routing a second one through every call site).
+                    // Otherwise it expands the description as before.
+                    if (inSelectionMode) onLongPress() else expanded = !expanded
+                },
+                onLongClick = onLongPress,
+            )
     ) {
         Column(Modifier.padding(12.dp)) {
             if (isArchived) {
@@ -498,34 +1096,51 @@ private fun EpisodeRow(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isCurrent) {
-                            Icon(
-                                Icons.Filled.GraphicEq,
-                                contentDescription = "Now playing",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                        } else if (isPlayed) {
-                            Icon(
-                                Icons.Filled.CheckCircle,
-                                contentDescription = "Played",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    .copy(alpha = 0.7f),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
+                        when {
+                            // Selection glyph wins over both the "now playing"
+                            // and "played" indicators when the row is part of
+                            // the active bulk-selection set (v0.10.15+).
+                            isSelected -> {
+                                Icon(
+                                    painterResource(R.drawable.check_circle_24),
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            isCurrent -> {
+                                Icon(
+                                    painterResource(R.drawable.graphic_eq_24),
+                                    contentDescription = "Now playing",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            isPlayed -> {
+                                Icon(
+                                    painterResource(R.drawable.check_circle_24),
+                                    contentDescription = "Played",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        .copy(alpha = 0.7f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
                         }
                         Text(
                             ep.title,
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = if (expanded) Int.MAX_VALUE else 2,
                             // Title is its own click target — tap navigates
-                            // to the Player in preview mode. The card's
-                            // surrounding clickable still handles expand /
-                            // collapse for everything else (chevron, meta
-                            // line, description), so tapping anywhere outside
-                            // the title text still toggles the in-card view.
+                            // to the Player in preview mode (or toggles
+                            // selection if selection mode is active; the
+                            // routing is in the call site's onPreviewTitle
+                            // lambda, not here). The card's surrounding
+                            // combinedClickable still handles expand /
+                            // collapse + long-press for everything else
+                            // (chevron, meta line, description).
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable(onClick = onPreviewTitle),
@@ -548,13 +1163,26 @@ private fun EpisodeRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                             .copy(alpha = textAlpha)
                     )
+                    kabodLine?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                                .copy(alpha = textAlpha),
+                            maxLines = 1,
+                        )
+                    }
                 }
                 Icon(
-                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    if (expanded) painterResource(R.drawable.expand_less_24) else painterResource(R.drawable.expand_more_24),
                     contentDescription = if (expanded) "Collapse" else "Expand",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp)
                 )
+            }
+            noteMatch?.let { note ->
+                Spacer(Modifier.height(6.dp))
+                NoteMatchSnippet(noteText = note, query = searchQuery)
             }
             ep.description?.stripHtml()?.takeIf { it.isNotBlank() }?.let { desc ->
                 Spacer(Modifier.height(6.dp))
@@ -570,7 +1198,7 @@ private fun EpisodeRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilledTonalButton(onClick = onPlay) {
                     Icon(
-                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        if (isPlaying) painterResource(R.drawable.pause_24) else painterResource(R.drawable.play_arrow_24),
                         contentDescription = null
                     )
                     Spacer(Modifier.width(4.dp))
@@ -585,7 +1213,7 @@ private fun EpisodeRow(
                 DownloadButton(download = download, onClick = onToggleDownload)
                 IconButton(onClick = onToggleQueue) {
                     Icon(
-                        if (isQueued) Icons.Filled.PlaylistAddCheck else Icons.AutoMirrored.Filled.PlaylistAdd,
+                        if (isQueued) painterResource(R.drawable.playlist_add_check_24) else painterResource(R.drawable.playlist_add_24),
                         contentDescription = if (isQueued) "Remove from queue" else "Add to queue",
                         tint = if (isQueued) MaterialTheme.colorScheme.primary else LocalContentColor.current
                     )
@@ -597,8 +1225,8 @@ private fun EpisodeRow(
                 // is empty AND the per-feed auto-advance toggle is on.
                 IconButton(onClick = onToggleAutoplayDirection) {
                     Icon(
-                        if (autoplayDirectionUp) Icons.Filled.ArrowUpward
-                        else Icons.Filled.ArrowDownward,
+                        if (autoplayDirectionUp) painterResource(R.drawable.arrow_upward_24)
+                        else painterResource(R.drawable.arrow_downward_24),
                         contentDescription = if (autoplayDirectionUp)
                             "Autoplay walks toward newer episodes (tap to flip)"
                         else "Autoplay walks toward older episodes (tap to flip)",
@@ -614,7 +1242,7 @@ private fun EpisodeRow(
                     var moreOpen by remember { mutableStateOf(false) }
                     IconButton(onClick = { moreOpen = true }) {
                         Icon(
-                            Icons.Filled.MoreVert,
+                            painterResource(R.drawable.more_vert_24),
                             contentDescription = "More",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -631,8 +1259,8 @@ private fun EpisodeRow(
                             },
                             leadingIcon = {
                                 Icon(
-                                    if (isArchived) Icons.Filled.Unarchive
-                                    else Icons.Filled.Archive,
+                                    if (isArchived) painterResource(R.drawable.unarchive_24)
+                                    else painterResource(R.drawable.archive_24),
                                     null,
                                     tint = if (isArchived) MaterialTheme.colorScheme.primary
                                     else LocalContentColor.current
@@ -645,7 +1273,7 @@ private fun EpisodeRow(
                                 moreOpen = false
                                 onShare()
                             },
-                            leadingIcon = { Icon(Icons.Filled.Share, null) }
+                            leadingIcon = { Icon(painterResource(R.drawable.share_24), null) }
                         )
                         if (isPlayed) {
                             DropdownMenuItem(
@@ -654,7 +1282,7 @@ private fun EpisodeRow(
                                     moreOpen = false
                                     onMarkUnplayed()
                                 },
-                                leadingIcon = { Icon(Icons.Filled.Replay, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.replay_24), null) }
                             )
                         } else {
                             DropdownMenuItem(
@@ -663,7 +1291,7 @@ private fun EpisodeRow(
                                     moreOpen = false
                                     onMarkPlayed()
                                 },
-                                leadingIcon = { Icon(Icons.Filled.CheckCircle, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.check_circle_24), null) }
                             )
                         }
                     }
@@ -677,7 +1305,22 @@ private fun EpisodeRow(
             // cost?" and "how much disk?"). Pinned to the bottom-right
             // corner of the card so it reads as a passive "vital stat"
             // rather than competing with the action buttons above.
-            ep.audioByteSize?.let { bytes ->
+            //
+            // v0.10.8+: when the RSS feed doesn't populate `length`
+            // (Megaphone-hosted shows like The Pour Over, some Castos
+            // shows, etc.), kick off an HTTP HEAD/Range probe to the
+            // audio URL and pick up the size once it lands. Results
+            // cache to disk so future launches render instantly.
+            val app = LocalContext.current.applicationContext as LofiPodApp
+            val probedSizes by app.episodeSizes.sizes.collectAsState()
+            val probedSize = probedSizes[ep.audioUrl]
+            val resolvedSize = ep.audioByteSize ?: probedSize
+            LaunchedEffect(ep.audioUrl, ep.audioByteSize) {
+                if (ep.audioByteSize == null) {
+                    app.episodeSizes.probe(ep.audioUrl)
+                }
+            }
+            resolvedSize?.let { bytes ->
                 Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -707,7 +1350,7 @@ private fun ArchivedChip() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Filled.Archive,
+                painterResource(R.drawable.archive_24),
                 contentDescription = null,
                 modifier = Modifier.size(12.dp)
             )
@@ -718,6 +1361,72 @@ private fun ArchivedChip() {
                 fontStyle = FontStyle.Italic
             )
         }
+    }
+}
+
+/**
+ * "Your note said so" — the search matched inside one of the user's own
+ * notes rather than the episode's metadata, and the row owes an
+ * explanation for why it surfaced. A tinted pill quotes the note around
+ * the match — the matched run bolded in primary — with the note glyph in
+ * front so the provenance reads before the words do.
+ */
+@Composable
+private fun NoteMatchSnippet(noteText: String, query: String) {
+    val highlight = MaterialTheme.colorScheme.primary
+    val snippet = remember(noteText, query, highlight) {
+        buildNoteSnippet(noteText, query, highlight)
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painterResource(R.drawable.edit_note_24),
+                contentDescription = "Matched in your note",
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                snippet,
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = FontStyle.Italic,
+                maxLines = 2,
+            )
+        }
+    }
+}
+
+/**
+ * Excerpt a note around the query's first hit: a little context before,
+ * more after (notes tend to lead into their point), ellipses when the
+ * window clips, and the matched run itself bolded in [highlight].
+ * Newlines flatten to spaces — the pill is one or two lines, not a
+ * journal page.
+ */
+private fun buildNoteSnippet(
+    noteText: String,
+    query: String,
+    highlight: androidx.compose.ui.graphics.Color,
+): AnnotatedString {
+    val flat = noteText.replace(Regex("\\s+"), " ").trim()
+    val idx = if (query.isEmpty()) -1 else flat.indexOf(query, ignoreCase = true)
+    if (idx < 0) return AnnotatedString(flat.take(90))
+    val start = (idx - 28).coerceAtLeast(0)
+    val end = (idx + query.length + 56).coerceAtMost(flat.length)
+    return buildAnnotatedString {
+        if (start > 0) append("…")
+        append(flat.substring(start, idx))
+        withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = highlight)) {
+            append(flat.substring(idx, idx + query.length))
+        }
+        append(flat.substring(idx + query.length, end))
+        if (end < flat.length) append("…")
     }
 }
 
@@ -735,7 +1444,7 @@ private fun HeartTierButton(tier: Int, onCycle: () -> Unit) {
     IconButton(onClick = onCycle, modifier = Modifier.size(40.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                if (tier > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                if (tier > 0) painterResource(R.drawable.favorite_24) else painterResource(R.drawable.favorite_border_24),
                 contentDescription = when (tier) {
                     2 -> "Most-excellent"
                     1 -> "Excellent"
@@ -747,7 +1456,7 @@ private fun HeartTierButton(tier: Int, onCycle: () -> Unit) {
             if (tier == 2) {
                 Spacer(Modifier.width(2.dp))
                 Icon(
-                    Icons.Filled.Favorite,
+                    painterResource(R.drawable.favorite_24),
                     contentDescription = null,
                     tint = tint,
                     modifier = Modifier.size(14.dp)

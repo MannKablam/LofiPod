@@ -14,6 +14,15 @@
     <kabod:sourceSite>https://www.desiringgod.org/series/romans-the-greatest-letter-ever-written</kabod:sourceSite>
     <kabod:seriesStart>1998-04-26</kabod:seriesStart>
     <kabod:seriesEnd>2006-12-24</kabod:seriesEnd>
+    <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
+    <kabod:packVersion>2</kabod:packVersion>
+    <kabod:packRevisionDate>2026-05-14</kabod:packRevisionDate>
+    <kabod:church>Bethlehem Baptist Church</kabod:church>
+    <kabod:churchLocation>Minneapolis, Minnesota, USA</kabod:churchLocation>
+    <kabod:partTotal>225</kabod:partTotal>
+    <kabod:advertisedTotal>225</kabod:advertisedTotal>
+    <kabod:audioHost>audio.desiringgod.org</kabod:audioHost>
+    <kabod:contentNotes>v2 (2026-05-14): added two sermons missing from v1 — &quot;Does James Contradict Paul?&quot; (1999-08-08, James 2:14–26) and &quot;Treasuring Christ Together: The Vision and Its Cost&quot; (2004-12-05, Romans 15:14–21) — and renumbered partNumber 1..225 to match desiringgod.org&apos;s canonical series listing.</kabod:contentNotes>
     <item>
       <title>The Author of the Greatest Letter Ever Written</title>
       <pubDate>Sun, 26 Apr 1998 00:00:00 GMT</pubDate>
@@ -499,11 +508,22 @@
       <kabod:transcriptSelector>.message-transcript, .body-text, article</kabod:transcriptSelector>
     </item>
     <item>
+      <title>Does James Contradict Paul?</title>
+      <pubDate>Sun, 08 Aug 1999 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">does-james-contradict-paul</guid>
+      <enclosure url="https://audio.desiringgod.org/19990808-en-does-james-contradict-paul.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>45</kabod:partNumber>
+      <kabod:scripture>James 2:14–26</kabod:scripture>
+      <kabod:scriptureRef book="James" startCh="2" startV="14" endCh="2" endV="26"/>
+      <kabod:transcriptUrl>https://www.desiringgod.org/messages/does-james-contradict-paul</kabod:transcriptUrl>
+      <kabod:transcriptSelector>.message-transcript, .body-text, article</kabod:transcriptSelector>
+    </item>
+    <item>
       <title>When the Lord Does Not Take Account of Sin</title>
       <pubDate>Sun, 15 Aug 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">when-the-lord-does-not-take-account-of-sin</guid>
       <enclosure url="https://audio.desiringgod.org/19990815-en-when-the-lord-does-not-take-account-of-sin.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>45</kabod:partNumber>
+      <kabod:partNumber>46</kabod:partNumber>
       <kabod:scripture>Romans 4:6–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="6" endCh="4" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/when-the-lord-does-not-take-account-of-sin</kabod:transcriptUrl>
@@ -514,7 +534,7 @@
       <pubDate>Sun, 22 Aug 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">why-does-it-matter-which-came-first-circumcision-or-justification</guid>
       <enclosure url="https://audio.desiringgod.org/19990822-en-why-does-it-matter-which-came-first-circumcision-or-justification.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>46</kabod:partNumber>
+      <kabod:partNumber>47</kabod:partNumber>
       <kabod:scripture>Romans 4:9–12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="9" endCh="4" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/why-does-it-matter-which-came-first-circumcision-or-justification</kabod:transcriptUrl>
@@ -525,7 +545,7 @@
       <pubDate>Sun, 29 Aug 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-do-circumcision-and-baptism-correspond</guid>
       <enclosure url="https://audio.desiringgod.org/19990829-en-how-do-circumcision-and-baptism-correspond.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>47</kabod:partNumber>
+      <kabod:partNumber>48</kabod:partNumber>
       <kabod:scripture>Romans 4:9–12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="9" endCh="4" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-do-circumcision-and-baptism-correspond</kabod:transcriptUrl>
@@ -536,7 +556,7 @@
       <pubDate>Sun, 05 Sep 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">inheriting-the-world-depends-on-faith-not-law</guid>
       <enclosure url="https://audio.desiringgod.org/19990905-en-inheriting-the-world-depends-on-faith-not-law.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>48</kabod:partNumber>
+      <kabod:partNumber>49</kabod:partNumber>
       <kabod:scripture>Romans 4:13–15</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="13" endCh="4" endV="15"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/inheriting-the-world-depends-on-faith-not-law</kabod:transcriptUrl>
@@ -547,7 +567,7 @@
       <pubDate>Sun, 12 Sep 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-children-of-abraham-are-heirs-of-the-world</guid>
       <enclosure url="https://audio.desiringgod.org/19990912-en-the-children-of-abraham-are-heirs-of-the-world.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>49</kabod:partNumber>
+      <kabod:partNumber>50</kabod:partNumber>
       <kabod:scripture>Romans 4:13–15</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="13" endCh="4" endV="15"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-children-of-abraham-are-heirs-of-the-world</kabod:transcriptUrl>
@@ -558,7 +578,7 @@
       <pubDate>Sun, 19 Sep 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-faith-grace-certainty-connection</guid>
       <enclosure url="https://audio.desiringgod.org/19990919-en-the-faith-grace-certainty-connection.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>50</kabod:partNumber>
+      <kabod:partNumber>51</kabod:partNumber>
       <kabod:scripture>Romans 4:16–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="16" endCh="4" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-faith-grace-certainty-connection</kabod:transcriptUrl>
@@ -569,7 +589,7 @@
       <pubDate>Sun, 26 Sep 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">faith-in-hope-against-hope-for-the-glory-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/19990926-en-faith-in-hope-against-hope-for-the-glory-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>51</kabod:partNumber>
+      <kabod:partNumber>52</kabod:partNumber>
       <kabod:scripture>Romans 4:16–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="16" endCh="4" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/faith-in-hope-against-hope-for-the-glory-of-god</kabod:transcriptUrl>
@@ -580,7 +600,7 @@
       <pubDate>Sun, 03 Oct 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">why-was-jesus-put-to-death-and-raised-again</guid>
       <enclosure url="https://audio.desiringgod.org/19991003-en-why-was-jesus-put-to-death-and-raised-again.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>52</kabod:partNumber>
+      <kabod:partNumber>53</kabod:partNumber>
       <kabod:scripture>Romans 4:22–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="22" endCh="4" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/why-was-jesus-put-to-death-and-raised-again</kabod:transcriptUrl>
@@ -591,7 +611,7 @@
       <pubDate>Sun, 10 Oct 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-purpose-and-perseverance-of-faith</guid>
       <enclosure url="https://audio.desiringgod.org/19991010-en-the-purpose-and-perseverance-of-faith.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>53</kabod:partNumber>
+      <kabod:partNumber>54</kabod:partNumber>
       <kabod:scripture>Romans 4:22–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="22" endCh="4" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-purpose-and-perseverance-of-faith</kabod:transcriptUrl>
@@ -602,7 +622,7 @@
       <pubDate>Sun, 17 Oct 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">faith-and-the-imputation-of-righteousness</guid>
       <enclosure url="https://audio.desiringgod.org/19991017-en-faith-and-the-imputation-of-righteousness.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>54</kabod:partNumber>
+      <kabod:partNumber>55</kabod:partNumber>
       <kabod:scripture>Romans 4:22–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="4" startV="22" endCh="4" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/faith-and-the-imputation-of-righteousness</kabod:transcriptUrl>
@@ -613,7 +633,7 @@
       <pubDate>Sun, 24 Oct 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">let-us-exult-in-the-hope-of-the-glory-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/19991024-en-let-us-exult-in-the-hope-of-the-glory-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>55</kabod:partNumber>
+      <kabod:partNumber>56</kabod:partNumber>
       <kabod:scripture>Romans 5:1–2</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="1" endCh="5" endV="2"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/let-us-exult-in-the-hope-of-the-glory-of-god</kabod:transcriptUrl>
@@ -624,7 +644,7 @@
       <pubDate>Sun, 07 Nov 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-revelation-of-gods-righteousness-where-there-is-no-church</guid>
       <enclosure url="https://audio.desiringgod.org/19991107-en-the-revelation-of-god-s-righteousness-where-there-is-no-church.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>56</kabod:partNumber>
+      <kabod:partNumber>57</kabod:partNumber>
       <kabod:scripture>Romans 15:14–24</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="14" endCh="15" endV="24"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-revelation-of-gods-righteousness-where-there-is-no-church</kabod:transcriptUrl>
@@ -635,7 +655,7 @@
       <pubDate>Sun, 14 Nov 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">we-exult-in-our-tribulations</guid>
       <enclosure url="https://audio.desiringgod.org/19991114-en-we-exult-in-our-tribulations.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>57</kabod:partNumber>
+      <kabod:partNumber>58</kabod:partNumber>
       <kabod:scripture>Romans 5:1–5</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="1" endCh="5" endV="5"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/we-exult-in-our-tribulations</kabod:transcriptUrl>
@@ -646,7 +666,7 @@
       <pubDate>Sun, 28 Nov 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-love-of-god-has-been-poured-out-within-our-hearts</guid>
       <enclosure url="https://audio.desiringgod.org/19991128-en-the-love-of-god-has-been-poured-out-within-our-hearts.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>58</kabod:partNumber>
+      <kabod:partNumber>59</kabod:partNumber>
       <kabod:scripture>Romans 5:3–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="3" endCh="5" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-love-of-god-has-been-poured-out-within-our-hearts</kabod:transcriptUrl>
@@ -657,7 +677,7 @@
       <pubDate>Sun, 05 Dec 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">god-demonstrates-his-love-toward-us</guid>
       <enclosure url="https://audio.desiringgod.org/19991205-en-god-demonstrates-his-love-toward-us.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>59</kabod:partNumber>
+      <kabod:partNumber>60</kabod:partNumber>
       <kabod:scripture>Romans 5:5–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="5" endCh="5" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/god-demonstrates-his-love-toward-us</kabod:transcriptUrl>
@@ -668,7 +688,7 @@
       <pubDate>Sun, 12 Dec 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">much-more-shall-we-be-saved-by-his-life</guid>
       <enclosure url="https://audio.desiringgod.org/19991212-en-much-more-shall-we-be-saved-by-his-life.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>60</kabod:partNumber>
+      <kabod:partNumber>61</kabod:partNumber>
       <kabod:scripture>Romans 5:9–11</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="9" endCh="5" endV="11"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/much-more-shall-we-be-saved-by-his-life</kabod:transcriptUrl>
@@ -679,7 +699,7 @@
       <pubDate>Sun, 19 Dec 1999 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">we-exult-in-god-through-our-lord-jesus-christ</guid>
       <enclosure url="https://audio.desiringgod.org/19991219-en-we-exult-in-god-through-our-lord-jesus-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>61</kabod:partNumber>
+      <kabod:partNumber>62</kabod:partNumber>
       <kabod:scripture>Romans 5:9–11</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="9" endCh="5" endV="11"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/we-exult-in-god-through-our-lord-jesus-christ</kabod:transcriptUrl>
@@ -690,7 +710,7 @@
       <pubDate>Sun, 11 Jun 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">twenty-years-then-romans</guid>
       <enclosure url="https://audio.desiringgod.org/20000611-en-twenty-years-then-romans.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>62</kabod:partNumber>
+      <kabod:partNumber>63</kabod:partNumber>
       <kabod:scripture>Romans 5:12–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="12" endCh="5" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/twenty-years-then-romans</kabod:transcriptUrl>
@@ -701,7 +721,7 @@
       <pubDate>Sun, 18 Jun 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">adam-christ-and-justification-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20000618-en-adam-christ-and-justification-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>63</kabod:partNumber>
+      <kabod:partNumber>64</kabod:partNumber>
       <kabod:scripture>Romans 5:12–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="12" endCh="5" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/adam-christ-and-justification-part-1</kabod:transcriptUrl>
@@ -712,7 +732,7 @@
       <pubDate>Sun, 25 Jun 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">adam-christ-and-justification-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20000625-en-adam-christ-and-justification-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>64</kabod:partNumber>
+      <kabod:partNumber>65</kabod:partNumber>
       <kabod:scripture>Romans 5:12–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="12" endCh="5" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/adam-christ-and-justification-part-2</kabod:transcriptUrl>
@@ -723,7 +743,7 @@
       <pubDate>Sun, 02 Jul 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">adam-christ-and-justification-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20000702-en-adam-christ-and-justification-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>65</kabod:partNumber>
+      <kabod:partNumber>66</kabod:partNumber>
       <kabod:scripture>Romans 5:12–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="12" endCh="5" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/adam-christ-and-justification-part-3</kabod:transcriptUrl>
@@ -734,7 +754,7 @@
       <pubDate>Sun, 20 Aug 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">adam-christ-and-justification-part-4</guid>
       <enclosure url="https://audio.desiringgod.org/20000820-en-adam-christ-and-justification-part-4.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>66</kabod:partNumber>
+      <kabod:partNumber>67</kabod:partNumber>
       <kabod:scripture>Romans 5:12–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="12" endCh="5" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/adam-christ-and-justification-part-4</kabod:transcriptUrl>
@@ -745,7 +765,7 @@
       <pubDate>Sun, 27 Aug 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">adam-christ-and-justification-part-5</guid>
       <enclosure url="https://audio.desiringgod.org/20000827-en-adam-christ-and-justification-part-5.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>67</kabod:partNumber>
+      <kabod:partNumber>68</kabod:partNumber>
       <kabod:scripture>Romans 5:12–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="12" endCh="5" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/adam-christ-and-justification-part-5</kabod:transcriptUrl>
@@ -756,7 +776,7 @@
       <pubDate>Sun, 03 Sep 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-triumph-of-grace-through-righteousness</guid>
       <enclosure url="https://audio.desiringgod.org/20000903-en-the-triumph-of-grace-through-righteousness.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>68</kabod:partNumber>
+      <kabod:partNumber>69</kabod:partNumber>
       <kabod:scripture>Romans 5:20–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="5" startV="20" endCh="5" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-triumph-of-grace-through-righteousness</kabod:transcriptUrl>
@@ -767,7 +787,7 @@
       <pubDate>Sun, 10 Sep 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">are-we-to-continue-in-sin-that-grace-might-increase</guid>
       <enclosure url="https://audio.desiringgod.org/20000910-en-are-we-to-continue-in-sin-that-grace-might-increase.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>69</kabod:partNumber>
+      <kabod:partNumber>70</kabod:partNumber>
       <kabod:scripture>Romans 6:1–14</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="1" endCh="6" endV="14"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/are-we-to-continue-in-sin-that-grace-might-increase</kabod:transcriptUrl>
@@ -778,9 +798,9 @@
       <pubDate>Sun, 17 Sep 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-justified-sinners-love-each-other</guid>
       <enclosure url="https://audio.desiringgod.org/20000917-en-how-justified-sinners-love-each-other.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>70</kabod:partNumber>
+      <kabod:partNumber>71</kabod:partNumber>
       <kabod:scripture>Romans 12</kabod:scripture>
-      <kabod:scriptureRef book="Romans" startCh="12" endCh="12"/>
+      <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-justified-sinners-love-each-other</kabod:transcriptUrl>
       <kabod:transcriptSelector>.message-transcript, .body-text, article</kabod:transcriptSelector>
     </item>
@@ -789,7 +809,7 @@
       <pubDate>Sun, 24 Sep 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">united-with-christ-in-death-and-life-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20000924-en-united-with-christ-in-death-and-life-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>71</kabod:partNumber>
+      <kabod:partNumber>72</kabod:partNumber>
       <kabod:scripture>Romans 6:1–14</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="1" endCh="6" endV="14"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/united-with-christ-in-death-and-life-part-1</kabod:transcriptUrl>
@@ -800,7 +820,7 @@
       <pubDate>Sun, 01 Oct 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">united-with-christ-in-death-and-life-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20001001-en-united-with-christ-in-death-and-life-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>72</kabod:partNumber>
+      <kabod:partNumber>73</kabod:partNumber>
       <kabod:scripture>Romans 6:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="1" endCh="6" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/united-with-christ-in-death-and-life-part-2</kabod:transcriptUrl>
@@ -811,7 +831,7 @@
       <pubDate>Sun, 08 Oct 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">united-with-christ-in-death-and-life-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20001008-en-united-with-christ-in-death-and-life-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>73</kabod:partNumber>
+      <kabod:partNumber>74</kabod:partNumber>
       <kabod:scripture>Romans 6:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="1" endCh="6" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/united-with-christ-in-death-and-life-part-3</kabod:transcriptUrl>
@@ -822,7 +842,7 @@
       <pubDate>Sun, 15 Oct 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">justified-to-break-the-power-of-sin</guid>
       <enclosure url="https://audio.desiringgod.org/20001015-en-justified-to-break-the-power-of-sin.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>74</kabod:partNumber>
+      <kabod:partNumber>75</kabod:partNumber>
       <kabod:scripture>Romans 6:5–10</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="5" endCh="6" endV="10"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/justified-to-break-the-power-of-sin</kabod:transcriptUrl>
@@ -833,7 +853,7 @@
       <pubDate>Sun, 05 Nov 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">do-not-let-sin-reign-in-your-mortal-body-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20001105-en-do-not-let-sin-reign-in-your-mortal-body-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>75</kabod:partNumber>
+      <kabod:partNumber>76</kabod:partNumber>
       <kabod:scripture>Romans 6:11–14</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="11" endCh="6" endV="14"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/do-not-let-sin-reign-in-your-mortal-body-part-1</kabod:transcriptUrl>
@@ -844,7 +864,7 @@
       <pubDate>Sun, 12 Nov 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">do-not-let-sin-reign-in-your-mortal-body-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20001112-en-do-not-let-sin-reign-in-your-mortal-body-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>76</kabod:partNumber>
+      <kabod:partNumber>77</kabod:partNumber>
       <kabod:scripture>Romans 6:11–14</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="11" endCh="6" endV="14"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/do-not-let-sin-reign-in-your-mortal-body-part-2</kabod:transcriptUrl>
@@ -855,7 +875,7 @@
       <pubDate>Sun, 26 Nov 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">free-from-sin-slaves-of-righteousness-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20001126-en-free-from-sin-slaves-of-righteousness-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>77</kabod:partNumber>
+      <kabod:partNumber>78</kabod:partNumber>
       <kabod:scripture>Romans 6:14–19</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="14" endCh="6" endV="19"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/free-from-sin-slaves-of-righteousness-part-1</kabod:transcriptUrl>
@@ -866,7 +886,7 @@
       <pubDate>Sun, 03 Dec 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">free-from-sin-slaves-of-righteousness-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20001203-en-free-from-sin-slaves-of-righteousness-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>78</kabod:partNumber>
+      <kabod:partNumber>79</kabod:partNumber>
       <kabod:scripture>Romans 6:14–19</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="14" endCh="6" endV="19"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/free-from-sin-slaves-of-righteousness-part-2</kabod:transcriptUrl>
@@ -877,7 +897,7 @@
       <pubDate>Sun, 10 Dec 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">slaves-to-god-sanctification-eternal-life</guid>
       <enclosure url="https://audio.desiringgod.org/20001210-en-slaves-to-god-sanctification-eternal-life.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>79</kabod:partNumber>
+      <kabod:partNumber>80</kabod:partNumber>
       <kabod:scripture>Romans 6:20–22</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="20" endCh="6" endV="22"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/slaves-to-god-sanctification-eternal-life</kabod:transcriptUrl>
@@ -888,7 +908,7 @@
       <pubDate>Sun, 17 Dec 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-free-gift-of-god-is-eternal-life</guid>
       <enclosure url="https://audio.desiringgod.org/20001217-en-the-free-gift-of-god-is-eternal-life-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>80</kabod:partNumber>
+      <kabod:partNumber>81</kabod:partNumber>
       <kabod:scripture>Romans 6:22–23</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="22" endCh="6" endV="23"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-free-gift-of-god-is-eternal-life</kabod:transcriptUrl>
@@ -899,7 +919,7 @@
       <pubDate>Sun, 24 Dec 2000 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gods-gift-our-work</guid>
       <enclosure url="https://audio.desiringgod.org/20001224-en-the-free-gift-of-god-is-eternal-life-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>81</kabod:partNumber>
+      <kabod:partNumber>82</kabod:partNumber>
       <kabod:scripture>Romans 6:22–23</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="6" startV="22" endCh="6" endV="23"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gods-gift-our-work</kabod:transcriptUrl>
@@ -910,7 +930,7 @@
       <pubDate>Sun, 28 Jan 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">dead-to-the-law-serving-in-the-spirit-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20010128-en-dead-to-the-law-serving-in-the-spirit-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>82</kabod:partNumber>
+      <kabod:partNumber>83</kabod:partNumber>
       <kabod:scripture>Romans 7:1–6</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="1" endCh="7" endV="6"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/dead-to-the-law-serving-in-the-spirit-part-1</kabod:transcriptUrl>
@@ -921,7 +941,7 @@
       <pubDate>Sun, 04 Feb 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">dead-to-the-law-serving-in-the-spirit-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20010204-en-dead-to-the-law-serving-in-the-spirit-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>83</kabod:partNumber>
+      <kabod:partNumber>84</kabod:partNumber>
       <kabod:scripture>Romans 7:1–6</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="1" endCh="7" endV="6"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/dead-to-the-law-serving-in-the-spirit-part-2</kabod:transcriptUrl>
@@ -932,7 +952,7 @@
       <pubDate>Sun, 11 Feb 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">dead-to-the-law-serving-in-the-spirit-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20010211-en-dead-to-the-law-serving-in-the-spirit-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>84</kabod:partNumber>
+      <kabod:partNumber>85</kabod:partNumber>
       <kabod:scripture>Romans 7:1–6</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="1" endCh="7" endV="6"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/dead-to-the-law-serving-in-the-spirit-part-3</kabod:transcriptUrl>
@@ -943,7 +963,7 @@
       <pubDate>Sun, 25 Feb 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">dead-to-the-law-serving-in-the-spirit-part-4</guid>
       <enclosure url="https://audio.desiringgod.org/20010225-en-dead-to-the-law-serving-in-the-spirit-part-4.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>85</kabod:partNumber>
+      <kabod:partNumber>86</kabod:partNumber>
       <kabod:scripture>Romans 7:1–6</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="1" endCh="7" endV="6"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/dead-to-the-law-serving-in-the-spirit-part-4</kabod:transcriptUrl>
@@ -954,7 +974,7 @@
       <pubDate>Sun, 01 Apr 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-importance-of-knowing-our-sin</guid>
       <enclosure url="https://audio.desiringgod.org/20010401-en-the-importance-of-knowing-our-sin.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>86</kabod:partNumber>
+      <kabod:partNumber>87</kabod:partNumber>
       <kabod:scripture>Romans 7:7–12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="7" endCh="7" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-importance-of-knowing-our-sin</kabod:transcriptUrl>
@@ -965,7 +985,7 @@
       <pubDate>Sun, 08 Apr 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-we-come-to-know-sin</guid>
       <enclosure url="https://audio.desiringgod.org/20010408-en-how-we-come-to-know-sin.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>87</kabod:partNumber>
+      <kabod:partNumber>88</kabod:partNumber>
       <kabod:scripture>Romans 7:7–12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="7" endCh="7" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-we-come-to-know-sin</kabod:transcriptUrl>
@@ -976,7 +996,7 @@
       <pubDate>Sun, 29 Apr 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">jesus-christ-and-the-law-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20010429-en-jesus-christ-and-the-law-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>88</kabod:partNumber>
+      <kabod:partNumber>89</kabod:partNumber>
       <kabod:scripture>Romans 7:4–12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="4" endCh="7" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/jesus-christ-and-the-law-of-god</kabod:transcriptUrl>
@@ -987,7 +1007,7 @@
       <pubDate>Sun, 06 May 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-deadly-team-of-sin-and-law</guid>
       <enclosure url="https://audio.desiringgod.org/20010506-en-the-deadly-team-of-sin-and-law.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>89</kabod:partNumber>
+      <kabod:partNumber>90</kabod:partNumber>
       <kabod:scripture>Romans 7:7–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="7" endCh="7" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-deadly-team-of-sin-and-law</kabod:transcriptUrl>
@@ -998,7 +1018,7 @@
       <pubDate>Sun, 27 May 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">who-is-this-divided-man-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20010527-en-who-is-this-divided-man-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>90</kabod:partNumber>
+      <kabod:partNumber>91</kabod:partNumber>
       <kabod:scripture>Romans 7:14–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="14" endCh="7" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/who-is-this-divided-man-part-1</kabod:transcriptUrl>
@@ -1009,7 +1029,7 @@
       <pubDate>Sun, 03 Jun 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">who-is-this-divided-man-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20010603-en-who-is-this-divided-man-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>91</kabod:partNumber>
+      <kabod:partNumber>92</kabod:partNumber>
       <kabod:scripture>Romans 7:14–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="14" endCh="7" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/who-is-this-divided-man-part-2</kabod:transcriptUrl>
@@ -1020,7 +1040,7 @@
       <pubDate>Sun, 24 Jun 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">who-is-this-divided-man-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20010624-en-who-is-this-divided-man-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>92</kabod:partNumber>
+      <kabod:partNumber>93</kabod:partNumber>
       <kabod:scripture>Romans 7:14–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="14" endCh="7" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/who-is-this-divided-man-part-3</kabod:transcriptUrl>
@@ -1031,7 +1051,7 @@
       <pubDate>Sun, 12 Aug 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">who-is-this-divided-man-part-4</guid>
       <enclosure url="https://audio.desiringgod.org/20010812-en-who-is-this-divided-man-part-4.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>93</kabod:partNumber>
+      <kabod:partNumber>94</kabod:partNumber>
       <kabod:scripture>Romans 7:14–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="14" endCh="7" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/who-is-this-divided-man-part-4</kabod:transcriptUrl>
@@ -1042,7 +1062,7 @@
       <pubDate>Sun, 19 Aug 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">who-is-this-divided-man-part-5</guid>
       <enclosure url="https://audio.desiringgod.org/20010819-en-who-is-this-divided-man-part-5.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>94</kabod:partNumber>
+      <kabod:partNumber>95</kabod:partNumber>
       <kabod:scripture>Romans 7:14–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="14" endCh="7" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/who-is-this-divided-man-part-5</kabod:transcriptUrl>
@@ -1053,7 +1073,7 @@
       <pubDate>Sun, 26 Aug 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">who-is-this-divided-man-part-6</guid>
       <enclosure url="https://audio.desiringgod.org/20010826-en-who-is-this-divided-man-part-6.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>95</kabod:partNumber>
+      <kabod:partNumber>96</kabod:partNumber>
       <kabod:scripture>Romans 7:14–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="7" startV="14" endCh="7" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/who-is-this-divided-man-part-6</kabod:transcriptUrl>
@@ -1064,7 +1084,7 @@
       <pubDate>Sun, 02 Sep 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-greatest-thing-in-the-world</guid>
       <enclosure url="https://audio.desiringgod.org/20010902-en-the-greatest-thing-in-the-world-an-overview-of-romans-1-7.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>96</kabod:partNumber>
+      <kabod:partNumber>97</kabod:partNumber>
       <kabod:scripture>Romans 1:1, Romans 7:25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="1" startV="1" endCh="1" endV="1"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-greatest-thing-in-the-world</kabod:transcriptUrl>
@@ -1075,7 +1095,7 @@
       <pubDate>Sun, 09 Sep 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">no-condemnation-in-christ-jesus</guid>
       <enclosure url="https://audio.desiringgod.org/20010909-en-no-condemnation-in-christ-jesus-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>97</kabod:partNumber>
+      <kabod:partNumber>98</kabod:partNumber>
       <kabod:scripture>Romans 8:1</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="1" endCh="8" endV="1"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/no-condemnation-in-christ-jesus</kabod:transcriptUrl>
@@ -1086,7 +1106,7 @@
       <pubDate>Sun, 23 Sep 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">no-condemnation-in-christ-jesus-one-body-in-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20010923-en-no-condemnation-in-christ-jesus-one-body-in-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>98</kabod:partNumber>
+      <kabod:partNumber>99</kabod:partNumber>
       <kabod:scripture>Romans 12:3–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="3" endCh="12" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/no-condemnation-in-christ-jesus-one-body-in-christ</kabod:transcriptUrl>
@@ -1097,7 +1117,7 @@
       <pubDate>Sun, 30 Sep 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">no-condemnation-in-christ-jesus-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20010930-en-no-condemnation-in-christ-jesus-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>99</kabod:partNumber>
+      <kabod:partNumber>100</kabod:partNumber>
       <kabod:scripture>Romans 8:1–4</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="1" endCh="8" endV="4"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/no-condemnation-in-christ-jesus-part-2</kabod:transcriptUrl>
@@ -1108,7 +1128,7 @@
       <pubDate>Sun, 07 Oct 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">set-free-by-the-spirit-of-life-in-christ-jesus</guid>
       <enclosure url="https://audio.desiringgod.org/20011007-en-set-free-by-the-spirit-of-life-in-christ-jesus.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>100</kabod:partNumber>
+      <kabod:partNumber>101</kabod:partNumber>
       <kabod:scripture>Romans 8:1–4</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="1" endCh="8" endV="4"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/set-free-by-the-spirit-of-life-in-christ-jesus</kabod:transcriptUrl>
@@ -1119,7 +1139,7 @@
       <pubDate>Sun, 14 Oct 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">what-the-law-could-not-do-god-did-sending-christ-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20011014-en-what-the-law-could-not-do-god-did-sending-christ-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>101</kabod:partNumber>
+      <kabod:partNumber>102</kabod:partNumber>
       <kabod:scripture>Romans 8:1–4</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="1" endCh="8" endV="4"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/what-the-law-could-not-do-god-did-sending-christ-part-1</kabod:transcriptUrl>
@@ -1130,7 +1150,7 @@
       <pubDate>Sun, 04 Nov 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">what-the-law-could-not-do-god-did-sending-christ-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20011104-en-what-the-law-could-not-do-god-did-sending-christ-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>102</kabod:partNumber>
+      <kabod:partNumber>103</kabod:partNumber>
       <kabod:scripture>Romans 8:1–4</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="1" endCh="8" endV="4"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/what-the-law-could-not-do-god-did-sending-christ-part-2</kabod:transcriptUrl>
@@ -1141,7 +1161,7 @@
       <pubDate>Sun, 11 Nov 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-the-spirit-does-what-the-law-could-not-do</guid>
       <enclosure url="https://audio.desiringgod.org/20011111-en-how-the-spirit-does-what-the-law-could-not-do.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>103</kabod:partNumber>
+      <kabod:partNumber>104</kabod:partNumber>
       <kabod:scripture>Romans 8:3–9</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="3" endCh="8" endV="9"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-the-spirit-does-what-the-law-could-not-do</kabod:transcriptUrl>
@@ -1152,7 +1172,7 @@
       <pubDate>Sun, 02 Dec 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">why-and-how-we-walk-according-to-the-spirit</guid>
       <enclosure url="https://audio.desiringgod.org/20011202-en-why-and-how-we-walk-according-to-the-spirit.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>104</kabod:partNumber>
+      <kabod:partNumber>105</kabod:partNumber>
       <kabod:scripture>Romans 8:5–9</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="5" endCh="8" endV="9"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/why-and-how-we-walk-according-to-the-spirit</kabod:transcriptUrl>
@@ -1163,7 +1183,7 @@
       <pubDate>Sun, 09 Dec 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">what-does-it-mean-to-fulfill-the-law-in-romans-8-3-4</guid>
       <enclosure url="https://audio.desiringgod.org/20011209-en-what-does-it-mean-to-fulfill-the-law-in-romans-8-3-4.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>105</kabod:partNumber>
+      <kabod:partNumber>106</kabod:partNumber>
       <kabod:scripture>Romans 8:3–4</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="3" endCh="8" endV="4"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/what-does-it-mean-to-fulfill-the-law-in-romans-8-3-4</kabod:transcriptUrl>
@@ -1174,7 +1194,7 @@
       <pubDate>Sun, 16 Dec 2001 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">christian-know-whose-you-are</guid>
       <enclosure url="https://audio.desiringgod.org/20011216-en-christian-know-whose-you-are.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>106</kabod:partNumber>
+      <kabod:partNumber>107</kabod:partNumber>
       <kabod:scripture>Romans 8:7–11</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="7" endCh="8" endV="11"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/christian-know-whose-you-are</kabod:transcriptUrl>
@@ -1185,7 +1205,7 @@
       <pubDate>Sun, 03 Feb 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-to-kill-sin-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20020203-en-how-to-kill-sin-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>107</kabod:partNumber>
+      <kabod:partNumber>108</kabod:partNumber>
       <kabod:scripture>Romans 8:10–17</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="10" endCh="8" endV="17"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-to-kill-sin-part-1</kabod:transcriptUrl>
@@ -1196,7 +1216,7 @@
       <pubDate>Sun, 17 Feb 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">kill-sin-by-the-spirit</guid>
       <enclosure url="https://audio.desiringgod.org/20020217-en-how-to-kill-sin-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>108</kabod:partNumber>
+      <kabod:partNumber>109</kabod:partNumber>
       <kabod:scripture>Romans 8:10–17</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="10" endCh="8" endV="17"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/kill-sin-by-the-spirit</kabod:transcriptUrl>
@@ -1207,7 +1227,7 @@
       <pubDate>Sun, 07 Apr 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">kill-sin-with-the-word-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20020407-en-how-to-kill-sin-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>109</kabod:partNumber>
+      <kabod:partNumber>110</kabod:partNumber>
       <kabod:scripture>Romans 8:10–17</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="10" endCh="8" endV="17"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/kill-sin-with-the-word-of-god</kabod:transcriptUrl>
@@ -1218,7 +1238,7 @@
       <pubDate>Sun, 14 Apr 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-spirit-led-are-the-sons-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20020414-en-the-spirit-led-are-the-sons-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>110</kabod:partNumber>
+      <kabod:partNumber>111</kabod:partNumber>
       <kabod:scripture>Romans 8:13–17</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="13" endCh="8" endV="17"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-spirit-led-are-the-sons-of-god</kabod:transcriptUrl>
@@ -1229,7 +1249,7 @@
       <pubDate>Sun, 21 Apr 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">children-heirs-and-fellow-sufferers</guid>
       <enclosure url="https://audio.desiringgod.org/20020421-en-children-heirs-and-fellow-sufferers.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>111</kabod:partNumber>
+      <kabod:partNumber>112</kabod:partNumber>
       <kabod:scripture>Romans 8:14–18</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="14" endCh="8" endV="18"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/children-heirs-and-fellow-sufferers</kabod:transcriptUrl>
@@ -1240,7 +1260,7 @@
       <pubDate>Sun, 28 Apr 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">subjected-to-futility-in-hope-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20020428-en-subjected-to-futility-in-hope-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>112</kabod:partNumber>
+      <kabod:partNumber>113</kabod:partNumber>
       <kabod:scripture>Romans 8:18–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="18" endCh="8" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/subjected-to-futility-in-hope-part-1</kabod:transcriptUrl>
@@ -1251,7 +1271,7 @@
       <pubDate>Sun, 05 May 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">subjected-to-futility-in-hope-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20020505-en-subjected-to-futility-in-hope-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>113</kabod:partNumber>
+      <kabod:partNumber>114</kabod:partNumber>
       <kabod:scripture>Romans 8:18–25</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="18" endCh="8" endV="25"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/subjected-to-futility-in-hope-part-2</kabod:transcriptUrl>
@@ -1262,7 +1282,7 @@
       <pubDate>Sun, 26 May 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-spirit-helps-us-in-our-weakness-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20020526-en-the-spirit-helps-us-in-our-weakness-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>114</kabod:partNumber>
+      <kabod:partNumber>115</kabod:partNumber>
       <kabod:scripture>Romans 8:25–27</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="25" endCh="8" endV="27"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-spirit-helps-us-in-our-weakness-part-1</kabod:transcriptUrl>
@@ -1273,7 +1293,7 @@
       <pubDate>Sun, 02 Jun 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-spirit-helps-us-in-our-weakness-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20020602-en-the-spirit-helps-us-in-our-weakness-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>115</kabod:partNumber>
+      <kabod:partNumber>116</kabod:partNumber>
       <kabod:scripture>Romans 8:25–27</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="25" endCh="8" endV="27"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-spirit-helps-us-in-our-weakness-part-2</kabod:transcriptUrl>
@@ -1284,7 +1304,7 @@
       <pubDate>Sun, 09 Jun 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">all-things-for-good-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20020609-en-all-things-for-good-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>116</kabod:partNumber>
+      <kabod:partNumber>117</kabod:partNumber>
       <kabod:scripture>Romans 8:28–32</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="28" endCh="8" endV="32"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/all-things-for-good-part-1</kabod:transcriptUrl>
@@ -1295,7 +1315,7 @@
       <pubDate>Sun, 16 Jun 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">all-things-for-good-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20020616-en-all-things-for-good-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>117</kabod:partNumber>
+      <kabod:partNumber>118</kabod:partNumber>
       <kabod:scripture>Romans 8:28–32</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="28" endCh="8" endV="32"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/all-things-for-good-part-2</kabod:transcriptUrl>
@@ -1306,7 +1326,7 @@
       <pubDate>Sun, 23 Jun 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">all-things-for-good-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20020623-en-all-things-for-good-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>118</kabod:partNumber>
+      <kabod:partNumber>119</kabod:partNumber>
       <kabod:scripture>Romans 8:28–32</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="28" endCh="8" endV="32"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/all-things-for-good-part-3</kabod:transcriptUrl>
@@ -1317,7 +1337,7 @@
       <pubDate>Sun, 04 Aug 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">foreknown-predestined-conformed-to-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20020804-en-foreknown-predestined-conformed-to-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>119</kabod:partNumber>
+      <kabod:partNumber>120</kabod:partNumber>
       <kabod:scripture>Romans 8:28–30</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="28" endCh="8" endV="30"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/foreknown-predestined-conformed-to-christ</kabod:transcriptUrl>
@@ -1328,7 +1348,7 @@
       <pubDate>Sun, 11 Aug 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">glorification-conformed-to-christ-for-the-supremacy-of-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20020811-en-glorification-conformed-to-christ-for-the-supremacy-of-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>120</kabod:partNumber>
+      <kabod:partNumber>121</kabod:partNumber>
       <kabod:scripture>Romans 8:28–30</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="28" endCh="8" endV="30"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/glorification-conformed-to-christ-for-the-supremacy-of-christ</kabod:transcriptUrl>
@@ -1339,7 +1359,7 @@
       <pubDate>Sun, 18 Aug 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">god-did-not-spare-his-own-son</guid>
       <enclosure url="https://audio.desiringgod.org/20020818-en-god-did-not-spare-his-own-son.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>121</kabod:partNumber>
+      <kabod:partNumber>122</kabod:partNumber>
       <kabod:scripture>Romans 8:28–32</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="28" endCh="8" endV="32"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/god-did-not-spare-his-own-son</kabod:transcriptUrl>
@@ -1350,7 +1370,7 @@
       <pubDate>Sun, 25 Aug 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">it-is-god-who-justifies</guid>
       <enclosure url="https://audio.desiringgod.org/20020825-en-it-is-god-who-justifies.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>122</kabod:partNumber>
+      <kabod:partNumber>123</kabod:partNumber>
       <kabod:scripture>Romans 8:31–37</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="31" endCh="8" endV="37"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/it-is-god-who-justifies</kabod:transcriptUrl>
@@ -1361,7 +1381,7 @@
       <pubDate>Sun, 01 Sep 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-all-conquering-love-of-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20020901-en-the-all-conquering-love-of-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>123</kabod:partNumber>
+      <kabod:partNumber>124</kabod:partNumber>
       <kabod:scripture>Romans 8:31–37</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="31" endCh="8" endV="37"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-all-conquering-love-of-christ</kabod:transcriptUrl>
@@ -1372,7 +1392,7 @@
       <pubDate>Sun, 08 Sep 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">nothing-can-separate-us-from-the-love-of-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20020908-en-nothing-can-separate-us-from-the-love-of-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>124</kabod:partNumber>
+      <kabod:partNumber>125</kabod:partNumber>
       <kabod:scripture>Romans 8:35–39</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="35" endCh="8" endV="39"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/nothing-can-separate-us-from-the-love-of-christ</kabod:transcriptUrl>
@@ -1383,7 +1403,7 @@
       <pubDate>Sun, 15 Sep 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">inseparable-from-god-while-going-without-going</guid>
       <enclosure url="https://audio.desiringgod.org/20020915-en-inseparable-from-god-while-going-without-going.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>125</kabod:partNumber>
+      <kabod:partNumber>126</kabod:partNumber>
       <kabod:scripture>Romans 8:38–39</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="8" startV="38" endCh="8" endV="39"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/inseparable-from-god-while-going-without-going</kabod:transcriptUrl>
@@ -1394,7 +1414,7 @@
       <pubDate>Sun, 22 Sep 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-mighty-and-merciful-message-of-romans-1-8</guid>
       <enclosure url="https://audio.desiringgod.org/20020922-en-the-mighty-and-merciful-message-of-romans-1-8.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>126</kabod:partNumber>
+      <kabod:partNumber>127</kabod:partNumber>
       <kabod:scripture>Romans 1:1, Romans 8:39</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="1" startV="1" endCh="1" endV="1"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-mighty-and-merciful-message-of-romans-1-8</kabod:transcriptUrl>
@@ -1405,7 +1425,7 @@
       <pubDate>Sun, 03 Nov 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-absolute-sovereignty-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20021103-en-the-absolute-sovereignty-of-god-what-is-romans-nine-about.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>127</kabod:partNumber>
+      <kabod:partNumber>128</kabod:partNumber>
       <kabod:scripture>Romans 9:1–5</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="1" endCh="9" endV="5"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-absolute-sovereignty-of-god</kabod:transcriptUrl>
@@ -1416,7 +1436,7 @@
       <pubDate>Sun, 10 Nov 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">my-anguish-my-kinsmen-are-accursed</guid>
       <enclosure url="https://audio.desiringgod.org/20021110-en-my-anguish-my-kinsmen-are-accursed.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>128</kabod:partNumber>
+      <kabod:partNumber>129</kabod:partNumber>
       <kabod:scripture>Romans 9:1–5</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="1" endCh="9" endV="5"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/my-anguish-my-kinsmen-are-accursed</kabod:transcriptUrl>
@@ -1427,7 +1447,7 @@
       <pubDate>Sun, 17 Nov 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-great-is-the-honor-of-israel</guid>
       <enclosure url="https://audio.desiringgod.org/20021117-en-how-great-is-the-honor-of-israel.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>129</kabod:partNumber>
+      <kabod:partNumber>130</kabod:partNumber>
       <kabod:scripture>Romans 9:1–5</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="1" endCh="9" endV="5"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-great-is-the-honor-of-israel</kabod:transcriptUrl>
@@ -1438,7 +1458,7 @@
       <pubDate>Sun, 01 Dec 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gods-word-stands-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20021201-en-god-s-word-stands-not-all-israel-is-israel-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>130</kabod:partNumber>
+      <kabod:partNumber>131</kabod:partNumber>
       <kabod:scripture>Romans 9:6–12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="6" endCh="9" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gods-word-stands-part-1</kabod:transcriptUrl>
@@ -1449,7 +1469,7 @@
       <pubDate>Sun, 08 Dec 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gods-word-stands-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20021208-en-god-s-word-stands-not-all-israel-is-israel-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>131</kabod:partNumber>
+      <kabod:partNumber>132</kabod:partNumber>
       <kabod:scripture>Romans 9:6–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="6" endCh="9" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gods-word-stands-part-2</kabod:transcriptUrl>
@@ -1460,7 +1480,7 @@
       <pubDate>Sun, 15 Dec 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">unconditional-election-and-the-invincible-purpose-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20021215-en-unconditional-election-and-the-invincible-purpose-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>132</kabod:partNumber>
+      <kabod:partNumber>133</kabod:partNumber>
       <kabod:scripture>Romans 9:6–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="6" endCh="9" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/unconditional-election-and-the-invincible-purpose-of-god</kabod:transcriptUrl>
@@ -1471,7 +1491,7 @@
       <pubDate>Sun, 22 Dec 2002 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gods-word-stands-christ-came-to-confirm-it</guid>
       <enclosure url="https://audio.desiringgod.org/20021222-en-god-s-word-stands-christ-came-to-confirm-it.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>133</kabod:partNumber>
+      <kabod:partNumber>134</kabod:partNumber>
       <kabod:scripture>Romans 15:5–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="5" endCh="15" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gods-word-stands-christ-came-to-confirm-it</kabod:transcriptUrl>
@@ -1482,7 +1502,7 @@
       <pubDate>Sun, 12 Jan 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-freedom-and-justice-of-god-in-unconditional-election</guid>
       <enclosure url="https://audio.desiringgod.org/20030112-en-the-freedom-and-justice-of-god-in-unconditional-election.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>134</kabod:partNumber>
+      <kabod:partNumber>135</kabod:partNumber>
       <kabod:scripture>Romans 9:14–18</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="14" endCh="9" endV="18"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-freedom-and-justice-of-god-in-unconditional-election</kabod:transcriptUrl>
@@ -1493,7 +1513,7 @@
       <pubDate>Sun, 02 Feb 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-fame-of-his-name-and-the-freedom-of-mercy</guid>
       <enclosure url="https://audio.desiringgod.org/20030202-en-the-fame-of-his-name-and-the-freedom-of-mercy.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>135</kabod:partNumber>
+      <kabod:partNumber>136</kabod:partNumber>
       <kabod:scripture>Romans 9:14–18</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="14" endCh="9" endV="18"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-fame-of-his-name-and-the-freedom-of-mercy</kabod:transcriptUrl>
@@ -1504,7 +1524,7 @@
       <pubDate>Sun, 09 Feb 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-hardening-of-pharaoh-and-the-hope-of-the-world</guid>
       <enclosure url="https://audio.desiringgod.org/20030209-en-the-hardening-of-pharaoh-and-the-hope-of-the-world.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>136</kabod:partNumber>
+      <kabod:partNumber>137</kabod:partNumber>
       <kabod:scripture>Romans 9:17–18, Exodus 9:8–17</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="17" endCh="9" endV="18"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-hardening-of-pharaoh-and-the-hope-of-the-world</kabod:transcriptUrl>
@@ -1515,7 +1535,7 @@
       <pubDate>Sun, 16 Feb 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-god-makes-known-the-riches-of-his-glory-to-the-vessels-of-mercy</guid>
       <enclosure url="https://audio.desiringgod.org/20030216-en-how-god-makes-known-the-riches-of-his-glory-to-the-vessels-of-mercy.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>137</kabod:partNumber>
+      <kabod:partNumber>138</kabod:partNumber>
       <kabod:scripture>Romans 9:19–23</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="19" endCh="9" endV="23"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-god-makes-known-the-riches-of-his-glory-to-the-vessels-of-mercy</kabod:transcriptUrl>
@@ -1526,7 +1546,7 @@
       <pubDate>Sun, 23 Feb 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gods-ultimate-purpose</guid>
       <enclosure url="https://audio.desiringgod.org/20030223-en-god-s-ultimate-purpose-vessels-of-mercy-knowing-the-riches-of-his-glory.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>138</kabod:partNumber>
+      <kabod:partNumber>139</kabod:partNumber>
       <kabod:scripture>Romans 9:23–24</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="23" endCh="9" endV="24"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gods-ultimate-purpose</kabod:transcriptUrl>
@@ -1537,7 +1557,7 @@
       <pubDate>Sun, 27 Apr 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-gentiles-are-included</guid>
       <enclosure url="https://audio.desiringgod.org/20030427-en-the-gentiles-are-included.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>139</kabod:partNumber>
+      <kabod:partNumber>140</kabod:partNumber>
       <kabod:scripture>Romans 9:24–29</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="24" endCh="9" endV="29"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-gentiles-are-included</kabod:transcriptUrl>
@@ -1548,7 +1568,7 @@
       <pubDate>Sun, 04 May 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-gentiles-have-obtained-righteousness-by-faith</guid>
       <enclosure url="https://audio.desiringgod.org/20030504-en-the-gentiles-have-obtained-righteousness-by-faith.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>140</kabod:partNumber>
+      <kabod:partNumber>141</kabod:partNumber>
       <kabod:scripture>Romans 9:30–33</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="9" startV="30" endCh="9" endV="33"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-gentiles-have-obtained-righteousness-by-faith</kabod:transcriptUrl>
@@ -1559,7 +1579,7 @@
       <pubDate>Sun, 11 May 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-to-submit-to-the-righteousness-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20030511-en-how-to-submit-to-the-righteousness-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>141</kabod:partNumber>
+      <kabod:partNumber>142</kabod:partNumber>
       <kabod:scripture>Romans 10:1–4</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="10" startV="1" endCh="10" endV="4"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-to-submit-to-the-righteousness-of-god</kabod:transcriptUrl>
@@ -1570,7 +1590,7 @@
       <pubDate>Sun, 18 May 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-word-of-faith-that-we-proclaim-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20030518-en-the-word-of-faith-that-we-proclaim-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>142</kabod:partNumber>
+      <kabod:partNumber>143</kabod:partNumber>
       <kabod:scripture>Romans 10:5–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="10" startV="5" endCh="10" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-word-of-faith-that-we-proclaim-part-1</kabod:transcriptUrl>
@@ -1581,7 +1601,7 @@
       <pubDate>Sun, 25 May 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-word-of-faith-that-we-proclaim-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20030525-en-the-word-of-faith-that-we-proclaim-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>143</kabod:partNumber>
+      <kabod:partNumber>144</kabod:partNumber>
       <kabod:scripture>Romans 10:5–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="10" startV="5" endCh="10" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-word-of-faith-that-we-proclaim-part-2</kabod:transcriptUrl>
@@ -1592,7 +1612,7 @@
       <pubDate>Sun, 01 Jun 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-shall-people-be-saved-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20030601-en-how-shall-people-be-saved-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>144</kabod:partNumber>
+      <kabod:partNumber>145</kabod:partNumber>
       <kabod:scripture>Romans 10:13–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="10" startV="13" endCh="10" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-shall-people-be-saved-part-1</kabod:transcriptUrl>
@@ -1603,7 +1623,7 @@
       <pubDate>Sun, 31 Aug 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-shall-people-be-saved-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20030831-en-how-shall-people-be-saved-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>145</kabod:partNumber>
+      <kabod:partNumber>146</kabod:partNumber>
       <kabod:scripture>Romans 10:13–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="10" startV="13" endCh="10" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-shall-people-be-saved-part-2</kabod:transcriptUrl>
@@ -1614,7 +1634,7 @@
       <pubDate>Sun, 02 Nov 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">has-god-rejected-his-people-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20031102-en-has-god-rejected-his-people-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>146</kabod:partNumber>
+      <kabod:partNumber>147</kabod:partNumber>
       <kabod:scripture>Romans 11:1–6</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="1" endCh="11" endV="6"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/has-god-rejected-his-people-part-1</kabod:transcriptUrl>
@@ -1625,7 +1645,7 @@
       <pubDate>Sun, 09 Nov 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">has-god-rejected-his-people-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20031109-en-has-god-rejected-his-people-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>147</kabod:partNumber>
+      <kabod:partNumber>148</kabod:partNumber>
       <kabod:scripture>Romans 11:1–6</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="1" endCh="11" endV="6"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/has-god-rejected-his-people-part-2</kabod:transcriptUrl>
@@ -1636,7 +1656,7 @@
       <pubDate>Sun, 16 Nov 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">for-gods-sake-let-grace-be-grace</guid>
       <enclosure url="https://audio.desiringgod.org/20031116-en-for-god-s-sake-let-grace-be-grace.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>148</kabod:partNumber>
+      <kabod:partNumber>149</kabod:partNumber>
       <kabod:scripture>Romans 11:1–10</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="1" endCh="11" endV="10"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/for-gods-sake-let-grace-be-grace</kabod:transcriptUrl>
@@ -1647,7 +1667,7 @@
       <pubDate>Sun, 23 Nov 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-elect-obtained-it-but-the-rest-were-hardened</guid>
       <enclosure url="https://audio.desiringgod.org/20031123-en-the-elect-obtained-it-but-the-rest-were-hardened.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>149</kabod:partNumber>
+      <kabod:partNumber>150</kabod:partNumber>
       <kabod:scripture>Romans 11:7–10</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="7" endCh="11" endV="10"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-elect-obtained-it-but-the-rest-were-hardened</kabod:transcriptUrl>
@@ -1658,7 +1678,7 @@
       <pubDate>Sun, 30 Nov 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">pastoral-thoughts-on-the-doctrine-of-election</guid>
       <enclosure url="https://audio.desiringgod.org/20031130-en-pastoral-thoughts-on-the-doctrine-of-election.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>150</kabod:partNumber>
+      <kabod:partNumber>151</kabod:partNumber>
       <kabod:scripture>Romans 11:5–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="5" endCh="11" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/pastoral-thoughts-on-the-doctrine-of-election</kabod:transcriptUrl>
@@ -1669,7 +1689,7 @@
       <pubDate>Sun, 07 Dec 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">did-israel-stumble-in-order-that-they-might-fall</guid>
       <enclosure url="https://audio.desiringgod.org/20031207-en-did-israel-stumble-in-order-that-they-might-fall.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>151</kabod:partNumber>
+      <kabod:partNumber>152</kabod:partNumber>
       <kabod:scripture>Romans 11:11–16</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="11" endCh="11" endV="16"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/did-israel-stumble-in-order-that-they-might-fall</kabod:transcriptUrl>
@@ -1680,7 +1700,7 @@
       <pubDate>Sun, 14 Dec 2003 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">if-the-root-is-holy-the-branches-are-holy</guid>
       <enclosure url="https://audio.desiringgod.org/20031214-en-if-the-root-is-holy-the-branches-are-holy.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>152</kabod:partNumber>
+      <kabod:partNumber>153</kabod:partNumber>
       <kabod:scripture>Romans 11:13–24</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="13" endCh="11" endV="24"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/if-the-root-is-holy-the-branches-are-holy</kabod:transcriptUrl>
@@ -1691,7 +1711,7 @@
       <pubDate>Sun, 01 Feb 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-jewish-root-supports-you-through-your-faith-alone</guid>
       <enclosure url="https://audio.desiringgod.org/20040201-en-the-jewish-root-supports-you-through-your-faith-alone.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>153</kabod:partNumber>
+      <kabod:partNumber>154</kabod:partNumber>
       <kabod:scripture>Romans 11:13–24</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="13" endCh="11" endV="24"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-jewish-root-supports-you-through-your-faith-alone</kabod:transcriptUrl>
@@ -1702,7 +1722,7 @@
       <pubDate>Sun, 08 Feb 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">stand-fast-through-faith</guid>
       <enclosure url="https://audio.desiringgod.org/20040208-en-you-stand-fast-through-faith-so-do-not-become-proud-but-fear.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>154</kabod:partNumber>
+      <kabod:partNumber>155</kabod:partNumber>
       <kabod:scripture>Romans 11:17–24</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="17" endCh="11" endV="24"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/stand-fast-through-faith</kabod:transcriptUrl>
@@ -1713,7 +1733,7 @@
       <pubDate>Sun, 15 Feb 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">continue-in-the-kindness-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20040215-en-continue-in-the-kindness-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>155</kabod:partNumber>
+      <kabod:partNumber>156</kabod:partNumber>
       <kabod:scripture>Romans 11:17–22</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="17" endCh="11" endV="22"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/continue-in-the-kindness-of-god</kabod:transcriptUrl>
@@ -1724,7 +1744,7 @@
       <pubDate>Sun, 22 Feb 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">look-at-the-kindness-and-the-severity-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20040222-en-look-at-the-kindness-and-the-severity-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>156</kabod:partNumber>
+      <kabod:partNumber>157</kabod:partNumber>
       <kabod:scripture>Romans 11:17–24</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="17" endCh="11" endV="24"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/look-at-the-kindness-and-the-severity-of-god</kabod:transcriptUrl>
@@ -1735,7 +1755,7 @@
       <pubDate>Sun, 29 Feb 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">all-israel-will-be-saved</guid>
       <enclosure url="https://audio.desiringgod.org/20040229-en-all-israel-will-be-saved.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>157</kabod:partNumber>
+      <kabod:partNumber>158</kabod:partNumber>
       <kabod:scripture>Romans 11:22–29</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="22" endCh="11" endV="29"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/all-israel-will-be-saved</kabod:transcriptUrl>
@@ -1746,7 +1766,7 @@
       <pubDate>Sun, 07 Mar 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">israel-palestine-and-the-middle-east</guid>
       <enclosure url="https://audio.desiringgod.org/20040307-en-israel-palestine-and-the-middle-east.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>158</kabod:partNumber>
+      <kabod:partNumber>159</kabod:partNumber>
       <kabod:scripture>Romans 11:25–32</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="25" endCh="11" endV="32"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/israel-palestine-and-the-middle-east</kabod:transcriptUrl>
@@ -1757,7 +1777,7 @@
       <pubDate>Sun, 14 Mar 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gods-design-for-history-the-glory-of-his-mercy</guid>
       <enclosure url="https://audio.desiringgod.org/20040314-en-god-s-design-for-history-the-glory-of-his-mercy.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>159</kabod:partNumber>
+      <kabod:partNumber>160</kabod:partNumber>
       <kabod:scripture>Romans 11:28–32</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="28" endCh="11" endV="32"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gods-design-for-history-the-glory-of-his-mercy</kabod:transcriptUrl>
@@ -1768,7 +1788,7 @@
       <pubDate>Sun, 21 Mar 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-deep-riches-and-wisdom-and-knowledge-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20040321-en-the-deep-riches-and-wisdom-and-knowledge-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>160</kabod:partNumber>
+      <kabod:partNumber>161</kabod:partNumber>
       <kabod:scripture>Romans 11:33–36</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="33" endCh="11" endV="36"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-deep-riches-and-wisdom-and-knowledge-of-god</kabod:transcriptUrl>
@@ -1779,7 +1799,7 @@
       <pubDate>Sun, 28 Mar 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">from-god-to-god-through-god</guid>
       <enclosure url="https://audio.desiringgod.org/20040328-en-all-things-are-from-god-through-god-and-to-god-the-glory-is-all-his.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>161</kabod:partNumber>
+      <kabod:partNumber>162</kabod:partNumber>
       <kabod:scripture>Romans 11:33–36</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="11" startV="33" endCh="11" endV="36"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/from-god-to-god-through-god</kabod:transcriptUrl>
@@ -1790,7 +1810,7 @@
       <pubDate>Sun, 06 Jun 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">build-your-life-on-the-mercies-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20040606-en-build-your-life-on-the-mercies-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>162</kabod:partNumber>
+      <kabod:partNumber>163</kabod:partNumber>
       <kabod:scripture>Romans 12:1–2</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="2"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/build-your-life-on-the-mercies-of-god</kabod:transcriptUrl>
@@ -1801,7 +1821,7 @@
       <pubDate>Sun, 13 Jun 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">present-your-bodies-as-a-living-sacrifice-to-god</guid>
       <enclosure url="https://audio.desiringgod.org/20040613-en-present-your-bodies-as-a-living-sacrifice-to-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>163</kabod:partNumber>
+      <kabod:partNumber>164</kabod:partNumber>
       <kabod:scripture>Romans 12:1–2</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="2"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/present-your-bodies-as-a-living-sacrifice-to-god</kabod:transcriptUrl>
@@ -1812,7 +1832,7 @@
       <pubDate>Sun, 27 Jun 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">do-not-be-conformed-to-this-world</guid>
       <enclosure url="https://audio.desiringgod.org/20040627-en-do-not-be-conformed-to-this-world.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>164</kabod:partNumber>
+      <kabod:partNumber>165</kabod:partNumber>
       <kabod:scripture>Romans 12:1–2</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="2"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/do-not-be-conformed-to-this-world</kabod:transcriptUrl>
@@ -1823,7 +1843,7 @@
       <pubDate>Sun, 08 Aug 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">discerning-the-will-of-god-concerning-homosexuality-and-marriage</guid>
       <enclosure url="https://audio.desiringgod.org/20040808-en-discerning-the-will-of-god-concerning-homosexuality-and-marriage.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>165</kabod:partNumber>
+      <kabod:partNumber>166</kabod:partNumber>
       <kabod:scripture>Romans 12:1–2</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="2"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/discerning-the-will-of-god-concerning-homosexuality-and-marriage</kabod:transcriptUrl>
@@ -1834,7 +1854,7 @@
       <pubDate>Sun, 15 Aug 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-renewed-mind-and-how-to-have-it</guid>
       <enclosure url="https://audio.desiringgod.org/20040815-en-the-renewed-mind-and-how-to-have-it.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>166</kabod:partNumber>
+      <kabod:partNumber>167</kabod:partNumber>
       <kabod:scripture>Romans 12:1–2</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="2"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-renewed-mind-and-how-to-have-it</kabod:transcriptUrl>
@@ -1845,7 +1865,7 @@
       <pubDate>Sun, 22 Aug 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">what-is-the-will-of-god-and-how-do-we-know-it</guid>
       <enclosure url="https://audio.desiringgod.org/20040822-en-what-is-the-will-of-god-and-how-do-we-know-it.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>167</kabod:partNumber>
+      <kabod:partNumber>168</kabod:partNumber>
       <kabod:scripture>Romans 12:1–2</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="2"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/what-is-the-will-of-god-and-how-do-we-know-it</kabod:transcriptUrl>
@@ -1856,7 +1876,7 @@
       <pubDate>Sun, 29 Aug 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">assessing-ourselves-with-our-god-assigned-measure-of-faith-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20040829-en-assessing-ourselves-with-our-god-assigned-measure-of-faith-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>168</kabod:partNumber>
+      <kabod:partNumber>169</kabod:partNumber>
       <kabod:scripture>Romans 12:1–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/assessing-ourselves-with-our-god-assigned-measure-of-faith-part-1</kabod:transcriptUrl>
@@ -1867,7 +1887,7 @@
       <pubDate>Sun, 05 Sep 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">assessing-ourselves-with-our-god-assigned-measure-of-faith-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20040905-en-assessing-ourselves-with-our-god-assigned-measure-of-faith-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>169</kabod:partNumber>
+      <kabod:partNumber>170</kabod:partNumber>
       <kabod:scripture>Romans 12:1–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/assessing-ourselves-with-our-god-assigned-measure-of-faith-part-2</kabod:transcriptUrl>
@@ -1878,7 +1898,7 @@
       <pubDate>Sun, 12 Sep 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">faith-the-root-and-trait-of-all-spiritual-gifts</guid>
       <enclosure url="https://audio.desiringgod.org/20040912-en-faith-the-root-and-trait-of-all-spiritual-gifts.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>170</kabod:partNumber>
+      <kabod:partNumber>171</kabod:partNumber>
       <kabod:scripture>Romans 12:1–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/faith-the-root-and-trait-of-all-spiritual-gifts</kabod:transcriptUrl>
@@ -1889,7 +1909,7 @@
       <pubDate>Sun, 19 Sep 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">we-though-many-are-one-body-in-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20040919-en-we-though-many-are-one-body-in-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>171</kabod:partNumber>
+      <kabod:partNumber>172</kabod:partNumber>
       <kabod:scripture>Romans 12:1–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/we-though-many-are-one-body-in-christ</kabod:transcriptUrl>
@@ -1900,7 +1920,7 @@
       <pubDate>Sun, 10 Oct 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">using-our-gifts-in-proportion-to-our-faith-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20041010-en-using-our-gifts-in-proportion-to-our-faith-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>172</kabod:partNumber>
+      <kabod:partNumber>173</kabod:partNumber>
       <kabod:scripture>Romans 12:1–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/using-our-gifts-in-proportion-to-our-faith-part-1</kabod:transcriptUrl>
@@ -1911,7 +1931,7 @@
       <pubDate>Sun, 07 Nov 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">using-our-gifts-in-proportion-to-our-faith-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20041107-en-using-our-gifts-in-proportion-to-our-faith-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>173</kabod:partNumber>
+      <kabod:partNumber>174</kabod:partNumber>
       <kabod:scripture>Romans 12:1–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="1" endCh="12" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/using-our-gifts-in-proportion-to-our-faith-part-2</kabod:transcriptUrl>
@@ -1922,7 +1942,7 @@
       <pubDate>Sun, 14 Nov 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">using-our-gifts-in-proportion-to-our-faith-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20041114-en-using-our-gifts-in-proportion-to-our-faith-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>174</kabod:partNumber>
+      <kabod:partNumber>175</kabod:partNumber>
       <kabod:scripture>Romans 12:3–8</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="3" endCh="12" endV="8"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/using-our-gifts-in-proportion-to-our-faith-part-3</kabod:transcriptUrl>
@@ -1933,7 +1953,7 @@
       <pubDate>Sun, 21 Nov 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">let-love-be-genuine</guid>
       <enclosure url="https://audio.desiringgod.org/20041121-en-let-love-be-genuine.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>175</kabod:partNumber>
+      <kabod:partNumber>176</kabod:partNumber>
       <kabod:scripture>Romans 12:9</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="9" endCh="12" endV="9"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/let-love-be-genuine</kabod:transcriptUrl>
@@ -1944,10 +1964,21 @@
       <pubDate>Sun, 28 Nov 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">abhor-what-is-evil-hold-fast-to-what-is-good</guid>
       <enclosure url="https://audio.desiringgod.org/20041128-en-abhor-what-is-evil-hold-fast-to-what-is-good.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>176</kabod:partNumber>
+      <kabod:partNumber>177</kabod:partNumber>
       <kabod:scripture>Romans 12:9</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="9" endCh="12" endV="9"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/abhor-what-is-evil-hold-fast-to-what-is-good</kabod:transcriptUrl>
+      <kabod:transcriptSelector>.message-transcript, .body-text, article</kabod:transcriptSelector>
+    </item>
+    <item>
+      <title>Treasuring Christ Together: The Vision and Its Cost</title>
+      <pubDate>Sun, 05 Dec 2004 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">treasuring-christ-together-the-vision-and-its-cost</guid>
+      <enclosure url="https://audio.desiringgod.org/20041205-en-treasuring-christ-together-the-vision-and-its-cost.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>178</kabod:partNumber>
+      <kabod:scripture>Romans 15:14–21</kabod:scripture>
+      <kabod:scriptureRef book="Romans" startCh="15" startV="14" endCh="15" endV="21"/>
+      <kabod:transcriptUrl>https://www.desiringgod.org/messages/treasuring-christ-together-the-vision-and-its-cost</kabod:transcriptUrl>
       <kabod:transcriptSelector>.message-transcript, .body-text, article</kabod:transcriptSelector>
     </item>
     <item>
@@ -1955,7 +1986,7 @@
       <pubDate>Sun, 12 Dec 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">love-one-another-with-brotherly-affection</guid>
       <enclosure url="https://audio.desiringgod.org/20041212-en-love-one-another-with-brotherly-affection.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>177</kabod:partNumber>
+      <kabod:partNumber>179</kabod:partNumber>
       <kabod:scripture>Romans 12:10</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="10" endCh="12" endV="10"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/love-one-another-with-brotherly-affection</kabod:transcriptUrl>
@@ -1966,7 +1997,7 @@
       <pubDate>Sun, 19 Dec 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">happy-in-hope-patient-in-pain-constant-in-prayer</guid>
       <enclosure url="https://audio.desiringgod.org/20041219-en-happy-in-hope-patient-in-pain-constant-in-prayer.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>178</kabod:partNumber>
+      <kabod:partNumber>180</kabod:partNumber>
       <kabod:scripture>Romans 12:12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="12" endCh="12" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/happy-in-hope-patient-in-pain-constant-in-prayer</kabod:transcriptUrl>
@@ -1977,7 +2008,7 @@
       <pubDate>Sun, 26 Dec 2004 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">be-constant-in-prayer-for-the-joy-of-hope</guid>
       <enclosure url="https://audio.desiringgod.org/20041226-en-be-constant-in-prayer-for-the-joy-of-hope.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>179</kabod:partNumber>
+      <kabod:partNumber>181</kabod:partNumber>
       <kabod:scripture>Ephesians 1:15–23, Romans 12:12</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="12" endCh="12" endV="12"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/be-constant-in-prayer-for-the-joy-of-hope</kabod:transcriptUrl>
@@ -1988,7 +2019,7 @@
       <pubDate>Sun, 02 Jan 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">use-the-inspired-scriptures-to-rejoice-in-hope</guid>
       <enclosure url="https://audio.desiringgod.org/20050102-en-use-the-inspired-scriptures-to-rejoice-in-hope.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>180</kabod:partNumber>
+      <kabod:partNumber>182</kabod:partNumber>
       <kabod:scripture>Romans 15:1–4</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="1" endCh="15" endV="4"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/use-the-inspired-scriptures-to-rejoice-in-hope</kabod:transcriptUrl>
@@ -1999,7 +2030,7 @@
       <pubDate>Sun, 09 Jan 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">boiling-for-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20050109-en-boiling-for-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>181</kabod:partNumber>
+      <kabod:partNumber>183</kabod:partNumber>
       <kabod:scripture>Romans 12:11</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="11" endCh="12" endV="11"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/boiling-for-christ</kabod:transcriptUrl>
@@ -2010,7 +2041,7 @@
       <pubDate>Sun, 30 Jan 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">lavish-giving-loving-guests-living-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20050130-en-lavish-giving-loving-guests-living-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>182</kabod:partNumber>
+      <kabod:partNumber>184</kabod:partNumber>
       <kabod:scripture>Romans 12:13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="13" endCh="12" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/lavish-giving-loving-guests-living-christ</kabod:transcriptUrl>
@@ -2021,7 +2052,7 @@
       <pubDate>Sun, 06 Feb 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">bless-those-who-persecute-you</guid>
       <enclosure url="https://audio.desiringgod.org/20050206-en-bless-those-who-persecute-you.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>183</kabod:partNumber>
+      <kabod:partNumber>185</kabod:partNumber>
       <kabod:scripture>Romans 12:14–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="14" endCh="12" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/bless-those-who-persecute-you</kabod:transcriptUrl>
@@ -2032,7 +2063,7 @@
       <pubDate>Sun, 13 Feb 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">live-peaceably-with-all-if-possible</guid>
       <enclosure url="https://audio.desiringgod.org/20050213-en-live-peaceably-with-all-if-possible.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>184</kabod:partNumber>
+      <kabod:partNumber>186</kabod:partNumber>
       <kabod:scripture>Romans 12:14–18</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="14" endCh="12" endV="18"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/live-peaceably-with-all-if-possible</kabod:transcriptUrl>
@@ -2043,7 +2074,7 @@
       <pubDate>Sun, 20 Feb 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">do-not-avenge-yourselves-but-give-place-to-wrath</guid>
       <enclosure url="https://audio.desiringgod.org/20050220-en-do-not-avenge-yourselves-but-give-place-to-wrath.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>185</kabod:partNumber>
+      <kabod:partNumber>187</kabod:partNumber>
       <kabod:scripture>Romans 12:16–20</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="16" endCh="12" endV="20"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/do-not-avenge-yourselves-but-give-place-to-wrath</kabod:transcriptUrl>
@@ -2054,7 +2085,7 @@
       <pubDate>Sun, 27 Feb 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gods-wrath</guid>
       <enclosure url="https://audio.desiringgod.org/20050227-en-god-s-wrath-vengeance-is-mine-i-will-repay-says-the-lord.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>186</kabod:partNumber>
+      <kabod:partNumber>188</kabod:partNumber>
       <kabod:scripture>Romans 12:19–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="19" endCh="12" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gods-wrath</kabod:transcriptUrl>
@@ -2065,7 +2096,7 @@
       <pubDate>Sun, 06 Mar 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-present-effects-of-trembling-at-the-wrath-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20050306-en-the-present-effects-of-trembling-at-the-wrath-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>187</kabod:partNumber>
+      <kabod:partNumber>189</kabod:partNumber>
       <kabod:scripture>Romans 12:19</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="19" endCh="12" endV="19"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-present-effects-of-trembling-at-the-wrath-of-god</kabod:transcriptUrl>
@@ -2076,7 +2107,7 @@
       <pubDate>Sun, 13 Mar 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">when-is-it-right-to-repay-evil-with-pain</guid>
       <enclosure url="https://audio.desiringgod.org/20050313-en-when-is-it-right-to-repay-evil-with-pain.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>188</kabod:partNumber>
+      <kabod:partNumber>190</kabod:partNumber>
       <kabod:scripture>Romans 12:9–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="9" endCh="12" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/when-is-it-right-to-repay-evil-with-pain</kabod:transcriptUrl>
@@ -2087,7 +2118,7 @@
       <pubDate>Sun, 20 Mar 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">christ-overcame-evil-with-good-do-the-same</guid>
       <enclosure url="https://audio.desiringgod.org/20050320-en-christ-overcame-evil-with-good-do-the-same.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>189</kabod:partNumber>
+      <kabod:partNumber>191</kabod:partNumber>
       <kabod:scripture>Romans 12:20–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="12" startV="20" endCh="12" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/christ-overcame-evil-with-good-do-the-same</kabod:transcriptUrl>
@@ -2098,7 +2129,7 @@
       <pubDate>Sun, 12 Jun 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">subjection-to-god-and-subjection-to-the-state-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20050612-en-subjection-to-god-and-subjection-to-the-state-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>190</kabod:partNumber>
+      <kabod:partNumber>192</kabod:partNumber>
       <kabod:scripture>Romans 13:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="1" endCh="13" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/subjection-to-god-and-subjection-to-the-state-part-1</kabod:transcriptUrl>
@@ -2109,7 +2140,7 @@
       <pubDate>Sun, 03 Jul 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">subjection-to-god-and-subjection-to-the-state-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20050703-en-subjection-to-god-and-subjection-to-the-state-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>191</kabod:partNumber>
+      <kabod:partNumber>193</kabod:partNumber>
       <kabod:scripture>Romans 13:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="1" endCh="13" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/subjection-to-god-and-subjection-to-the-state-part-2</kabod:transcriptUrl>
@@ -2120,7 +2151,7 @@
       <pubDate>Sun, 10 Jul 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">subjection-to-god-and-subjection-to-the-state-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20050710-en-subjection-to-god-and-subjection-to-the-state-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>192</kabod:partNumber>
+      <kabod:partNumber>194</kabod:partNumber>
       <kabod:scripture>Romans 13:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="1" endCh="13" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/subjection-to-god-and-subjection-to-the-state-part-3</kabod:transcriptUrl>
@@ -2131,7 +2162,7 @@
       <pubDate>Sun, 17 Jul 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">submission-to-civil-authority</guid>
       <enclosure url="https://audio.desiringgod.org/20050717-en-subjection-to-god-and-subjection-to-the-state-part-4.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>193</kabod:partNumber>
+      <kabod:partNumber>195</kabod:partNumber>
       <kabod:scripture>Romans 13:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="1" endCh="13" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/submission-to-civil-authority</kabod:transcriptUrl>
@@ -2142,7 +2173,7 @@
       <pubDate>Sun, 24 Jul 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">love-is-a-fulfilling-of-the-law-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20050724-en-love-is-a-fulfilling-of-the-law-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>194</kabod:partNumber>
+      <kabod:partNumber>196</kabod:partNumber>
       <kabod:scripture>Romans 13:7–14</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="7" endCh="13" endV="14"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/love-is-a-fulfilling-of-the-law-part-1</kabod:transcriptUrl>
@@ -2153,7 +2184,7 @@
       <pubDate>Sun, 31 Jul 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">love-is-a-fulfilling-of-the-law-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20050731-en-love-is-a-fulfilling-of-the-law-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>195</kabod:partNumber>
+      <kabod:partNumber>197</kabod:partNumber>
       <kabod:scripture>Romans 13:8–10</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="8" endCh="13" endV="10"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/love-is-a-fulfilling-of-the-law-part-2</kabod:transcriptUrl>
@@ -2164,7 +2195,7 @@
       <pubDate>Sun, 07 Aug 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">love-is-a-fulfilling-of-the-law-part-3</guid>
       <enclosure url="https://audio.desiringgod.org/20050807-en-love-is-a-fulfilling-of-the-law-part-3.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>196</kabod:partNumber>
+      <kabod:partNumber>198</kabod:partNumber>
       <kabod:scripture>Romans 13:8–10</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="8" endCh="13" endV="10"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/love-is-a-fulfilling-of-the-law-part-3</kabod:transcriptUrl>
@@ -2175,7 +2206,7 @@
       <pubDate>Sun, 14 Aug 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">put-on-the-lord-jesus-christ-part-1</guid>
       <enclosure url="https://audio.desiringgod.org/20050814-en-put-on-the-lord-jesus-christ-part-1.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>197</kabod:partNumber>
+      <kabod:partNumber>199</kabod:partNumber>
       <kabod:scripture>Romans 13:11–14</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="11" endCh="13" endV="14"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/put-on-the-lord-jesus-christ-part-1</kabod:transcriptUrl>
@@ -2186,7 +2217,7 @@
       <pubDate>Sun, 28 Aug 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">put-on-the-lord-jesus-christ-part-2</guid>
       <enclosure url="https://audio.desiringgod.org/20050828-en-put-on-the-lord-jesus-christ-part-2.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>198</kabod:partNumber>
+      <kabod:partNumber>200</kabod:partNumber>
       <kabod:scripture>Romans 13:11–14</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="13" startV="11" endCh="13" endV="14"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/put-on-the-lord-jesus-christ-part-2</kabod:transcriptUrl>
@@ -2197,7 +2228,7 @@
       <pubDate>Sun, 04 Sep 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">how-to-welcome-a-weak-brother</guid>
       <enclosure url="https://audio.desiringgod.org/20050904-en-how-to-welcome-a-weak-brother.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>199</kabod:partNumber>
+      <kabod:partNumber>201</kabod:partNumber>
       <kabod:scripture>Romans 14:1–6</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="14" startV="1" endCh="14" endV="6"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/how-to-welcome-a-weak-brother</kabod:transcriptUrl>
@@ -2208,7 +2239,7 @@
       <pubDate>Sun, 25 Sep 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">each-one-should-be-fully-convinced-in-his-own-mind</guid>
       <enclosure url="https://audio.desiringgod.org/20050925-en-each-one-should-be-fully-convinced-in-his-own-mind.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>200</kabod:partNumber>
+      <kabod:partNumber>202</kabod:partNumber>
       <kabod:scripture>Romans 14:1–9</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="14" startV="1" endCh="14" endV="9"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/each-one-should-be-fully-convinced-in-his-own-mind</kabod:transcriptUrl>
@@ -2219,7 +2250,7 @@
       <pubDate>Sun, 02 Oct 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">is-there-a-lords-day</guid>
       <enclosure url="https://audio.desiringgod.org/20051002-en-is-there-a-lord-s-day.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>201</kabod:partNumber>
+      <kabod:partNumber>203</kabod:partNumber>
       <kabod:scripture>Romans 14:1–9</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="14" startV="1" endCh="14" endV="9"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/is-there-a-lords-day</kabod:transcriptUrl>
@@ -2230,7 +2261,7 @@
       <pubDate>Sun, 30 Oct 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">we-will-all-stand-before-the-judgment-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20051030-en-we-will-all-stand-before-the-judgment-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>202</kabod:partNumber>
+      <kabod:partNumber>204</kabod:partNumber>
       <kabod:scripture>Romans 14:10–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="14" startV="10" endCh="14" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/we-will-all-stand-before-the-judgment-of-god</kabod:transcriptUrl>
@@ -2241,7 +2272,7 @@
       <pubDate>Sun, 06 Nov 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">do-not-destroy-the-work-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20051106-en-do-not-destroy-the-work-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>203</kabod:partNumber>
+      <kabod:partNumber>205</kabod:partNumber>
       <kabod:scripture>Romans 14:14–23</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="14" startV="14" endCh="14" endV="23"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/do-not-destroy-the-work-of-god</kabod:transcriptUrl>
@@ -2252,7 +2283,7 @@
       <pubDate>Sun, 13 Nov 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-kingdom-of-god-is-righteousness-and-peace-and-joy-in-the-holy-spirit</guid>
       <enclosure url="https://audio.desiringgod.org/20051113-en-the-kingdom-of-god-is-righteousness-and-peace-and-joy-in-the-holy-spirit.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>204</kabod:partNumber>
+      <kabod:partNumber>206</kabod:partNumber>
       <kabod:scripture>Romans 14:16–19</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="14" startV="16" endCh="14" endV="19"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-kingdom-of-god-is-righteousness-and-peace-and-joy-in-the-holy-spirit</kabod:transcriptUrl>
@@ -2263,7 +2294,7 @@
       <pubDate>Sun, 27 Nov 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">welcome-one-another-to-the-glory-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20051127-en-welcome-one-another-to-the-glory-of-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>205</kabod:partNumber>
+      <kabod:partNumber>207</kabod:partNumber>
       <kabod:scripture>Romans 15:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="1" endCh="15" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/welcome-one-another-to-the-glory-of-god</kabod:transcriptUrl>
@@ -2274,7 +2305,7 @@
       <pubDate>Sun, 04 Dec 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">why-christ-became-a-servant-of-the-jews</guid>
       <enclosure url="https://audio.desiringgod.org/20051204-en-why-christ-became-a-servant-of-the-jews.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>206</kabod:partNumber>
+      <kabod:partNumber>208</kabod:partNumber>
       <kabod:scripture>Romans 15:1–9</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="1" endCh="15" endV="9"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/why-christ-became-a-servant-of-the-jews</kabod:transcriptUrl>
@@ -2285,7 +2316,7 @@
       <pubDate>Sun, 11 Dec 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">gentiles-rejoice-in-the-root-of-jesse</guid>
       <enclosure url="https://audio.desiringgod.org/20051211-en-gentiles-rejoice-in-the-root-of-jesse.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>207</kabod:partNumber>
+      <kabod:partNumber>209</kabod:partNumber>
       <kabod:scripture>Romans 15:7–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="7" endCh="15" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/gentiles-rejoice-in-the-root-of-jesse</kabod:transcriptUrl>
@@ -2296,7 +2327,7 @@
       <pubDate>Sun, 18 Dec 2005 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">word-of-promise-spirit-of-god-hope-of-man</guid>
       <enclosure url="https://audio.desiringgod.org/20051218-en-word-of-promise-spirit-of-god-hope-of-man.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>208</kabod:partNumber>
+      <kabod:partNumber>210</kabod:partNumber>
       <kabod:scripture>Romans 15:7–13</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="7" endCh="15" endV="13"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/word-of-promise-spirit-of-god-hope-of-man</kabod:transcriptUrl>
@@ -2307,7 +2338,7 @@
       <pubDate>Sun, 29 Jan 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">a-pastors-offering-to-god-of-holy-people</guid>
       <enclosure url="https://audio.desiringgod.org/20060129-en-a-pastor-s-offering-to-god-of-holy-people.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>209</kabod:partNumber>
+      <kabod:partNumber>211</kabod:partNumber>
       <kabod:scripture>Romans 15:14–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="14" endCh="15" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/a-pastors-offering-to-god-of-holy-people</kabod:transcriptUrl>
@@ -2318,7 +2349,7 @@
       <pubDate>Sun, 20 Aug 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">by-signs-and-wonders-where-christ-has-not-been-named</guid>
       <enclosure url="https://audio.desiringgod.org/20060820-en-by-signs-and-wonders-where-christ-has-not-been-named.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>210</kabod:partNumber>
+      <kabod:partNumber>212</kabod:partNumber>
       <kabod:scripture>Romans 15:14–21</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="14" endCh="15" endV="21"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/by-signs-and-wonders-where-christ-has-not-been-named</kabod:transcriptUrl>
@@ -2329,7 +2360,7 @@
       <pubDate>Sun, 27 Aug 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">holy-ambition--2</guid>
       <enclosure url="https://audio.desiringgod.org/20060827-en-holy-ambition-to-preach-where-christ-has-not-been-named.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>211</kabod:partNumber>
+      <kabod:partNumber>213</kabod:partNumber>
       <kabod:scripture>Romans 15:18–24</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="18" endCh="15" endV="24"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/holy-ambition--2</kabod:transcriptUrl>
@@ -2340,7 +2371,7 @@
       <pubDate>Sun, 10 Sep 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">joy-debt-a-two-thousand-mile-detour-to-jerusalem</guid>
       <enclosure url="https://audio.desiringgod.org/20060910-en-joy-debt-a-two-thousand-mile-detour-to-jerusalem.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>212</kabod:partNumber>
+      <kabod:partNumber>214</kabod:partNumber>
       <kabod:scripture>Romans 15:20–28</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="20" endCh="15" endV="28"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/joy-debt-a-two-thousand-mile-detour-to-jerusalem</kabod:transcriptUrl>
@@ -2351,7 +2382,7 @@
       <pubDate>Sun, 17 Sep 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">resting-and-wrestling-for-the-cause-of-christ-together</guid>
       <enclosure url="https://audio.desiringgod.org/20060917-en-resting-and-wrestling-for-the-cause-of-christ-together.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>213</kabod:partNumber>
+      <kabod:partNumber>215</kabod:partNumber>
       <kabod:scripture>Romans 15:28–33</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="15" startV="28" endCh="15" endV="33"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/resting-and-wrestling-for-the-cause-of-christ-together</kabod:transcriptUrl>
@@ -2362,7 +2393,7 @@
       <pubDate>Sun, 24 Sep 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">commending-and-welcoming-radical-risk-takers-for-christ</guid>
       <enclosure url="https://audio.desiringgod.org/20060924-en-commending-and-welcoming-radical-risk-takers-for-christ.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>214</kabod:partNumber>
+      <kabod:partNumber>216</kabod:partNumber>
       <kabod:scripture>Romans 16:1–7</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="1" endCh="16" endV="7"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/commending-and-welcoming-radical-risk-takers-for-christ</kabod:transcriptUrl>
@@ -2373,7 +2404,7 @@
       <pubDate>Sun, 08 Oct 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">carry-my-love-to-my-beloved</guid>
       <enclosure url="https://audio.desiringgod.org/20061008-en-carry-my-love-to-my-beloved.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>215</kabod:partNumber>
+      <kabod:partNumber>217</kabod:partNumber>
       <kabod:scripture>Romans 16:5–16</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="5" endCh="16" endV="16"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/carry-my-love-to-my-beloved</kabod:transcriptUrl>
@@ -2384,7 +2415,7 @@
       <pubDate>Sun, 05 Nov 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">watch-out-for-those-who-lead-you-away-from-the-truth</guid>
       <enclosure url="https://audio.desiringgod.org/20061105-en-watch-out-for-those-who-lead-you-away-from-the-truth.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>216</kabod:partNumber>
+      <kabod:partNumber>218</kabod:partNumber>
       <kabod:scripture>Romans 16:17–20</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="17" endCh="16" endV="20"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/watch-out-for-those-who-lead-you-away-from-the-truth</kabod:transcriptUrl>
@@ -2395,7 +2426,7 @@
       <pubDate>Sun, 12 Nov 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-god-of-peace-will-soon-crush-satan-under-your-feet</guid>
       <enclosure url="https://audio.desiringgod.org/20061112-en-the-god-of-peace-will-soon-crush-satan-under-your-feet.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>217</kabod:partNumber>
+      <kabod:partNumber>219</kabod:partNumber>
       <kabod:scripture>Romans 16:17–20</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="17" endCh="16" endV="20"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-god-of-peace-will-soon-crush-satan-under-your-feet</kabod:transcriptUrl>
@@ -2406,7 +2437,7 @@
       <pubDate>Sun, 19 Nov 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">thank-god-for-an-inspired-bible</guid>
       <enclosure url="https://audio.desiringgod.org/20061119-en-thank-god-for-an-inspired-bible.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>218</kabod:partNumber>
+      <kabod:partNumber>220</kabod:partNumber>
       <kabod:scripture>Romans 16:21–23</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="21" endCh="16" endV="23"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/thank-god-for-an-inspired-bible</kabod:transcriptUrl>
@@ -2417,7 +2448,7 @@
       <pubDate>Sun, 26 Nov 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">god-strengthens-us-by-the-gospel</guid>
       <enclosure url="https://audio.desiringgod.org/20061126-en-god-strengthens-us-by-the-gospel.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>219</kabod:partNumber>
+      <kabod:partNumber>221</kabod:partNumber>
       <kabod:scripture>Romans 16:25–27</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="25" endCh="16" endV="27"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/god-strengthens-us-by-the-gospel</kabod:transcriptUrl>
@@ -2428,7 +2459,7 @@
       <pubDate>Sun, 03 Dec 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">command-of-god</guid>
       <enclosure url="https://audio.desiringgod.org/20061203-en-command-of-god-the-obedience-of-faith.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>220</kabod:partNumber>
+      <kabod:partNumber>222</kabod:partNumber>
       <kabod:scripture>Romans 16:25–27</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="25" endCh="16" endV="27"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/command-of-god</kabod:transcriptUrl>
@@ -2439,7 +2470,7 @@
       <pubDate>Sun, 10 Dec 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">the-great-work-of-the-only-wise-god</guid>
       <enclosure url="https://audio.desiringgod.org/20061210-en-the-great-work-of-the-only-wise-god.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>221</kabod:partNumber>
+      <kabod:partNumber>223</kabod:partNumber>
       <kabod:scripture>Romans 16:25–27</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="25" endCh="16" endV="27"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/the-great-work-of-the-only-wise-god</kabod:transcriptUrl>
@@ -2450,7 +2481,7 @@
       <pubDate>Sun, 17 Dec 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">to-him-be-glory-forevermore</guid>
       <enclosure url="https://audio.desiringgod.org/20061217-en-to-him-be-glory-forevermore.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>222</kabod:partNumber>
+      <kabod:partNumber>224</kabod:partNumber>
       <kabod:scripture>Romans 16:25–27</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="25" endCh="16" endV="27"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/to-him-be-glory-forevermore</kabod:transcriptUrl>
@@ -2461,7 +2492,7 @@
       <pubDate>Sun, 24 Dec 2006 00:00:00 GMT</pubDate>
       <guid isPermaLink="false">jesus-christ-in-the-book-of-romans</guid>
       <enclosure url="https://audio.desiringgod.org/20061224-en-jesus-christ-in-the-book-of-romans.mp3" type="audio/mpeg"/>
-      <kabod:partNumber>223</kabod:partNumber>
+      <kabod:partNumber>225</kabod:partNumber>
       <kabod:scripture>Romans 16:27</kabod:scripture>
       <kabod:scriptureRef book="Romans" startCh="16" startV="27" endCh="16" endV="27"/>
       <kabod:transcriptUrl>https://www.desiringgod.org/messages/jesus-christ-in-the-book-of-romans</kabod:transcriptUrl>

@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:kabod="https://lofipod.app/ns/kabod/1">
+  <channel>
+    <title>Exposition of Hosea</title>
+    <link>https://www.monergism.com/legacy/mt/mp3/exposition-hosea-11-part-mp3-series</link>
+    <description>William Still's verse-by-verse exposition of Hosea, preached at Gilcomston South Church of Scotland, Aberdeen. Audio courtesy of Tapes from Scotland; hosted by Monergism.</description>
+    <language>en-US</language>
+    <itunes:author>William Still</itunes:author>
+    <kabod:packId>monergism-still-hosea</kabod:packId>
+    <kabod:archived>true</kabod:archived>
+    <kabod:speaker>William Still</kabod:speaker>
+    <kabod:bookOfBible>Hosea</kabod:bookOfBible>
+    <kabod:sourceSite>https://www.monergism.com/legacy/mt/mp3/exposition-hosea-11-part-mp3-series</kabod:sourceSite>
+    <kabod:seriesStart>1965-01-01</kabod:seriesStart>
+    <kabod:seriesEnd>1997-12-31</kabod:seriesEnd>
+    <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
+    <kabod:packVersion>1</kabod:packVersion>
+    <kabod:packRevisionDate>2026-05-14</kabod:packRevisionDate>
+    <kabod:church>Gilcomston South Church of Scotland</kabod:church>
+    <kabod:churchLocation>Aberdeen, Scotland</kabod:churchLocation>
+    <kabod:partTotal>11</kabod:partTotal>
+    <kabod:advertisedTotal>11</kabod:advertisedTotal>
+    <kabod:audioHost>tapesfromscotland.org</kabod:audioHost>
+    <kabod:contentNotes>Source page advertises 11 parts; the actual sermon list contains 11 entries (covers Hosea 1–14). Original preaching dates are not catalogued by the source — pubDate is set to the start of Still's Aberdeen ministry as a placeholder; ordering follows the source's canonical sequence.</kabod:contentNotes>
+    <item>
+      <title>Hosea 1 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2890</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2890.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>1</kabod:partNumber>
+      <kabod:scripture>Hosea 1</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="1" startV="1" endCh="1" endV="11"/>
+    </item>
+    <item>
+      <title>Hosea 2 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2891</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2891.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>2</kabod:partNumber>
+      <kabod:scripture>Hosea 2</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="2" startV="1" endCh="2" endV="23"/>
+    </item>
+    <item>
+      <title>Hosea 3 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2892</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2892.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>3</kabod:partNumber>
+      <kabod:scripture>Hosea 3</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="3" startV="1" endCh="3" endV="5"/>
+    </item>
+    <item>
+      <title>Hosea 4 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2893</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2893.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>4</kabod:partNumber>
+      <kabod:scripture>Hosea 4</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="4" startV="1" endCh="4" endV="19"/>
+    </item>
+    <item>
+      <title>Hosea 5–6 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2894</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2894.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>5</kabod:partNumber>
+      <kabod:scripture>Hosea 5–6</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="5" startV="1" endCh="6" endV="11"/>
+    </item>
+    <item>
+      <title>Hosea 7–8 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2895</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2895.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>6</kabod:partNumber>
+      <kabod:scripture>Hosea 7–8</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="7" startV="1" endCh="8" endV="14"/>
+    </item>
+    <item>
+      <title>Hosea 9 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2896</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2896.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>7</kabod:partNumber>
+      <kabod:scripture>Hosea 9</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="9" startV="1" endCh="9" endV="17"/>
+    </item>
+    <item>
+      <title>Hosea 10:1–15 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2897</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2897.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>8</kabod:partNumber>
+      <kabod:scripture>Hosea 10</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="10" startV="1" endCh="10" endV="15"/>
+    </item>
+    <item>
+      <title>Hosea 11 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2898</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2898.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>9</kabod:partNumber>
+      <kabod:scripture>Hosea 11</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="11" startV="1" endCh="11" endV="12"/>
+    </item>
+    <item>
+      <title>Hosea 12:1–13:14 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2899</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2899.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>10</kabod:partNumber>
+      <kabod:scripture>Hosea 12:1–13:14</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="12" startV="1" endCh="13" endV="14"/>
+    </item>
+    <item>
+      <title>Hosea 14 (Exposition)</title>
+      <pubDate>Fri, 01 Jan 1965 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">still-hos-2900</guid>
+      <enclosure url="http://tapesfromscotland.org/Audio2/2900.mp3" type="audio/mpeg"/>
+      <kabod:partNumber>11</kabod:partNumber>
+      <kabod:scripture>Hosea 14</kabod:scripture>
+      <kabod:scriptureRef book="Hosea" startCh="14" startV="1" endCh="14" endV="9"/>
+    </item>
+  </channel>
+</rss>

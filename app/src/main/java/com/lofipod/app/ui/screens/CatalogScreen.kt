@@ -1,45 +1,50 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+)
 
 package com.lofipod.app.ui.screens
 
+import android.content.Intent
+import android.provider.OpenableColumns
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.EditNote
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.HourglassEmpty
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.room.withTransaction
+import com.lofipod.app.data.db.EpisodeStateEntity
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.PodcastRepository.FeedStatus
 import com.lofipod.app.data.Sources
 import com.lofipod.app.data.db.FeedVisitEntity
@@ -67,6 +72,8 @@ fun CatalogScreen(
     onOpenHistory: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenCanonBrowse: () -> Unit,
+    onOpenKabodPacks: () -> Unit,
+    onOpenDeviceFiles: () -> Unit,
 ) {
     val vm: CatalogViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -95,7 +102,7 @@ fun CatalogScreen(
             }
             if (result != null) {
                 snackbarHostState.showSnackbar(
-                    "Imported \"${result.podcast.title}\" — ${result.podcast.episodes.size} entries"
+                    "Imported \"${result.podcast.title}\" — ${result.podcast.episodes.size} items"
                 )
                 vm.refresh()
             } else {
@@ -110,6 +117,122 @@ fun CatalogScreen(
         .collectAsState(initial = emptyList<FeedVisitEntity>())
     val visitsByFeed = remember(feedVisits) {
         feedVisits.associate { it.feedUrl to it.lastVisitedAt }
+    }
+
+    // "Continue listening": the most recent in-progress episode, straight
+    // from Room so the card appears even on a cold start where the player
+    // session hasn't restored yet. Re-emits on every 10s ticker save, so
+    // the card's progress creeps forward while the episode plays.
+    val resumeRow by app.db.episodeStateDao().observeMostRecentInProgress()
+        .collectAsState(initial = null)
+
+    // Device-files card state: the user's device name (their own setting
+    // when present, hardware model otherwise) + how many files they've
+    // added so the card subtitle reads at a glance.
+    val deviceName = remember {
+        android.provider.Settings.Global.getString(ctx.contentResolver, "device_name")
+            ?.takeIf { it.isNotBlank() } ?: android.os.Build.MODEL
+    }
+    val appSettings = remember { com.lofipod.app.data.Settings(app) }
+    val deviceFiles by appSettings.deviceFiles.collectAsState(initial = emptyList())
+    val deviceFileCount = deviceFiles.size
+
+    // SAF picker for the Device card's long-press "Add audio files…" —
+    // the same contract + persistable-grant dance as DeviceFilesScreen's
+    // own picker, so files added from here appear there identically.
+    val deviceFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            val entries = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri ->
+                    try {
+                        ctx.contentResolver.takePersistableUriPermission(
+                            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                        val name = ctx.contentResolver.query(
+                            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+                        )?.use { c ->
+                            if (c.moveToFirst()) c.getString(0) else null
+                        } ?: uri.lastPathSegment ?: "Audio file"
+                        com.lofipod.app.data.DeviceFileEntry(uri = uri.toString(), name = name)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
+            appSettings.addDeviceFiles(entries)
+            snackbarHostState.showSnackbar(
+                if (entries.isEmpty()) "Couldn't add those files"
+                else "Added ${entries.size} file${if (entries.size == 1) "" else "s"}"
+            )
+        }
+    }
+
+    // ---- Card long-press actions (v0.11) --------------------------------
+    // Every podcast card carries a context menu on touch-and-hold; these
+    // are the shared handlers both call sites (top-level rows and group
+    // children) wire in. All feedback lands on the screen's snackbar.
+    val clipboard = LocalClipboardManager.current
+
+    // Pending "Mark all played" target. The action rewrites every episode
+    // row of one or more feeds — hundreds for a deep archive, thousands
+    // for a group — so it confirms first; the dialog renders near the
+    // bottom of this composable. Single cards pass themselves as a
+    // one-pod target; group headers pass all their loaded children.
+    var confirmMarkAll by remember { mutableStateOf<MarkAllTarget?>(null) }
+
+    val playNewest: (Podcast) -> Unit = { pod ->
+        // Newest by pubDate, not list position — feed order isn't
+        // guaranteed date-ordered. Ties/undated fall back to the feed's
+        // first row (maxByOrNull returns the first max).
+        val newest = pod.episodes.maxByOrNull { it.pubDateMillis ?: Long.MIN_VALUE }
+        if (newest != null) {
+            controller.playEpisode(newest, pod.title, pod.artworkUrl)
+            onOpenNowPlaying()
+        } else {
+            scope.launch { snackbarHostState.showSnackbar("No episodes to play") }
+        }
+    }
+    val refreshFeed: (SourceEntry) -> Unit = { src ->
+        vm.refreshOne(src) { fresh ->
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    if (fresh != null) "Refreshed — ${fresh.episodes.size} episodes"
+                    else "Refresh failed — feed unreachable"
+                )
+            }
+        }
+    }
+    val copyFeedUrl: (String) -> Unit = { url ->
+        clipboard.setText(AnnotatedString(url))
+        scope.launch { snackbarHostState.showSnackbar("Feed URL copied") }
+    }
+    // Refresh several sources (a group's children, or the kabod packs) and
+    // report once at the end. refreshOne's callbacks all land on the main
+    // dispatcher, so the plain captured counters can't race.
+    val refreshMany: (List<SourceEntry>) -> Unit = { sources ->
+        if (sources.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("Nothing to refresh") }
+        } else {
+            var done = 0
+            var ok = 0
+            for (src in sources) {
+                vm.refreshOne(src) { fresh ->
+                    done++
+                    if (fresh != null) ok++
+                    if (done == sources.size) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (ok == sources.size) "Refreshed $ok feeds"
+                                else "Refreshed $ok of ${sources.size} feeds"
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // First-visit seeding: a podcast we've never seen a visit for gets a row
@@ -127,6 +250,46 @@ fun CatalogScreen(
                 for (url in toSeed) dao.seedIfMissing(url, now)
             }
         }
+    }
+
+    // Confirmation for the long-press "Mark all played" — the one card
+    // action heavy enough to warrant a second tap (it stamps every episode
+    // of the feed(s), and auto-archive will then treat them all as
+    // finished).
+    confirmMarkAll?.let { target ->
+        val total = target.pods.sumOf { it.episodes.size }
+        AlertDialog(
+            onDismissRequest = { confirmMarkAll = null },
+            title = { Text("Mark all played?") },
+            text = {
+                Text(
+                    "All $total episodes of \"${target.label}\" will be " +
+                        "marked played. Auto-archive will treat them as finished."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pods = target.pods
+                    confirmMarkAll = null
+                    scope.launch {
+                        val undos = pods.map { markAllPlayed(app, it) }
+                        val n = undos.sumOf { it.count }
+                        val result = snackbarHostState.showSnackbar(
+                            "Marked $n played",
+                            actionLabel = "Undo",
+                            duration = SnackbarDuration.Long,
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            for (u in undos) undoMarkAllPlayed(app, u)
+                            snackbarHostState.showSnackbar("Restored")
+                        }
+                    }
+                }) { Text("Mark all") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmMarkAll = null }) { Text("Cancel") }
+            },
+        )
     }
 
     Scaffold(
@@ -150,7 +313,7 @@ fun CatalogScreen(
                             // marker. Replaced MusicNote here as part of the
                             // Audio Fine-tuning ↔ Now Playing icon split.
                             Icon(
-                                Icons.Filled.GraphicEq,
+                                painterResource(R.drawable.graphic_eq_24),
                                 contentDescription = "Now playing",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(28.dp)
@@ -158,9 +321,20 @@ fun CatalogScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
+                    // Search sits in the visible row, not the overflow —
+                    // finding an episode is a first-class entry point, and
+                    // hiding it behind More was a discoverability miss.
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(
+                            painterResource(R.drawable.search_24),
+                            contentDescription = "Search episodes",
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenNotes) {
                         Icon(
-                            Icons.Filled.EditNote,
+                            painterResource(R.drawable.edit_note_24),
                             contentDescription = "Notes",
                             modifier = Modifier.size(28.dp)
                         )
@@ -168,7 +342,7 @@ fun CatalogScreen(
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
-                            Icons.AutoMirrored.Filled.FormatListBulleted,
+                            painterResource(R.drawable.format_list_bulleted_24),
                             contentDescription = "My lists",
                             modifier = Modifier.size(28.dp)
                         )
@@ -176,7 +350,7 @@ fun CatalogScreen(
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onOpenSettings) {
                         Icon(
-                            Icons.Filled.Settings,
+                            painterResource(R.drawable.settings_24),
                             contentDescription = "Settings",
                             modifier = Modifier.size(28.dp)
                         )
@@ -189,7 +363,7 @@ fun CatalogScreen(
                             // onSurfaceVariant is the standard "secondary
                             // foreground" slot in every Material color scheme.
                             Icon(
-                                Icons.Filled.MoreVert,
+                                painterResource(R.drawable.more_vert_24),
                                 contentDescription = "More",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(28.dp)
@@ -200,34 +374,29 @@ fun CatalogScreen(
                             onDismissRequest = { menuExpanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Search episodes") },
-                                onClick = { menuExpanded = false; onOpenSearch() },
-                                leadingIcon = { Icon(Icons.Filled.Search, null) }
-                            )
-                            DropdownMenuItem(
                                 text = { Text("Bible index") },
                                 onClick = { menuExpanded = false; onOpenCanonBrowse() },
-                                leadingIcon = { Icon(Icons.Filled.MenuBook, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.menu_book_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Playback history") },
                                 onClick = { menuExpanded = false; onOpenHistory() },
-                                leadingIcon = { Icon(Icons.Filled.History, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.history_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Metrics") },
                                 onClick = { menuExpanded = false; onOpenMetrics() },
-                                leadingIcon = { Icon(Icons.Filled.BarChart, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.bar_chart_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Audio Fine-tuning") },
                                 onClick = { menuExpanded = false; onOpenEq() },
-                                leadingIcon = { Icon(Icons.Filled.Tune, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.tune_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Refresh feeds") },
                                 onClick = { menuExpanded = false; vm.refresh() },
-                                leadingIcon = { Icon(Icons.Filled.Refresh, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Import pack…") },
@@ -237,7 +406,7 @@ fun CatalogScreen(
                                     // file and validate on parse.
                                     packPicker.launch(arrayOf("*/*"))
                                 },
-                                leadingIcon = { Icon(Icons.Filled.FolderOpen, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.folder_open_24), null) }
                             )
                         }
                     }
@@ -251,8 +420,16 @@ fun CatalogScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
+            // v0.10.9+: stale-while-revalidate UX. The Catalog ALWAYS
+            // renders any cached podcasts immediately if we have them,
+            // even while a refresh is in flight. Loading state collapses
+            // to a thin progress banner at the top instead of a
+            // full-screen takeover that hides the cached list. Only the
+            // cold-start case (no cache, no podcasts loaded yet) shows
+            // the full FeedProgressList.
             when {
-                state.loading -> {
+                // Cold start with no cached data: full-screen loading.
+                state.loading && state.podcasts.isEmpty() -> {
                     if (state.feedProgress.isEmpty()) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator()
@@ -261,7 +438,7 @@ fun CatalogScreen(
                         FeedProgressList(state.feedProgress)
                     }
                 }
-                state.error != null -> {
+                state.error != null && state.podcasts.isEmpty() -> {
                     ErrorState(state.error!!) { vm.refresh() }
                 }
                 state.podcasts.isEmpty() -> {
@@ -278,28 +455,106 @@ fun CatalogScreen(
                         state.podcasts.associateBy { it.feedUrl }
                     }
                     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
-                    LazyColumn(
-                        contentPadding = PaddingValues(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    // Column-stack: optional refresh-banner above the
+                    // catalog list. Column avoids Box draw-order issues
+                    // (Box paints later children on top — scroll-up items
+                    // would cover an overlaid banner). With Column, the
+                    // banner is its own row above the LazyColumn; both
+                    // get their natural bounds with no overlap.
+                    //
+                    // Pull-to-refresh wraps the whole loaded state: the
+                    // gesture is the standard "get me fresh feeds" reflex,
+                    // and it drives the exact same stale-while-revalidate
+                    // refresh as the overflow item. isRefreshing rides
+                    // state.loading, so the spinner also reflects the
+                    // background refresh already in flight on cold start.
+                    PullToRefreshBox(
+                        isRefreshing = state.loading,
+                        onRefresh = { vm.refresh() },
+                        modifier = Modifier.fillMaxSize(),
                     ) {
-                        // Kabod Packs render first — these are weighty, archived
-                        // bodies of work (verse-by-verse expositions, etc.) given
-                        // visual prominence by their distinguished card chrome.
-                        Sources.KABOD_PACKS.forEach { entry ->
-                            val pod = podsByUrl[entry.feedUrl]
-                            if (pod != null) {
-                                item(key = entry.feedUrl) {
-                                    val newCount = newEpisodesSince(
-                                        pod, visitsByFeed[entry.feedUrl]
-                                    )
-                                    KabodPackRow(
-                                        pod = pod,
-                                        artworkUrl = entry.customArtworkUrl ?: pod.artworkUrl,
-                                        newEpisodeCount = newCount,
-                                        onClick = { onPodcastClick(pod) }
-                                    )
-                                }
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (state.loading) {
+                            val doneCount = state.feedProgress.count {
+                                it.status != FeedStatus.LOADING
                             }
+                            val totalCount = state.feedProgress.size
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth(),
+                                progress = {
+                                    if (totalCount == 0) 0f
+                                    else doneCount.toFloat() / totalCount
+                                },
+                            )
+                            if (totalCount > 0) {
+                                Text(
+                                    "Refreshing feeds $doneCount / $totalCount …",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        LazyColumn(
+                            contentPadding = PaddingValues(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                        // Continue listening — the fastest path back into the
+                        // episode in progress, pinned above everything: from
+                        // app open to resumed audio in one tap. Hidden when
+                        // nothing is mid-listen.
+                        resumeRow?.let { row ->
+                            item(key = "resume://listening") {
+                                val isCurrent = playerState.currentEpisodeGuid == row.guid
+                                ContinueListeningCard(
+                                    row = row,
+                                    isCurrent = isCurrent,
+                                    isPlaying = isCurrent && playerState.isPlaying,
+                                    onClick = {
+                                        if (isCurrent) {
+                                            // Already loaded: make sure audio is
+                                            // rolling, then just open the player.
+                                            if (!playerState.isPlaying) controller.togglePlay()
+                                        } else {
+                                            resumePlayback(app, controller, row)
+                                        }
+                                        onOpenNowPlaying()
+                                    },
+                                )
+                            }
+                        }
+                        // Device card — the user's own phone as a source.
+                        // Unique cool-slate chrome so it reads as hardware, not
+                        // another feed.
+                        item(key = "device://files") {
+                            DeviceCard(
+                                deviceName = deviceName,
+                                fileCount = deviceFileCount,
+                                onClick = onOpenDeviceFiles,
+                                onAddFiles = { deviceFilePicker.launch(arrayOf("audio/*")) },
+                            )
+                        }
+                        // Kabod Packs, collapsed under one gold card (v0.11).
+                        // These are weighty, archived bodies of work; the
+                        // bullion-bar card carries the format's gravitas and
+                        // keeps the catalog top compact as packs accumulate.
+                        // Tap opens the pack list screen.
+                        item(key = "kabod://packs") {
+                            val packPods = Sources.KABOD_PACKS.mapNotNull { podsByUrl[it.feedUrl] }
+                            GoldKabodCard(
+                                packCount = packPods.size,
+                                itemCount = packPods.sumOf { it.episodes.size },
+                                newCount = Sources.KABOD_PACKS.sumOf { entry ->
+                                    podsByUrl[entry.feedUrl]?.let { pod ->
+                                        newEpisodesSince(pod, visitsByFeed[entry.feedUrl])
+                                    } ?: 0
+                                },
+                                onClick = onOpenKabodPacks,
+                                onImportPack = { packPicker.launch(arrayOf("*/*")) },
+                                onRefreshPacks = { refreshMany(Sources.KABOD_PACKS) },
+                            )
                         }
                         Sources.PODCASTS.forEach { catalogItem ->
                             when (catalogItem) {
@@ -314,7 +569,13 @@ fun CatalogScreen(
                                                 pod = pod,
                                                 artworkUrl = catalogItem.customArtworkUrl ?: pod.artworkUrl,
                                                 newEpisodeCount = newCount,
-                                                onClick = { onPodcastClick(pod) }
+                                                onClick = { onPodcastClick(pod) },
+                                                onPlayNewest = { playNewest(pod) },
+                                                onRefreshFeed = { refreshFeed(catalogItem) },
+                                                onMarkAllPlayed = {
+                                                    confirmMarkAll = MarkAllTarget(pod.title, listOf(pod))
+                                                },
+                                                onCopyFeedUrl = { copyFeedUrl(pod.feedUrl) },
                                             )
                                         }
                                     }
@@ -348,7 +609,16 @@ fun CatalogScreen(
                                                 expanded = expanded,
                                                 onToggle = {
                                                     expandedGroups[catalogItem.groupId] = !expanded
-                                                }
+                                                },
+                                                onRefreshGroup = {
+                                                    refreshMany(loadedChildren.map { it.first })
+                                                },
+                                                onMarkGroupPlayed = {
+                                                    confirmMarkAll = MarkAllTarget(
+                                                        catalogItem.groupName,
+                                                        loadedChildren.map { it.second },
+                                                    )
+                                                },
                                             )
                                         }
                                         if (expanded) {
@@ -366,6 +636,15 @@ fun CatalogScreen(
                                                     artworkUrl = entry.customArtworkUrl ?: pod.artworkUrl,
                                                     newEpisodeCount = newCount,
                                                     onClick = { onPodcastClick(pod) },
+                                                    onPlayNewest = { playNewest(pod) },
+                                                    onRefreshFeed = { refreshFeed(entry) },
+                                                    onMarkAllPlayed = {
+                                                        confirmMarkAll = MarkAllTarget(
+                                                            entry.displayName ?: pod.title,
+                                                            listOf(pod),
+                                                        )
+                                                    },
+                                                    onCopyFeedUrl = { copyFeedUrl(pod.feedUrl) },
                                                     titleOverride = entry.displayName,
                                                     indent = true
                                                 )
@@ -375,6 +654,8 @@ fun CatalogScreen(
                                 }
                             }
                         }
+                    }
+                    }
                     }
                 }
             }
@@ -424,17 +705,17 @@ private fun FeedProgressRow(fs: FeedLoadStatus) {
                     strokeWidth = 2.dp
                 )
                 FeedStatus.OK -> Icon(
-                    Icons.Filled.CheckCircle,
+                    painterResource(R.drawable.check_circle_24),
                     contentDescription = "Loaded",
                     tint = MaterialTheme.colorScheme.primary
                 )
                 FeedStatus.FAILED -> Icon(
-                    Icons.Filled.ErrorOutline,
+                    painterResource(R.drawable.error_outline_24),
                     contentDescription = "Failed",
                     tint = MaterialTheme.colorScheme.error
                 )
                 FeedStatus.TIMEOUT -> Icon(
-                    Icons.Filled.HourglassEmpty,
+                    painterResource(R.drawable.hourglass_empty_24),
                     contentDescription = "Timed out",
                     tint = MaterialTheme.colorScheme.error
                 )
@@ -478,6 +759,79 @@ private fun NewEpisodesBadge(count: Int) {
 }
 
 /**
+ * Undo snapshot for [markAllPlayed]: every row as it stood before the
+ * sweep (for rows that already existed) plus the duration written for
+ * rows the sweep created — enough to put back the exact (position,
+ * duration, lastPlayed) triple that updatePosition overwrote, or to
+ * return a created row to never-played.
+ */
+private class MarkAllPlayedUndo(
+    val prior: Map<String, EpisodeStateEntity>,
+    val written: Map<String, Long>,
+) {
+    val count: Int get() = written.size
+}
+
+/**
+ * Mark every episode of [pod] played: ensure each has an episode_state
+ * row, then pin position to the best-known duration so the derived
+ * completion predicate (positionMs >= durationMs - 5s) holds — the same
+ * mechanics as the Episodes screen's bulk mark-played, feed-wide. One
+ * transaction: a deep archive is a thousand-plus rows, and row-at-a-time
+ * commits would turn a tap into seconds of jank. Returns the undo
+ * snapshot; [undoMarkAllPlayed] reverses the whole sweep.
+ */
+private suspend fun markAllPlayed(app: LofiPodApp, pod: Podcast): MarkAllPlayedUndo =
+    withContext(Dispatchers.IO) {
+        val dao = app.db.episodeStateDao()
+        val now = System.currentTimeMillis()
+        val prior = mutableMapOf<String, EpisodeStateEntity>()
+        val written = mutableMapOf<String, Long>()
+        app.db.withTransaction {
+            for (ep in pod.episodes) {
+                val existing = dao.get(ep.guid)
+                if (existing == null) {
+                    dao.upsert(
+                        EpisodeStateEntity(
+                            guid = ep.guid,
+                            feedUrl = ep.feedUrl,
+                            title = ep.title,
+                            audioUrl = ep.audioUrl,
+                            artworkUrl = ep.episodeArtworkUrl ?: pod.artworkUrl,
+                        )
+                    )
+                } else {
+                    prior[ep.guid] = existing
+                }
+                val dur = existing?.durationMs?.takeIf { it > 0 }
+                    ?: ep.durationSeconds?.let { it * 1000L }
+                    ?: 1L
+                dao.updatePosition(ep.guid, dur, dur, now, 0L)
+                written[ep.guid] = dur
+            }
+        }
+        MarkAllPlayedUndo(prior, written)
+    }
+
+/** Reverse one [markAllPlayed] sweep: previously-existing rows get their
+ *  captured triple back; rows the sweep created return to never-played
+ *  (position 0, lastPlayed 0 — keeping the learned duration is harmless). */
+private suspend fun undoMarkAllPlayed(app: LofiPodApp, undo: MarkAllPlayedUndo) =
+    withContext(Dispatchers.IO) {
+        val dao = app.db.episodeStateDao()
+        app.db.withTransaction {
+            for ((guid, dur) in undo.written) {
+                val p = undo.prior[guid]
+                if (p != null) {
+                    dao.updatePosition(guid, p.positionMs, p.durationMs, p.lastPlayedMillis, 0L)
+                } else {
+                    dao.updatePosition(guid, 0L, dur, 0L, 0L)
+                }
+            }
+        }
+    }
+
+/**
  * Count of episodes whose pubDate is strictly after the last-visited timestamp.
  * Returns 0 when [lastVisitedAt] is null (no visit row yet — the LaunchedEffect
  * in [CatalogScreen] seeds one to NOW so this is a transient state on first
@@ -508,6 +862,120 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
     }
 }
 
+/** Pending mark-all-played request: a human label for the confirm dialog
+ *  plus the pod(s) it covers — one for a card, several for a group. */
+private data class MarkAllTarget(val label: String, val pods: List<Podcast>)
+
+/**
+ * "Continue listening" — the most recent in-progress episode as a
+ * one-tap resume card pinned to the catalog top. Reads straight off the
+ * episode_state row (title/artwork were stamped at first play; position
+ * advances with the ticker), so it renders before any feed has loaded.
+ * primaryContainer chrome + a progress strip make it read as "your
+ * place", not another feed.
+ */
+@Composable
+private fun ContinueListeningCard(
+    row: EpisodeStateEntity,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ThemedArtwork(artworkUrl = row.artworkUrl, size = 56.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (isPlaying) "Now playing" else "Continue listening",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        row.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 2,
+                    )
+                    if (row.durationMs > 0) {
+                        val leftMin = ((row.durationMs - row.positionMs) / 60_000L)
+                            .coerceAtLeast(0L)
+                        Text(
+                            if (leftMin > 0) "$leftMin min left" else "Almost done",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Icon(
+                    if (isPlaying) painterResource(R.drawable.graphic_eq_24)
+                    else painterResource(R.drawable.play_circle_24),
+                    contentDescription = if (isPlaying) "Now playing" else "Resume",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+            // Progress strip along the card's bottom edge — the "how far
+            // in am I" read without any numbers.
+            if (row.durationMs > 0) {
+                LinearProgressIndicator(
+                    progress = {
+                        (row.positionMs.toFloat() / row.durationMs).coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    trackColor = MaterialTheme.colorScheme.primaryContainer,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Resume an episode straight from its persisted state row — the Catalog
+ * card's play path when the episode isn't already loaded in the player.
+ * Mirrors MainActivity's playEntity: refresh the artwork against the live
+ * feed cache when possible (the stamped row art can predate the feed's
+ * channel image), fall back to a minimal Episode built from the row.
+ * playEpisode's own smart-resume logic picks up the saved position.
+ */
+private fun resumePlayback(
+    app: LofiPodApp,
+    controller: PlayerController,
+    e: EpisodeStateEntity,
+) {
+    val livePod = app.repo.cached(e.feedUrl)
+    val liveEp = livePod?.episodes?.find { it.guid == e.guid }
+    val resolvedEpArt = liveEp?.episodeArtworkUrl ?: e.artworkUrl
+    val resolvedPodArt = livePod?.artworkUrl ?: resolvedEpArt
+
+    val ep = liveEp ?: com.lofipod.app.data.model.Episode(
+        guid = e.guid,
+        feedUrl = e.feedUrl,
+        title = e.title,
+        description = null,
+        pubDateMillis = null,
+        audioUrl = e.audioUrl,
+        audioMimeType = null,
+        durationSeconds = null,
+        episodeArtworkUrl = resolvedEpArt,
+    )
+    controller.playEpisode(
+        ep,
+        podcastTitle = livePod?.title ?: "",
+        podcastArt = resolvedPodArt,
+    )
+}
+
 /**
  * Top-level catalog card for a single feed. Reused for [SourceGroup] children
  * with [indent] true (start padding marks them as nested) and [titleOverride]
@@ -517,6 +985,11 @@ private fun ErrorState(error: String, onRetry: () -> Unit) {
  * [artworkUrl] is decoupled from [pod] so callers can route through the
  * [SourceEntry.customArtworkUrl] override when a feed's own art is broken
  * or missing. Pass `pod.artworkUrl` to keep the original behavior.
+ *
+ * Touch-and-hold (v0.11) opens a context menu of feed-level quick actions —
+ * the things that previously required opening the feed (or didn't exist):
+ * play the newest episode, refresh just this feed, mark the whole feed
+ * played, copy the feed URL. Tap still navigates; the menu is additive.
  */
 @Composable
 private fun PodcastRow(
@@ -524,38 +997,85 @@ private fun PodcastRow(
     artworkUrl: String?,
     newEpisodeCount: Int,
     onClick: () -> Unit,
+    onPlayNewest: () -> Unit,
+    onRefreshFeed: () -> Unit,
+    onMarkAllPlayed: () -> Unit,
+    onCopyFeedUrl: () -> Unit,
     titleOverride: String? = null,
     indent: Boolean = false,
 ) {
-    Card(
-        modifier = Modifier
+    // Indent lives on the wrapper Box (not the Card) so the context menu
+    // anchors inside the indented bounds too.
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    Box(
+        Modifier
             .fillMaxWidth()
             .padding(start = if (indent) 24.dp else 0.dp)
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = {
+                        // Same pulse as the app's other holds (pause-skip
+                        // control, scrubber) so the gesture family feels
+                        // consistent.
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    },
+                ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            ThemedArtwork(artworkUrl = artworkUrl, size = 64.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    titleOverride ?: pod.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2
-                )
-                Text(
-                    "${pod.episodes.size} episodes",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (newEpisodeCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    NewEpisodesBadge(count = newEpisodeCount)
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThemedArtwork(artworkUrl = artworkUrl, size = 64.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        titleOverride ?: pod.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2
+                    )
+                    Text(
+                        "${pod.episodes.size} episodes",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (newEpisodeCount > 0) {
+                        Spacer(Modifier.height(4.dp))
+                        NewEpisodesBadge(count = newEpisodeCount)
+                    }
                 }
             }
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Play newest episode") },
+                leadingIcon = { Icon(painterResource(R.drawable.play_circle_24), null) },
+                onClick = { menuOpen = false; onPlayNewest() },
+            )
+            DropdownMenuItem(
+                text = { Text("Refresh this feed") },
+                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) },
+                onClick = { menuOpen = false; onRefreshFeed() },
+            )
+            DropdownMenuItem(
+                text = { Text("Mark all played") },
+                leadingIcon = { Icon(painterResource(R.drawable.check_circle_24), null) },
+                onClick = { menuOpen = false; onMarkAllPlayed() },
+            )
+            DropdownMenuItem(
+                text = { Text("Copy feed URL") },
+                leadingIcon = { Icon(painterResource(R.drawable.content_copy_24), null) },
+                onClick = { menuOpen = false; onCopyFeedUrl() },
+            )
         }
     }
 }
@@ -574,11 +1094,15 @@ private fun PodcastRow(
  *  - The Hebrew word כָּבוֹד ("kabod" — weight, glory, presence) in a chip
  *    floating in the upper-right corner. The word names the format and
  *    carries the gravitas the pastor's labor deserves.
- *  - "{author} · {N} entries" subtitle (vs RSS's "{N} episodes") since these
+ *  - "{author} · {N} items" subtitle (vs RSS's "{N} episodes") since these
  *    feeds are archived and the speaker identity is a primary identifier.
+ *
+ * Internal (not private) since v0.11: the catalog collapses the packs
+ * under [GoldKabodCard]; the individual rows now render on
+ * [KabodPacksScreen].
  */
 @Composable
-private fun KabodPackRow(
+internal fun KabodPackRow(
     pod: Podcast,
     artworkUrl: String?,
     newEpisodeCount: Int,
@@ -616,7 +1140,7 @@ private fun KabodPackRow(
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ) {
                         Icon(
-                            Icons.Filled.MenuBook,
+                            painterResource(R.drawable.menu_book_24),
                             contentDescription = null,
                             modifier = Modifier.padding(4.dp),
                         )
@@ -635,8 +1159,8 @@ private fun KabodPackRow(
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 2
                     )
-                    val subtitle = pod.author?.let { "$it  ·  ${pod.episodes.size} entries" }
-                        ?: "${pod.episodes.size} entries"
+                    val subtitle = pod.author?.let { "$it  ·  ${pod.episodes.size} items" }
+                        ?: "${pod.episodes.size} items"
                     Text(
                         subtitle,
                         style = MaterialTheme.typography.bodySmall,
@@ -648,10 +1172,18 @@ private fun KabodPackRow(
                     }
                 }
             }
-            // Hebrew kabod chip (כָּבוֹד), upper-right. System fonts on
-            // Android pick up Noto Sans Hebrew automatically; no font asset
-            // needed. Bold + slightly larger than labelMedium so the
-            // characters read clearly at chip size.
+            // Hebrew kabod chip (כבוד), upper-right.
+            //
+            // Font history on this badge:
+            //   pre-v0.10.16 — Android system Noto Sans Hebrew. Clean
+            //     print typography, missing tagin (תגין / kether crowns).
+            //   v0.10.16 — hand-drawn Compose Canvas glyph. User judged
+            //     it amateurish, fairly.
+            //   v0.10.17 (current) — Culmus Stam Ashkenaz CLM, a proper
+            //     Stam (סת"ם) sofer-quill Hebrew font with authentic
+            //     tagin. Vendored under GPL-with-font-exception (safe
+            //     for sideloaded use); see STAM_LICENSE.md in the repo
+            //     root for attribution + license details.
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -661,13 +1193,12 @@ private fun KabodPackRow(
                 shape = MaterialTheme.shapes.small,
             ) {
                 Text(
-                    // Unpointed spelling — cleaner at chip size and what the
-                    // word looks like in everyday written Hebrew. The pointed
-                    // form (כָּבוֹד) carries the same meaning but the niqqud
-                    // dots clash with a small chip's vertical metrics.
+                    // Unpointed spelling. The Stam font renders these
+                    // four letters (kaf, bet, vav, dalet) in the
+                    // traditional calligraphic sofer style.
                     text = "כבוד",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    fontFamily = stamHebrewFamily,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }
@@ -678,7 +1209,9 @@ private fun KabodPackRow(
 /**
  * Card-stack header for a [SourceGroup]. Uses the first child's artwork as a
  * stand-in (cheap and recognizable; a bespoke stacked-thumbnail visual is a
- * later iteration). Tapping toggles inline expansion of the children below.
+ * later iteration). Tapping toggles inline expansion of the children below;
+ * touch-and-hold opens group-wide quick actions (refresh every child feed,
+ * mark the whole cluster played).
  */
 @Composable
 private fun GroupRow(
@@ -689,48 +1222,336 @@ private fun GroupRow(
     newEpisodeCount: Int,
     expanded: Boolean,
     onToggle: () -> Unit,
+    onRefreshGroup: () -> Unit,
+    onMarkGroupPlayed: () -> Unit,
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         label = "group-chevron"
     )
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    Box(Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onToggle,
+                    onLongClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    },
+                ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThemedArtwork(artworkUrl = leadArtworkUrl, size = 64.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        group.groupName,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2
+                    )
+                    Text(
+                        if (totalEpisodes > 0) "$feedCount feeds  ·  $totalEpisodes episodes"
+                        else "$feedCount feeds",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (newEpisodeCount > 0) {
+                        Spacer(Modifier.height(4.dp))
+                        NewEpisodesBadge(count = newEpisodeCount)
+                    }
+                }
+                Icon(
+                    painterResource(R.drawable.expand_more_24),
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .graphicsLayer { rotationZ = rotation }
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Refresh these feeds") },
+                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) },
+                onClick = { menuOpen = false; onRefreshGroup() },
+            )
+            DropdownMenuItem(
+                text = { Text("Mark all played") },
+                leadingIcon = { Icon(painterResource(R.drawable.check_circle_24), null) },
+                onClick = { menuOpen = false; onMarkGroupPlayed() },
+            )
+        }
+    }
+}
+
+/**
+ * Stam Ashkenaz CLM font family — sofer-quill Hebrew script with
+ * authentic tagin. Used by the kabod chip in [KabodPackRow]. Vendored
+ * from Culmus Hebrew Fonts under GPL with font exception (the
+ * exception explicitly permits embedding the unaltered font in any
+ * document/app without GPL contamination). See [STAM_LICENSE.md] in
+ * the repo root.
+ *
+ * Module-level so the FontFamily is constructed once (font loading is
+ * cheap but not free; one allocation beats one-per-recomposition of
+ * the catalog).
+ */
+internal val stamHebrewFamily = FontFamily(
+    Font(R.font.stam_ashkenaz_clm),
+)
+
+// v0.10.16's hand-drawn KabodStamGlyph + drawKaf/drawBet/drawVav/
+// drawDalet/drawTagin helpers were removed in v0.10.17. Replaced by
+// the Stam Ashkenaz CLM font wired into the kabod chip's Text above
+// (stamHebrewFamily). Restore from git history (commit 95d03f1) if a
+// future re-design ever wants the Canvas-drawn path back.
+
+// ---- v0.11 catalog top cards -------------------------------------------
+
+// Bullion palette for the collapsed Kabod card. Anchored on the app's
+// de-facto brand gold (MostExcellentGold 0xFFD4A017 in MyListsScreen).
+private val GoldDeep = Color(0xFF8F6A10)
+private val GoldMid = Color(0xFFD4A017)
+private val GoldBright = Color(0xFFF3CE5E)
+private val GoldInk = Color(0xFF3A2B04)
+
+/**
+ * The collapsed Kabod card — one gold card standing in for every bundled
+ * pack. Deliberately theme-independent: bullion gold in all five themes,
+ * with the same Stam-script כבוד the individual pack chips carry, sized
+ * up to be the card's identity rather than a corner badge. A small stack
+ * of gold ingots on the left sells the "bars of gold" read without any
+ * imagery beyond gradient rectangles.
+ */
+@Composable
+internal fun GoldKabodCard(
+    packCount: Int,
+    itemCount: Int,
+    newCount: Int,
+    onClick: () -> Unit,
+    /** Touch-and-hold quick actions (v0.11); both optional so the card
+     *  stays drop-in for hosts that don't offer them. */
+    onImportPack: (() -> Unit)? = null,
+    onRefreshPacks: (() -> Unit)? = null,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    val hasMenu = onImportPack != null || onRefreshPacks != null
+    Box(Modifier.fillMaxWidth()) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (hasMenu) {
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    }
+                } else null,
+            ),
+        border = BorderStroke(1.5.dp, GoldDeep),
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(GoldDeep, GoldMid, GoldBright, GoldMid, GoldDeep)
+                    )
+                )
         ) {
-            ThemedArtwork(artworkUrl = leadArtworkUrl, size = 64.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    group.groupName,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2
-                )
-                Text(
-                    if (totalEpisodes > 0) "$feedCount feeds  ·  $totalEpisodes episodes"
-                    else "$feedCount feeds",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (newEpisodeCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    NewEpisodesBadge(count = newEpisodeCount)
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Ingot stack: two bars below, one bridging on top.
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    GoldIngot(width = 30.dp)
+                    GoldIngot(width = 42.dp)
+                    GoldIngot(width = 54.dp)
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "כבוד",
+                        fontSize = 34.sp,
+                        fontFamily = stamHebrewFamily,
+                        color = GoldInk,
+                    )
+                    Text(
+                        // Counts come from the in-memory feed cache, which
+                        // hydrates after the cold-start refresh — until then
+                        // don't advertise "0 packs · 0 items" on the most
+                        // prominent card in the app.
+                        if (packCount > 0)
+                            "Kabod packs  ·  $packCount packs  ·  $itemCount items"
+                        else "Kabod packs",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GoldInk.copy(alpha = 0.85f),
+                    )
+                }
+                if (newCount > 0) {
+                    Surface(
+                        color = GoldInk,
+                        contentColor = GoldBright,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            "$newCount new",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
                 }
             }
-            Icon(
-                Icons.Filled.ExpandMore,
-                contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .size(28.dp)
-                    .graphicsLayer { rotationZ = rotation }
+        }
+    }
+    DropdownMenu(
+        expanded = menuOpen,
+        onDismissRequest = { menuOpen = false },
+    ) {
+        if (onImportPack != null) {
+            DropdownMenuItem(
+                text = { Text("Import pack…") },
+                leadingIcon = { Icon(painterResource(R.drawable.folder_open_24), null) },
+                onClick = { menuOpen = false; onImportPack() },
             )
         }
+        if (onRefreshPacks != null) {
+            DropdownMenuItem(
+                text = { Text("Refresh packs") },
+                leadingIcon = { Icon(painterResource(R.drawable.refresh_24), null) },
+                onClick = { menuOpen = false; onRefreshPacks() },
+            )
+        }
+    }
+    }
+}
+
+/** One bullion bar: bright top-lit gradient with a darker edge. */
+@Composable
+private fun GoldIngot(width: androidx.compose.ui.unit.Dp) {
+    Box(
+        Modifier
+            .width(width)
+            .height(11.dp)
+            .background(
+                Brush.verticalGradient(listOf(GoldBright, GoldMid, GoldDeep)),
+                shape = RoundedCornerShape(2.dp),
+            )
+            .border(0.5.dp, GoldDeep.copy(alpha = 0.8f), RoundedCornerShape(2.dp))
+    )
+}
+
+// Cool-slate palette for the device card — deliberately the tonal
+// opposite of the gold card so the two special sources at the catalog
+// top read as different materials: warm bullion vs brushed steel.
+private val SlateDeep = Color(0xFF1F2733)
+private val SlateMid = Color(0xFF303C4E)
+private val SlateEdge = Color(0xFF54677F)
+private val SlateText = Color(0xFFE8EEF6)
+private val SlateAccent = Color(0xFF9FC2E8)
+
+/**
+ * The user's device as a source — pinned above everything. Shows the
+ * device's own name (the user-assigned one when set, hardware model
+ * otherwise) with a phone glyph; tap opens the Device files screen where
+ * local audio files can be added and played.
+ */
+@Composable
+internal fun DeviceCard(
+    deviceName: String,
+    fileCount: Int,
+    onClick: () -> Unit,
+    /** Touch-and-hold quick action (v0.11): jump straight into the SAF
+     *  picker without opening the Device files screen first. Optional so
+     *  the card stays drop-in for hosts without a picker. */
+    onAddFiles: (() -> Unit)? = null,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    Box(Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (onAddFiles != null) {
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    }
+                } else null,
+            ),
+        border = BorderStroke(1.5.dp, SlateEdge),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(SlateMid, SlateDeep)))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = SlateDeep,
+                    contentColor = SlateAccent,
+                    border = BorderStroke(1.dp, SlateEdge),
+                    modifier = Modifier.size(44.dp),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.smartphone_24),
+                        contentDescription = null,
+                        modifier = Modifier.padding(9.dp),
+                    )
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        deviceName,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = SlateText,
+                        maxLines = 1,
+                    )
+                    Text(
+                        if (fileCount > 0) "This device  ·  $fileCount files"
+                        else "This device  ·  play your own audio files",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateAccent.copy(alpha = 0.85f),
+                    )
+                }
+            }
+        }
+    }
+    DropdownMenu(
+        expanded = menuOpen,
+        onDismissRequest = { menuOpen = false },
+    ) {
+        DropdownMenuItem(
+            text = { Text("Add audio files…") },
+            leadingIcon = { Icon(painterResource(R.drawable.add_24), null) },
+            onClick = {
+                menuOpen = false
+                onAddFiles?.invoke()
+            },
+        )
+    }
     }
 }

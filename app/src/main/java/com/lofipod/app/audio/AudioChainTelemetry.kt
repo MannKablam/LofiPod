@@ -57,6 +57,31 @@ object AudioChainTelemetry {
     @Volatile var ditherActive: Boolean = false
     /** True when the audio chain master switch is on. */
     @Volatile var enabled: Boolean = false
+    /** De-esser high-band gain (linear; 1.0 = no reduction). Updated once
+     *  per buffer by EqAudioProcessor while the stage is active. */
+    @Volatile var deEsserGainLin: Double = 1.0
+    /** Leveler ride gain (linear; 1.0 = unity). Once per buffer. */
+    @Volatile var levelerGainLin: Double = 1.0
+    /** Warmth (saturator) activity: decayed peak of |wet - dry| actually
+     *  mixed in, linear amplitude. 0.0 = idle/bypassed. Once per buffer. */
+    @Volatile var warmthActivity: Double = 0.0
+    /** Air (exciter) activity: decayed peak of the added excitement term,
+     *  linear amplitude. 0.0 = idle/bypassed. Once per buffer. */
+    @Volatile var airActivity: Double = 0.0
+
+    /**
+     * Park all four voice-suite mirrors at their idle values. The per-buffer
+     * mirrors in EqAudioProcessor only run on the DSP path, so every
+     * transition that stops DSP buffers from flowing (flush/seek, processor
+     * reset, passthrough enter) must park these explicitly or the UI meters
+     * freeze on the last DSP-buffer values indefinitely.
+     */
+    internal fun parkVoiceMirrorsIdle() {
+        deEsserGainLin = 1.0
+        levelerGainLin = 1.0
+        warmthActivity = 0.0
+        airActivity = 0.0
+    }
 
     // Decay coefficients for peak meters (computed lazily on first configure).
     private var peakDecayCoef: Double = 1.0
@@ -334,10 +359,18 @@ object AudioChainTelemetry {
         // unavailable, both calls no-op cheaply.
         perfHint?.let { bridge ->
             val speed = playbackSpeed
+            // 1 ms floor on audioNs before the speed scale to avoid passing
+            // a zero or near-zero target into the hint manager — can happen
+            // briefly during pre-configure callbacks where sampleRate is 0.
+            // Downstream smoothing inside ADPF / governor code can divide by
+            // this; 1 ms is well below any real per-buffer budget (smallest
+            // plausible is ~5 ms = 256 frames @44.1k at 1×) and harmless.
+            // See _LOFIPOD_V1_BRIEF.md §A7.
+            val audioNsClamped = audioNs.coerceAtLeast(1_000_000L)
             val targetNs = if (speed > 0f && speed != 1.0f) {
-                (audioNs.toDouble() / speed).toLong()
+                (audioNsClamped.toDouble() / speed).toLong()
             } else {
-                audioNs
+                audioNsClamped
             }
             bridge.ensureSession(tid, targetNs)
             bridge.reportActual(processingNs)

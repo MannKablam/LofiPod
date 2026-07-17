@@ -2,25 +2,24 @@
 
 package com.lofipod.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.player.PlayerController
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +45,7 @@ fun NotesBrowserScreen(
     onBack: () -> Unit
 ) {
     val app = LocalContext.current.applicationContext as LofiPodApp
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var searchMode by remember { mutableStateOf(false) }
@@ -55,6 +55,21 @@ fun NotesBrowserScreen(
     var titlesByGuid by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember { mutableStateOf(true) }
     var endReached by remember { mutableStateOf(false) }
+
+    // Bulk-selection mode (v0.10.15+). Long-press a note card to enter;
+    // selection set stores "guid@createdAt" composite keys (matching the
+    // primary-key shape of episode_note_entry). Top bar transforms while
+    // non-empty (count + Clear + bulk delete). Tap in selection mode
+    // toggles the tapped card's membership rather than opening it.
+    var selection by remember { mutableStateOf(emptySet<String>()) }
+    val inSelectionMode = selection.isNotEmpty()
+    var confirmBulkDelete by remember { mutableStateOf(false) }
+
+    fun selectionKey(entry: EpisodeNoteEntryEntity) = "${entry.guid}@${entry.createdAt}"
+
+    BackHandler(enabled = inSelectionMode) {
+        selection = emptySet()
+    }
 
     suspend fun resolveTitles(forEntries: List<EpisodeNoteEntryEntity>) {
         val newGuids = forEntries.map { it.guid }.toSet() - titlesByGuid.keys
@@ -131,44 +146,74 @@ fun NotesBrowserScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    if (searchMode) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("Search notes…") },
-                            singleLine = true
-                        )
-                    } else {
-                        Text("Notes")
+            // Three top-bar modes:
+            //   selection — [X clear] "N selected" | [Delete bulk]
+            //   search    — [back] [text field] | [Clear-query]
+            //   default   — [back] "Notes" | [Search]
+            // Selection wins over search if both somehow flip true.
+            if (inSelectionMode) {
+                TopAppBar(
+                    title = { Text("${selection.size} selected", maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = { selection = emptySet() }) {
+                            Icon(
+                                painterResource(R.drawable.close_24),
+                                contentDescription = "Clear selection",
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { confirmBulkDelete = true }) {
+                            Icon(
+                                painterResource(R.drawable.delete_24),
+                                contentDescription = "Delete selected notes",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
                     }
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (searchMode) searchMode = false else onBack()
-                    }) {
-                        Icon(
-                            if (searchMode) Icons.Filled.ArrowBack else Icons.Filled.ArrowBack,
-                            contentDescription = if (searchMode) "Exit search" else "Back"
-                        )
-                    }
-                },
-                actions = {
-                    if (searchMode) {
-                        if (query.isNotEmpty()) {
-                            IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Clear")
+                )
+            } else {
+                TopAppBar(
+                    title = {
+                        if (searchMode) {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = { query = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                placeholder = { Text("Search notes…") },
+                                singleLine = true
+                            )
+                        } else {
+                            Text("Notes")
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            if (searchMode) searchMode = false else onBack()
+                        }) {
+                            Icon(
+                                if (searchMode) painterResource(R.drawable.arrow_back_24) else painterResource(R.drawable.arrow_back_24),
+                                contentDescription = if (searchMode) "Exit search" else "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        if (searchMode) {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(painterResource(R.drawable.close_24), contentDescription = "Clear")
+                                }
+                            }
+                        } else {
+                            IconButton(onClick = { searchMode = true }) {
+                                Icon(painterResource(R.drawable.search_24), contentDescription = "Search notes")
                             }
                         }
-                    } else {
-                        IconButton(onClick = { searchMode = true }) {
-                            Icon(Icons.Filled.Search, contentDescription = "Search notes")
-                        }
                     }
-                }
-            )
+                )
+            }
         }
     ) { padding ->
         Column(Modifier.padding(padding)) {
@@ -186,13 +231,33 @@ fun NotesBrowserScreen(
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(entries, key = { "${it.guid}@${it.createdAt}" }) { entry ->
+                    items(entries, key = { selectionKey(it) }) { entry ->
+                        val key = selectionKey(entry)
                         BrowserNoteCard(
                             entry = entry,
                             episodeTitle = titlesByGuid[entry.guid],
                             highlight = if (searchMode) query else "",
-                            onJump = { controller.jumpToNotePosition(entry) },
-                            onOpenInEpisode = { onOpenEpisodeNotes(entry.guid) }
+                            inSelectionMode = inSelectionMode,
+                            isSelected = key in selection,
+                            onLongPress = {
+                                selection = if (key in selection) selection - key
+                                            else selection + key
+                            },
+                            onJump = {
+                                if (inSelectionMode) {
+                                    selection = if (key in selection) selection - key
+                                                else selection + key
+                                } else controller.jumpToNotePosition(entry)
+                            },
+                            onOpenInEpisode = {
+                                if (inSelectionMode) {
+                                    selection = if (key in selection) selection - key
+                                                else selection + key
+                                } else onOpenEpisodeNotes(entry.guid)
+                            },
+                            onShare = {
+                                scope.launch { shareNoteEntry(ctx, entry) }
+                            },
                         )
                     }
                     if (loading) {
@@ -207,21 +272,73 @@ fun NotesBrowserScreen(
             }
         }
     }
+
+    if (confirmBulkDelete) {
+        val count = selection.size
+        AlertDialog(
+            onDismissRequest = { confirmBulkDelete = false },
+            title = { Text("Delete $count note${if (count == 1) "" else "s"}?") },
+            text = { Text("This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val toDelete = selection.toList()
+                    confirmBulkDelete = false
+                    selection = emptySet()
+                    scope.launch {
+                        // Decompose composite keys back into (guid,
+                        // createdAt) pairs for the per-row delete. The
+                        // dao doesn't have a multi-delete; the loop is
+                        // fine for typical bulk-select counts.
+                        withContext(Dispatchers.IO) {
+                            val dao = app.db.episodeNoteEntryDao()
+                            for (key in toDelete) {
+                                val at = key.lastIndexOf('@')
+                                if (at < 0) continue
+                                val guid = key.substring(0, at)
+                                val createdAt = key.substring(at + 1).toLongOrNull() ?: continue
+                                dao.delete(guid, createdAt)
+                            }
+                        }
+                        // Drop the deleted keys from the local entries
+                        // list so the LazyColumn updates immediately.
+                        // The collectAsState path on the per-episode
+                        // NotesScreen would re-emit; here we hold the
+                        // list ourselves so we have to maintain it.
+                        val deletedSet = toDelete.toSet()
+                        entries = entries.filter { selectionKey(it) !in deletedSet }
+                    }
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBulkDelete = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun BrowserNoteCard(
     entry: EpisodeNoteEntryEntity,
     episodeTitle: String?,
     highlight: String,
+    inSelectionMode: Boolean,
+    isSelected: Boolean,
+    onLongPress: () -> Unit,
     onJump: () -> Unit,
-    onOpenInEpisode: () -> Unit
+    onOpenInEpisode: () -> Unit,
+    onShare: () -> Unit,
 ) {
+    val containerColor = if (isSelected) MaterialTheme.colorScheme.tertiaryContainer
+                         else MaterialTheme.colorScheme.surfaceVariant
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpenInEpisode),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            .combinedClickable(
+                onClick = onOpenInEpisode,
+                onLongClick = onLongPress,
+            ),
+        colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(
@@ -239,10 +356,17 @@ private fun BrowserNoteCard(
                 )
                 IconButton(onClick = onJump, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.PlayCircle,
+                        painterResource(R.drawable.play_circle_24),
                         contentDescription = "Jump to position",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
+                    )
+                }
+                IconButton(onClick = onShare, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        painterResource(R.drawable.share_24),
+                        contentDescription = "Share note",
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

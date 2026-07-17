@@ -11,18 +11,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.audio.AudioChainTelemetry
 import com.lofipod.app.audio.EqPresets
 import com.lofipod.app.diagnostics.AppDiagnostics
@@ -103,6 +101,12 @@ fun AudioDiagnosticsScreen(
             it.category == AppDiagnostics.Category.OTHER && it.identifier == "renderer_stall"
         }
     }
+    // Playback breadcrumbs (track changes, download handoffs in either
+    // direction, auto-download deferrals, wake-lock oscillation, feed-
+    // aware back-nav). Newest first.
+    val playbackEvents = remember(appEvents) {
+        appEvents.filter { it.category == AppDiagnostics.Category.PLAYBACK }
+    }
     val eq = PlaybackService.sharedEq
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     val gainDb = remember(playerState, tick) { eq.currentGainDb() }
@@ -119,7 +123,7 @@ fun AudioDiagnosticsScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -223,6 +227,18 @@ fun AudioDiagnosticsScreen(
                     }
 
                     Spacer(Modifier.height(12.dp))
+                    SectionLabel("Playback events (newest first)")
+                    if (playbackEvents.isEmpty()) {
+                        Text(
+                            "  (no playback events yet)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(formatPlaybackEvents(playbackEvents), style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
                     SectionLabel("Startup")
                     if (startupPhases.isEmpty()) {
                         Text(
@@ -250,6 +266,7 @@ fun AudioDiagnosticsScreen(
                         errorVerbose = errorVerbose,
                         events = events,
                         stallEvents = stallEvents,
+                        playbackEvents = playbackEvents,
                         startupPhases = startupPhases,
                     )
                     copyToClipboard(ctx, text)
@@ -263,20 +280,43 @@ fun AudioDiagnosticsScreen(
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = {
                 // Defaults: audio_enhancement=on, master_gain=0, bands=FLAT,
-                // skip_silence=off, dc_blocker=off. Same recovery path the
-                // inline Settings panel offered before this screen existed.
+                // skip_silence=off, dc_blocker=off, tone filters off. Same
+                // recovery path the inline Settings panel offered before
+                // this screen existed.
                 scope.launch {
                     withContext(Dispatchers.IO) {
                         settings.setAudioEnhancementEnabled(true)
                         settings.setGainDb(0f)
                         settings.setEqBandsCsv(EqPresets.FLAT.joinToString(",") { it.gainDb.toString() })
                         settings.setSkipSilenceLevel(0)
+                        settings.setPauseSkipSensitivity(
+                            com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                        )
                         settings.setDcBlockerEnabled(false)
+                        settings.setToneLowCutHz(0f)
+                        settings.setToneHighCutHz(0f)
+                        settings.setToneTiltDb(0f)
+                        settings.setToneLowCutSteep(false)
+                        settings.setVoiceDeEsserLevel(0)
+                        settings.setVoiceWarmthLevel(0)
+                        settings.setVoiceLevelerLevel(0)
+                        settings.setVoiceAirLevel(0)
                     }
                     eq.setBands(EqPresets.FLAT)
                     eq.setGainDb(0f)
                     eq.setDcBlockerEnabled(false)
+                    eq.setLowCutHz(0f)
+                    eq.setHighCutHz(0f)
+                    eq.setTiltDb(0f)
+                    eq.setLowCutSteep(false)
+                    eq.setDeEsserLevel(0)
+                    eq.setWarmthLevel(0)
+                    eq.setLevelerLevel(0)
+                    eq.setAirLevel(0)
                     PlaybackService.sharedSkipSilence.setLevel(0)
+                    PlaybackService.sharedPauseTap.setSensitivity(
+                        com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+                    )
                     playerState.currentEpisodeGuid?.let {
                         controller.applyEqOverrideFor(it)
                     }
@@ -319,7 +359,7 @@ private fun HelpCard(expanded: Boolean, onToggle: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 )
                 Icon(
-                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    if (expanded) painterResource(R.drawable.expand_less_24) else painterResource(R.drawable.expand_more_24),
                     contentDescription = if (expanded) "Collapse" else "Expand"
                 )
             }
@@ -390,6 +430,28 @@ private val HELP_TEXT: String = """
       dc_blocker      DC blocker toggled.
       format_change   sample rate or channel count changed mid-session.
 
+    Stall watchdog — three independent arms (A/B/C) detect renderer underruns:
+      no_progress_Ns           Arm A: PLAYING but currentPosition hasn't advanced for N seconds.
+      buffering_Ns             Arm B: chronic STATE_BUFFERING with playWhenReady=true for N seconds.
+      sticky_Npct_over_Ms      Arm C: over the last M seconds, actual position advance was N% of what speed-adjusted wall-clock would predict. Survives BUFFERING<->READY oscillation that resets arms A and B.
+
+    Playback events — back-end-readable breadcrumbs separate from the audio chain log. Read newest first.
+      track_change             Episode swap. Includes from-guid, to-guid, autoplay flag, target feed URL.
+      handoff_forward          Streaming -> downloaded file swap fired (download completed mid-playback).
+      handoff_reverse          Downloaded file -> streaming swap fired (download removed mid-playback).
+      auto_download_deferred   (v0.10.12 only — removed in v0.10.14) Auto-download skipped inline because screen-off + autoplay.
+      auto_download_delayed_fire  v0.10.14+ replacement: autoplay-induced auto-download started after the configured settle delay (15s default).
+      auto_download_delayed_skip  Scheduled delayed-fire ran but the download was already in flight / completed / manually started in the interim — no-op.
+      wake_lock_oscillation    Wake-lock acquired N times in 30s — isPlaying flip-flopping, corroborates arm C.
+      back_nav_feed_aware      Back-from-Player routed to episodes/{currentFeed}.
+      back_nav_fallback        Back-from-Player feedUrl unknown — used plain smartBack.
+      autoplay_confirm_remote  Remote-controller (BT, vehicle, notification) play/pause intercepted as autoplay confirm. v0.10.13+: our own process's pauses no longer trigger this.
+      controller_release_failed  Media3's MediaController.release threw on activity destroy (usually IllegalArgumentException "Service not registered" — framework race, swallowed since we're tearing down anyway).
+      audio_underrun_window    AudioTrack underran N times in 30s — worst gap M ms vs buffer K ms. Kernel-layer signal: the audio HAL ran dry, not just BUFFERING<->READY oscillation. If this fires repeatedly the DSP chain isn't keeping up.
+      audio_sink_error         ExoPlayer's DefaultAudioSink threw — Media3 chain-level failure.
+      audio_codec_error        MediaCodec (decoder) threw — codec-level failure. If accompanied by mp3-decoder events look at Fix #4 (software decoder preference).
+      audio_decoder_init       Which decoder Media3 picked for the current track. v0.10.13+ prefers non-c2.android.* MP3 decoders.
+
     Actions:
       Copy to clipboard       dumps every section above as plain text.
       Reset counters          zeroes the counters + clears the event log. Useful before reproducing an issue.
@@ -419,6 +481,10 @@ private data class TelemetrySnapshot(
     val passthrough: Boolean,
     val ditherActive: Boolean,
     val enabled: Boolean,
+    val deEsserGainLin: Double,
+    val levelerGainLin: Double,
+    val warmthActivity: Double,
+    val airActivity: Double,
     val configures: Int,
     val flushes: Int,
     val crossFades: Int,
@@ -458,6 +524,10 @@ private data class TelemetrySnapshot(
                 passthrough = passthrough,
                 ditherActive = ditherActive,
                 enabled = enabled,
+                deEsserGainLin = deEsserGainLin,
+                levelerGainLin = levelerGainLin,
+                warmthActivity = warmthActivity,
+                airActivity = airActivity,
                 configures = configureCount(),
                 flushes = flushCount(),
                 crossFades = crossFadeCount(),
@@ -489,21 +559,78 @@ private fun linearToDb(v: Double): String =
 private fun formatChainSpec(s: TelemetrySnapshot): String {
     if (s.sampleRate == 0) return "  (chain not yet configured)"
     val laMs = s.lookAheadSamples2x.toDouble() / max(1, 2 * s.sampleRate) * 1000.0
+    val phaseMode = com.lofipod.app.player.PlaybackService.sharedEq.currentPhaseMode()
+    val firUs = com.lofipod.app.player.PlaybackService.sharedEq.getChainLatencyUs()
     return buildString {
         append("  input            = ${s.sampleRate} Hz / ${s.channelCount} ch / ${s.encoding}\n")
+        append("  phase_mode       = ${phaseModeLabel(phaseMode)}\n")
+        append(formatPhaseModeBlock(phaseMode))
         append("  fir_taps         = ${s.firTaps} per stage (up + down)\n")
         append("  la_window_2x     = ${s.lookAheadSamples2x} samples (~${"%.2f".format(laMs)} ms)\n")
         append("  threshold        = ${"%.1f".format(s.thresholdDbfs)} dBFS\n")
-        append("  total_latency    = ${s.totalLatencyFrames1x} frames @1x (~${"%.2f".format(s.totalLatencyMs)} ms)\n")
+        append("  chain_latency    = ~${"%.2f".format(firUs / 1000.0)} ms total (live, mode-aware)\n")
+        append("  postEQ_latency   = ${s.totalLatencyFrames1x} frames @1x (~${"%.2f".format(s.totalLatencyMs)} ms)\n")
         append("  dc_blocker       = ${if (s.dcBlockerEnabled) "on" else "off"}\n")
+        val eq = com.lofipod.app.player.PlaybackService.sharedEq
+        append(
+            "  voice_suite      = deesser L${eq.currentDeEsserLevel()}, " +
+                "warmth L${eq.currentWarmthLevel()}, " +
+                "leveler L${eq.currentLevelerLevel()}, " +
+                "air L${eq.currentAirLevel()}\n"
+        )
+        append(
+            "  low_cut_slope    = ${if (eq.currentLowCutSteep()) "24" else "12"} dB/oct\n"
+        )
         append("  master_enabled   = ${s.enabled}")
     }
 }
+
+private fun phaseModeLabel(m: com.lofipod.app.audio.PhaseMode): String = when (m) {
+    com.lofipod.app.audio.PhaseMode.PURE_IIR -> "Pure IIR (10-band biquad cascade)"
+    com.lofipod.app.audio.PhaseMode.MIN_FIR -> "Min-Phase FIR (UPC + real-cepstrum kernel)"
+    com.lofipod.app.audio.PhaseMode.LINEAR_FIR -> "Linear-Phase FIR (UPC + symmetric kernel)"
+    com.lofipod.app.audio.PhaseMode.MIXED -> "Mixed-Phase (min < 120 Hz, linear > 120 Hz, UPC)"
+}
+
+/** Per-mode chain spec block. Pure IIR is brief (the rest of the chain
+ *  spec already covers its main details); the three FIR modes get the
+ *  full UPC + kernel-synth detail line so users can see what's running. */
+private fun formatPhaseModeBlock(m: com.lofipod.app.audio.PhaseMode): String =
+    when (m) {
+        com.lofipod.app.audio.PhaseMode.PURE_IIR -> ""  // nothing extra
+        com.lofipod.app.audio.PhaseMode.MIN_FIR -> buildString {
+            append("  kernel           = 4096 taps, real-cepstrum-derived (causal, min-phase)\n")
+            append("  convolution      = UPC, 4 partitions x 1024 samples, FFT_SIZE=2048\n")
+            append("  fft_lib          = PFFFT (arm64 NEON SIMD, single precision)\n")
+            append("  pre_ringing      = none\n")
+        }
+        com.lofipod.app.audio.PhaseMode.LINEAR_FIR -> buildString {
+            append("  kernel           = 4096 taps, symmetric (zero-phase, Kaiser-windowed)\n")
+            append("  convolution      = UPC, 4 partitions x 1024 samples, FFT_SIZE=2048\n")
+            append("  fft_lib          = PFFFT (arm64 NEON SIMD, single precision)\n")
+            append("  pre_ringing      = yes (symmetric, ~46 ms group delay)\n")
+        }
+        com.lofipod.app.audio.PhaseMode.MIXED -> buildString {
+            append("  kernel           = 4096 taps, hybrid (min-phase low + linear high)\n")
+            append("  crossover        = 80-180 Hz cosine ramp (complementary, sum-to-1)\n")
+            append("  convolution      = UPC, 4 partitions x 1024 samples, FFT_SIZE=2048\n")
+            append("  fft_lib          = PFFFT (arm64 NEON SIMD, single precision)\n")
+            append("  pre_ringing      = bass band only\n")
+        }
+    }
 
 private fun formatLive(s: TelemetrySnapshot): String = buildString {
     append("  in_peak          = ${linearToDb(s.inputPeak)}\n")
     append("  out_peak         = ${linearToDb(s.outputPeak)}\n")
     append("  limiter_GR       = ${"%5.2f".format(s.reductionDb)} dB\n")
+    // Voice suite: de-esser high-band GR + leveler ride gain, in dB.
+    // Both read 0.00 while their stage is off (gain mirror rests at 1.0).
+    append("  deesser_GR       = ${"%5.2f".format(20.0 * log10(s.deEsserGainLin.coerceAtLeast(1e-6)))} dB\n")
+    append("  leveler_gain     = ${"%+5.2f".format(20.0 * log10(s.levelerGainLin.coerceAtLeast(1e-6)))} dB\n")
+    // Warmth/Air wet-signal activity (decayed peak of what each stage adds),
+    // in dBFS. Reads -inf while the stage is off (mirror rests at 0.0).
+    append("  warmth_act       = ${linearToDb(s.warmthActivity)}\n")
+    append("  air_act          = ${linearToDb(s.airActivity)}\n")
     append("  flags            = ")
     val flags = buildList {
         if (s.passthrough) add("passthrough")
@@ -670,6 +797,27 @@ private fun formatStallEvents(events: List<AppDiagnostics.Entry>): String {
     }
 }
 
+/**
+ * Same shape as [formatStallEvents]/[formatEvents], but renders the
+ * PLAYBACK breadcrumb events (track changes, handoffs, oscillation,
+ * deferred downloads, feed-aware back-nav). [identifier] is included
+ * so a back-end reader can grep for specific event kinds.
+ */
+private fun formatPlaybackEvents(events: List<AppDiagnostics.Entry>): String {
+    val now = System.currentTimeMillis()
+    return events.joinToString("\n") { e ->
+        val agoSec = (now - e.timestampMs) / 1000.0
+        val ago = when {
+            agoSec < 1.0 -> "<1s"
+            agoSec < 60.0 -> "${"%.0f".format(agoSec)}s"
+            agoSec < 3600.0 -> "${"%.0f".format(agoSec / 60.0)}m"
+            else -> "${"%.0f".format(agoSec / 3600.0)}h"
+        }
+        val padded = ago.padStart(5)
+        "  $padded ago  ${e.identifier}: ${e.detail}"
+    }
+}
+
 private fun formatPlayerLine(p: com.lofipod.app.player.PlayerState): String {
     val playState = when {
         p.errorMessage != null -> "ERROR"
@@ -694,6 +842,7 @@ private fun buildClipboardDump(
     errorVerbose: String?,
     events: List<AudioChainTelemetry.Event>,
     stallEvents: List<AppDiagnostics.Entry>,
+    playbackEvents: List<AppDiagnostics.Entry>,
     startupPhases: List<StartupTimings.Phase>,
 ): String = buildString {
     appendLine("LofiPod audio diagnostics")
@@ -733,6 +882,10 @@ private fun buildClipboardDump(
     appendLine("[Stall watchdog]")
     if (stallEvents.isEmpty()) appendLine("  (no stalls)")
     else appendLine(formatStallEvents(stallEvents))
+    appendLine()
+    appendLine("[Playback events]")
+    if (playbackEvents.isEmpty()) appendLine("  (no playback events)")
+    else appendLine(formatPlaybackEvents(playbackEvents))
     appendLine()
     appendLine("[Startup]")
     if (startupPhases.isEmpty()) appendLine("  (no phases recorded)")

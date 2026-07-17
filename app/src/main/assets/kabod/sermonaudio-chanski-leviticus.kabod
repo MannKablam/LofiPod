@@ -1,0 +1,445 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:kabod="https://lofipod.app/ns/kabod/1">
+  <channel>
+    <title>Leviticus Series</title>
+    <link>https://www.sermonaudio.com/series/38602</link>
+    <description>Mark Chanski's verse-by-verse exposition of Leviticus, preached at Harbor Reformed Baptist Church in Holland, MI from August 1994 through December 1995.</description>
+    <language>en-US</language>
+    <itunes:author>Mark Chanski</itunes:author>
+    <kabod:packId>sermonaudio-chanski-leviticus</kabod:packId>
+    <kabod:archived>true</kabod:archived>
+    <kabod:speaker>Mark Chanski</kabod:speaker>
+    <kabod:speakerBio>Pastor of Harbor Reformed Baptist Church, Holland, Michigan since 1994; author of Manly Dominion, Womanly Dominion, and Encouragement: Adrenaline for the Soul; hermeneutics instructor at Reformed Baptist Seminary.</kabod:speakerBio>
+    <kabod:bookOfBible>Leviticus</kabod:bookOfBible>
+    <kabod:sourceSite>https://www.sermonaudio.com/series/38602</kabod:sourceSite>
+    <kabod:seriesStart>1994-08-21</kabod:seriesStart>
+    <kabod:seriesEnd>1995-12-17</kabod:seriesEnd>
+    <kabod:packSchemaVersion>2</kabod:packSchemaVersion>
+    <kabod:packVersion>2</kabod:packVersion>
+    <kabod:packRevisionDate>2026-07-11</kabod:packRevisionDate>
+    <kabod:church>Harbor Reformed Baptist Church</kabod:church>
+    <kabod:churchLocation>Holland, Michigan, USA</kabod:churchLocation>
+    <kabod:partTotal>37</kabod:partTotal>
+    <kabod:advertisedTotal>37</kabod:advertisedTotal>
+    <kabod:audioHost>cloud.sermonaudio.com</kabod:audioHost>
+    <kabod:contentNotes>v2 (2026-07-11): scripture refs re-based on SermonAudio's own per-sermon Bible-text annotations (v1 inferred them from preaching cadence and ran 1-2 chapters behind through the mid-series). Policy: where SermonAudio annotates a passage it is adopted (raw value preserved per item in sourceBibleText); where it tags book-only, the chapter is interpolated from the surrounding annotated sermons; where it has no tag, the ref derives from the sermon title. Two source-tag oddities are reconciled as spans rather than silently overruled: #8 'Strange Fire' is tagged Lev 9:1-10 though Nadab and Abihu is 10:1 (displayed 9-10), and #14 'Laws Concerning Leprosy #1' is tagged Lev 14 though the leprosy laws begin at 13 (displayed 13-14). Chapters 6-7 have no dedicated sermon in the source's tagging. 37 sermons total, matching SermonAudio series 38602 exactly (IDs, dates, order, durations; verified 2026-07-11). Source title of #36 is misspelled 'Levititus' on SermonAudio; pack titles are normalized. The 1994 uploads are low-bitrate (~16 kbps) source transfers; the 1995 uploads are higher quality.</kabod:contentNotes>
+    <item>
+      <title>#1: Introduction to Leviticus</title>
+      <pubDate>Sun, 21 Aug 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/11160303059</guid>
+      <description>Series on Leviticus #1 This is the introductory sermon to a series on the book of Leviticus.  After listening to this series you will be even more convinced that ALL scripture is inspired by God and profitable....  You will not be disappointed by studying through this blessed portion of scripture.</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/11160303059.mp3" type="audio/mpeg" length="8156863"/>
+      <itunes:duration>1:07:58</itunes:duration>
+      <kabod:partNumber>1</kabod:partNumber>
+      <kabod:scripture>Leviticus 1</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="1" endV="17"/>
+      <kabod:sourceBibleText>Leviticus 1</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#2: Burnt Offering</title>
+      <pubDate>Sun, 28 Aug 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/11160303537</guid>
+      <description>Series on Leviticus #2</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/11160303537.mp3" type="audio/mpeg" length="8418367"/>
+      <itunes:duration>1:10:09</itunes:duration>
+      <kabod:partNumber>2</kabod:partNumber>
+      <kabod:scripture>Leviticus 1</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="1" startV="1" endCh="1" endV="17"/>
+      <kabod:sourceBibleText>Leviticus 1</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#3: Grain Offering</title>
+      <pubDate>Sun, 04 Sep 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/11160303713</guid>
+      <description>Series on Leviticus #3</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/11160303713.mp3" type="audio/mpeg" length="8273863"/>
+      <itunes:duration>1:08:56</itunes:duration>
+      <kabod:partNumber>3</kabod:partNumber>
+      <kabod:scripture>Leviticus 2</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="2" startV="1" endCh="2" endV="16"/>
+      <kabod:sourceBibleText>Leviticus 2</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#4: Peace Offering</title>
+      <pubDate>Sun, 25 Sep 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/1122030137</guid>
+      <description>Series on Leviticus #4</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1122030137.mp3" type="audio/mpeg" length="9074719"/>
+      <itunes:duration>1:15:37</itunes:duration>
+      <kabod:partNumber>4</kabod:partNumber>
+      <kabod:scripture>Leviticus 3</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="3" startV="1" endCh="3" endV="17"/>
+    </item>
+    <item>
+      <title>#5: Sin Offering</title>
+      <pubDate>Sun, 25 Sep 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/112903235430</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/112903235430.mp3" type="audio/mpeg" length="8959159"/>
+      <itunes:duration>1:14:39</itunes:duration>
+      <kabod:partNumber>5</kabod:partNumber>
+      <kabod:scripture>Leviticus 4</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="4" startV="1" endCh="4" endV="35"/>
+      <kabod:sourceBibleText>Leviticus 4</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#6: Guilt Offering</title>
+      <pubDate>Sun, 02 Oct 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/112903235714</guid>
+      <description>Series on Leviticus #6</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/112903235714.mp3" type="audio/mpeg" length="8377471"/>
+      <itunes:duration>1:09:48</itunes:duration>
+      <kabod:partNumber>6</kabod:partNumber>
+      <kabod:scripture>Leviticus 5</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="5" startV="1" endCh="5" endV="19"/>
+      <kabod:sourceBibleText>Leviticus 5</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#7: Ordination of Priests</title>
+      <pubDate>Sun, 09 Oct 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/1130030010</guid>
+      <description>Series on Leviticus #7</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1130030010.mp3" type="audio/mpeg" length="8021359"/>
+      <itunes:duration>1:06:50</itunes:duration>
+      <kabod:partNumber>7</kabod:partNumber>
+      <kabod:scripture>Leviticus 8</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="8" startV="1" endCh="8" endV="36"/>
+      <kabod:sourceBibleText>Leviticus 8</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#8: Strange Fire</title>
+      <pubDate>Sun, 23 Oct 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/1130030222</guid>
+      <description>Series on Leviticus #8</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1130030222.mp3" type="audio/mpeg" length="8865199"/>
+      <itunes:duration>1:13:52</itunes:duration>
+      <kabod:partNumber>8</kabod:partNumber>
+      <kabod:scripture>Leviticus 9–10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="9" startV="1" endCh="10" endV="20"/>
+      <kabod:sourceBibleText>Leviticus 9:1-10</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#9: The Regulative Principle</title>
+      <pubDate>Sun, 30 Oct 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/11300301441</guid>
+      <description>Series on Leviticus #9</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/11300301441.mp3" type="audio/mpeg" length="8826175"/>
+      <itunes:duration>1:13:33</itunes:duration>
+      <kabod:partNumber>9</kabod:partNumber>
+      <kabod:scripture>Leviticus 9–10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="9" startV="22" endCh="10" endV="20"/>
+      <kabod:sourceBibleText>Leviticus 9:22</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#10: Earthly and Heavenly Priesthood</title>
+      <pubDate>Sun, 13 Nov 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/122103164614</guid>
+      <description>Sermon #10 in expository series on Leviticus</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/122103164614.mp3" type="audio/mpeg" length="8065423"/>
+      <itunes:duration>1:07:12</itunes:duration>
+      <kabod:partNumber>10</kabod:partNumber>
+      <kabod:scripture>Leviticus 8–10</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="8" startV="1" endCh="10" endV="20"/>
+    </item>
+    <item>
+      <title>#11: Clean and Unclean Animals</title>
+      <pubDate>Sun, 04 Dec 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/122103164813</guid>
+      <description>Sermon #11 in expository series on Leviticus</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/122103164813.mp3" type="audio/mpeg" length="8525071"/>
+      <itunes:duration>1:11:02</itunes:duration>
+      <kabod:partNumber>11</kabod:partNumber>
+      <kabod:scripture>Leviticus 11</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="11" startV="1" endCh="11" endV="47"/>
+    </item>
+    <item>
+      <title>#12: Applications to New Testament Christians</title>
+      <pubDate>Sun, 11 Dec 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/122103164925</guid>
+      <description>Sermon #12 in expository series on Leviticus</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/122103164925.mp3" type="audio/mpeg" length="8227855"/>
+      <itunes:duration>1:08:33</itunes:duration>
+      <kabod:partNumber>12</kabod:partNumber>
+      <kabod:scripture>Leviticus 11–12</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="11" startV="1" endCh="12" endV="8"/>
+      <kabod:sourceBibleText>Leviticus 12</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#13: Laws Concerning Birth</title>
+      <pubDate>Sun, 18 Dec 1994 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/122103165240</guid>
+      <description>Sermon #13 in expository series on Leviticus</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/122103165240.mp3" type="audio/mpeg" length="8272999"/>
+      <itunes:duration>1:08:56</itunes:duration>
+      <kabod:partNumber>13</kabod:partNumber>
+      <kabod:scripture>Leviticus 12</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="12" startV="1" endCh="12" endV="8"/>
+    </item>
+    <item>
+      <title>#14: Laws Concerning Leprosy #1</title>
+      <pubDate>Sun, 29 Jan 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/111041483</guid>
+      <description>Series on Leviticus #14</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/111041483.mp3" type="audio/mpeg" length="8272999"/>
+      <itunes:duration>1:08:56</itunes:duration>
+      <kabod:partNumber>14</kabod:partNumber>
+      <kabod:scripture>Leviticus 13–14</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="13" startV="1" endCh="14" endV="57"/>
+      <kabod:sourceBibleText>Leviticus 14</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#15: Leviticus #15</title>
+      <pubDate>Sun, 05 Feb 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/827122050456</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/827122050456.mp3" type="audio/mpeg" length="31438679"/>
+      <itunes:duration>1:05:25</itunes:duration>
+      <kabod:partNumber>15</kabod:partNumber>
+      <kabod:scripture>Leviticus 14</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="14" startV="1" endCh="14" endV="57"/>
+      <kabod:sourceBibleText>Leviticus 14</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#16: Leviticus #16</title>
+      <pubDate>Sun, 12 Feb 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/8271221170</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/8271221170.mp3" type="audio/mpeg" length="34629380"/>
+      <itunes:duration>1:12:04</itunes:duration>
+      <kabod:partNumber>16</kabod:partNumber>
+      <kabod:scripture>Leviticus 15</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="15" startV="1" endCh="15" endV="33"/>
+      <kabod:sourceBibleText>Leviticus 15</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#17: Leviticus #17</title>
+      <pubDate>Sun, 05 Mar 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/82812651383</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/82812651383.mp3" type="audio/mpeg" length="34419355"/>
+      <itunes:duration>1:11:38</itunes:duration>
+      <kabod:partNumber>17</kabod:partNumber>
+      <kabod:scripture>Leviticus 16</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 16</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#18: Leviticus #18</title>
+      <pubDate>Sun, 19 Mar 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/8291264801</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/8291264801.mp3" type="audio/mpeg" length="36568710"/>
+      <itunes:duration>1:16:07</itunes:duration>
+      <kabod:partNumber>18</kabod:partNumber>
+      <kabod:scripture>Leviticus 16</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="16" startV="1" endCh="16" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 16</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#19: Leviticus #19</title>
+      <pubDate>Sun, 02 Apr 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/9112758270</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112758270.mp3" type="audio/mpeg" length="34141203"/>
+      <itunes:duration>1:11:03</itunes:duration>
+      <kabod:partNumber>19</kabod:partNumber>
+      <kabod:scripture>Leviticus 17</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="17" startV="1" endCh="17" endV="16"/>
+      <kabod:sourceBibleText>Leviticus 17</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#20: Leviticus #20</title>
+      <pubDate>Sun, 09 Apr 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121526240</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121526240.mp3" type="audio/mpeg" length="34719659"/>
+      <itunes:duration>1:12:16</itunes:duration>
+      <kabod:partNumber>20</kabod:partNumber>
+      <kabod:scripture>Leviticus 18</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="18" startV="1" endCh="18" endV="30"/>
+      <kabod:sourceBibleText>Leviticus 18</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#21: Leviticus #21</title>
+      <pubDate>Sun, 23 Apr 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121527212</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121527212.mp3" type="audio/mpeg" length="36058800"/>
+      <itunes:duration>1:15:03</itunes:duration>
+      <kabod:partNumber>21</kabod:partNumber>
+      <kabod:scripture>Leviticus 18–19</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="18" startV="1" endCh="19" endV="37"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#22: Leviticus #22</title>
+      <pubDate>Sun, 07 May 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/9112152854</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112152854.mp3" type="audio/mpeg" length="34360632"/>
+      <itunes:duration>1:11:31</itunes:duration>
+      <kabod:partNumber>22</kabod:partNumber>
+      <kabod:scripture>Leviticus 19</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="19" startV="1" endCh="19" endV="37"/>
+      <kabod:sourceBibleText>Leviticus 19</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#23: Leviticus #23</title>
+      <pubDate>Sun, 14 May 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121528326</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121528326.mp3" type="audio/mpeg" length="38052465"/>
+      <itunes:duration>1:19:12</itunes:duration>
+      <kabod:partNumber>23</kabod:partNumber>
+      <kabod:scripture>Leviticus 20</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="20" startV="1" endCh="20" endV="27"/>
+      <kabod:sourceBibleText>Leviticus 20</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#24: Leviticus #24</title>
+      <pubDate>Sun, 21 May 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/9112152950</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112152950.mp3" type="audio/mpeg" length="34572537"/>
+      <itunes:duration>1:11:57</itunes:duration>
+      <kabod:partNumber>24</kabod:partNumber>
+      <kabod:scripture>Leviticus 21</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="21" startV="1" endCh="21" endV="24"/>
+      <kabod:sourceBibleText>Leviticus 21</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#25: Leviticus #25</title>
+      <pubDate>Sun, 11 Jun 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121532530</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121532530.mp3" type="audio/mpeg" length="37918928"/>
+      <itunes:duration>1:18:56</itunes:duration>
+      <kabod:partNumber>25</kabod:partNumber>
+      <kabod:scripture>Leviticus 22</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="22" startV="1" endCh="22" endV="33"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#26: Leviticus #26</title>
+      <pubDate>Sun, 18 Jun 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121533242</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121533242.mp3" type="audio/mpeg" length="36457951"/>
+      <itunes:duration>1:15:53</itunes:duration>
+      <kabod:partNumber>26</kabod:partNumber>
+      <kabod:scripture>Leviticus 23</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="23" endV="44"/>
+      <kabod:sourceBibleText>Leviticus 23</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#27: Leviticus #27</title>
+      <pubDate>Sun, 25 Jun 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121533504</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121533504.mp3" type="audio/mpeg" length="36731296"/>
+      <itunes:duration>1:16:27</itunes:duration>
+      <kabod:partNumber>27</kabod:partNumber>
+      <kabod:scripture>Leviticus 23</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="23" startV="1" endCh="23" endV="44"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#28: Leviticus #28</title>
+      <pubDate>Sun, 02 Jul 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121534406</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121534406.mp3" type="audio/mpeg" length="33806627"/>
+      <itunes:duration>1:10:21</itunes:duration>
+      <kabod:partNumber>28</kabod:partNumber>
+      <kabod:scripture>Leviticus 24</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="24" startV="1" endCh="24" endV="23"/>
+      <kabod:sourceBibleText>Leviticus 24</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#29: Leviticus #29</title>
+      <pubDate>Sun, 13 Aug 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121535118</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121535118.mp3" type="audio/mpeg" length="32279613"/>
+      <itunes:duration>1:07:11</itunes:duration>
+      <kabod:partNumber>29</kabod:partNumber>
+      <kabod:scripture>Leviticus 25</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+      <kabod:sourceBibleText>Leviticus 25</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#30: The Year of Jubilee: The Ram's Horn!</title>
+      <pubDate>Sun, 27 Aug 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/1240322011</guid>
+      <description>The Ram's Horn in Leviticus 25 is the inspiration for our logo.  The sermon begins with a dramatic exposition of Leviticus 25.  It shows how the Lord Jesus is the Redeemer foreshadowed in this chapter.  The 30th in an expository series on the book of Leviticus, after you listen to this sermon, you will gain a new appreciation for this Old Testament book and may desire to listen through the entire series.</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/1240322011.mp3" type="audio/mpeg" length="33848423"/>
+      <itunes:duration>1:10:27</itunes:duration>
+      <kabod:partNumber>30</kabod:partNumber>
+      <kabod:scripture>Leviticus 25:47–55</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="47" endCh="25" endV="55"/>
+      <kabod:sourceBibleText>Leviticus 25:47-55</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#31: Leviticus #31</title>
+      <pubDate>Sun, 10 Sep 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/911215385610</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/911215385610.mp3" type="audio/mpeg" length="34077674"/>
+      <itunes:duration>1:10:55</itunes:duration>
+      <kabod:partNumber>31</kabod:partNumber>
+      <kabod:scripture>Leviticus 25</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="25" endV="55"/>
+      <kabod:sourceBibleText>Leviticus 25</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#32: Leviticus #32</title>
+      <pubDate>Sun, 15 Oct 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121541141</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121541141.mp3" type="audio/mpeg" length="33225246"/>
+      <itunes:duration>1:09:09</itunes:duration>
+      <kabod:partNumber>32</kabod:partNumber>
+      <kabod:scripture>Leviticus 25–26</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="25" startV="1" endCh="26" endV="46"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#33: Leviticus #33</title>
+      <pubDate>Sun, 22 Oct 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121541513</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121541513.mp3" type="audio/mpeg" length="33678314"/>
+      <itunes:duration>1:10:05</itunes:duration>
+      <kabod:partNumber>33</kabod:partNumber>
+      <kabod:scripture>Leviticus 26</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="26" startV="1" endCh="26" endV="46"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#34: Leviticus #34</title>
+      <pubDate>Sun, 05 Nov 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/9112163393</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112163393.mp3" type="audio/mpeg" length="32223189"/>
+      <itunes:duration>1:07:04</itunes:duration>
+      <kabod:partNumber>34</kabod:partNumber>
+      <kabod:scripture>Leviticus 26</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="26" startV="1" endCh="26" endV="46"/>
+      <kabod:sourceBibleText>Leviticus</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#35: Leviticus #35</title>
+      <pubDate>Sun, 12 Nov 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/9112164445</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/9112164445.mp3" type="audio/mpeg" length="32633834"/>
+      <itunes:duration>1:07:55</itunes:duration>
+      <kabod:partNumber>35</kabod:partNumber>
+      <kabod:scripture>Leviticus 27</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="27" startV="1" endCh="27" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 27</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#36: Tithing</title>
+      <pubDate>Sun, 19 Nov 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/119031125</guid>
+      <description>Series on Leviticus #36 In a consecutive exposition of the book of Leviticus, Pastor Chanski arrives at a passage which deals with the subject of tithing.  What did this requirement mean to the Israelites in the Old Testament and is it still applicable to new testament saints?  This is an excellent treatment of the subject which draws on passages throughout the scriptures.</description>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/119031125.mp3" type="audio/mpeg" length="32443244"/>
+      <itunes:duration>1:07:31</itunes:duration>
+      <kabod:partNumber>36</kabod:partNumber>
+      <kabod:scripture>Leviticus 27:26–33</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="27" startV="26" endCh="27" endV="33"/>
+      <kabod:sourceBibleText>Leviticus 27:26-33</kabod:sourceBibleText>
+    </item>
+    <item>
+      <title>#37: Conclusion</title>
+      <pubDate>Sun, 17 Dec 1995 00:00:00 GMT</pubDate>
+      <guid isPermaLink="false">https://www.sermonaudio.com/solo/rbcholland/sermons/91121621270</guid>
+      <enclosure url="https://cloud.sermonaudio.com/media/audio/high/91121621270.mp3" type="audio/mpeg" length="32176377"/>
+      <itunes:duration>1:06:58</itunes:duration>
+      <kabod:partNumber>37</kabod:partNumber>
+      <kabod:scripture>Leviticus 27:34</kabod:scripture>
+      <kabod:scriptureRef book="Leviticus" startCh="27" startV="34" endCh="27" endV="34"/>
+      <kabod:sourceBibleText>Leviticus 27:34</kabod:sourceBibleText>
+    </item>
+  </channel>
+</rss>

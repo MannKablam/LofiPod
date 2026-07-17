@@ -33,6 +33,7 @@
         android:label="LofiPod"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.LofiPod"
         android:supportsRtl="true">
 
@@ -45,6 +46,22 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shared-note deep link: lofipod://note?feed=…&guid=…&t=…
+                 opens the episode at the note's position on this instance. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="lofipod" />
+            </intent-filter>
+            <!-- Fallback ingestion for apps that don't linkify the custom
+                 scheme: share the whole message into LofiPod and the
+                 lofipod:// URI is extracted from the text. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 

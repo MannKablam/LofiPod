@@ -1,24 +1,30 @@
 package com.lofipod.app.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
 import com.lofipod.app.data.db.EpisodeStateEntity
@@ -94,7 +100,17 @@ private suspend fun resolvePreviewData(app: LofiPodApp, guid: String): PreviewDa
         }
     }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Touch-target size of the pause-skip control AND of the empty slot that
+ * mirrors it at the transport row's far right. The two read one constant
+ * because they must never drift apart: the row centers the play button
+ * by giving both of its flanks identical fixed widths, so the equal gaps
+ * SpaceEvenly hands out land the button's center exactly on the row's
+ * center. See the transport Row in [PlayerScreen] for the geometry.
+ */
+private val PauseSkipTouchTargetSize = 52.dp
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PlayerScreen(
     controller: PlayerController,
@@ -103,6 +119,13 @@ fun PlayerScreen(
     onOpenHistory: () -> Unit,
     onOpenMyLists: () -> Unit,
     onOpenSettings: () -> Unit,
+    /**
+     * One-tap jump to the catalog (root destination). Distinct from
+     * `onBack` which walks the back stack one step at a time via
+     * smartBack; this lets a user on Player → Episodes → Catalog get
+     * home in one tap instead of two. v0.10.9+.
+     */
+    onOpenCatalog: () -> Unit,
     /**
      * When non-null AND it doesn't match the currently-playing episode, the
      * screen renders in "preview mode": all the same UI elements, but the
@@ -131,12 +154,22 @@ fun PlayerScreen(
     val state by controller.state.collectAsState()
     val pendingReturn by controller.pendingReturn.collectAsState()
     val autoplayTimer by controller.autoplayTimer.collectAsState()
+    val sleepTimerState by controller.sleepTimer.collectAsState()
+    var sleepDialogOpen by remember { mutableStateOf(false) }
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
+    var scrubberPauses by remember {
+        mutableStateOf<List<com.lofipod.app.audio.PauseTapProcessor.PauseSpan>>(emptyList())
+    }
 
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
+    // Pause-skip ("back to previous audible pause") sensitivity dialog,
+    // opened by long-pressing the transport control. Settings collection
+    // lives inside the dialog block so the screen root isn't subscribed
+    // to a DataStore flow it only needs while the dialog is up.
+    var pauseSkipDialogOpen by remember { mutableStateOf(false) }
     // Per-episode download state for the inline DownloadButton. Recomposes
     // automatically as downloads progress / change state.
     val downloadsByGuid by app.downloadsApi.byId.collectAsState()
@@ -147,6 +180,10 @@ fun PlayerScreen(
     // episode_state -> repo cache -> Episode. Refreshed when [displayedGuid]
     // changes (track transition / live-vs-preview swap).
     var episodeSizeBytes by remember { mutableStateOf<Long?>(null) }
+    // v0.10.8+: track the audio URL alongside the RSS-supplied size, so
+    // when the feed reports `length="0"` (Megaphone-hosted shows) we can
+    // kick off the size prober and pick up the actual size once it lands.
+    var episodeAudioUrl by remember { mutableStateOf<String?>(null) }
 
     // Resolve preview data once per [previewGuid]. Loaded async because we
     // hit the DB; stays null until ready (we render a brief loading state
@@ -170,16 +207,37 @@ fun PlayerScreen(
     // looked up via episode_state -> repo cache to find the parsed Episode
     // (single DB read + one in-memory list scan, runs off the IO dispatcher).
     LaunchedEffect(displayedGuid, isPreview, previewData) {
-        episodeSizeBytes = when {
-            displayedGuid == null -> null
-            isPreview -> previewData?.episode?.audioByteSize
+        when {
+            displayedGuid == null -> {
+                episodeSizeBytes = null
+                episodeAudioUrl = null
+            }
+            isPreview -> {
+                episodeSizeBytes = previewData?.episode?.audioByteSize
+                episodeAudioUrl = previewData?.episode?.audioUrl
+            }
             else -> withContext(Dispatchers.IO) {
                 val state = app.db.episodeStateDao().get(displayedGuid)
                 val pod = state?.let { app.repo.cached(it.feedUrl) }
-                pod?.episodes?.find { it.guid == displayedGuid }?.audioByteSize
+                val ep = pod?.episodes?.find { it.guid == displayedGuid }
+                episodeSizeBytes = ep?.audioByteSize
+                episodeAudioUrl = ep?.audioUrl
             }
         }
     }
+    // Kick off a size probe when the RSS feed didn't supply a length.
+    // Idempotent — re-firing for the same URL is a no-op inside the prober.
+    LaunchedEffect(episodeAudioUrl, episodeSizeBytes) {
+        if (episodeSizeBytes == null) {
+            episodeAudioUrl?.let { app.episodeSizes.probe(it) }
+        }
+    }
+    // Observe the prober's size cache. resolvedSizeBytes is the RSS value
+    // when present, else whatever the probe came back with (which may be
+    // null while still in-flight or if the host didn't return a size).
+    val probedSizes by app.episodeSizes.sizes.collectAsState()
+    val resolvedSizeBytes = episodeSizeBytes
+        ?: episodeAudioUrl?.let { probedSizes[it] }
 
     // Live favorite tier for whichever episode is being displayed (live or
     // preview). Observed so the top-bar heart stays in sync if the user
@@ -202,8 +260,61 @@ fun PlayerScreen(
         while (true) {
             positionMs = controller.currentPositionMs()
             durationMs = controller.durationMs()
+            // Scrubber pause ticks ride the same 500ms cadence — a cheap
+            // synchronized copy of the tap's ring, never per-frame.
+            scrubberPauses = com.lofipod.app.player.PlaybackService
+                .sharedPauseTap.snapshotPauses()
             delay(500)
         }
+    }
+
+    // Structured-scrubber data layers (live playback only).
+    // Heat: observe the episode's bucket row — Room re-emits on each 10s
+    // ticker upsert so the just-listened region brightens live. Explicit
+    // state + collect (NOT flow.collectAsState): collectAsState keeps the
+    // previous VALUE across a flow swap, which painted the previous
+    // episode's heat on the new scrubber until Room's first emission.
+    // remember(guid) resets to null the moment the episode changes.
+    var heatBuckets by remember(state.currentEpisodeGuid) {
+        mutableStateOf<IntArray?>(null)
+    }
+    LaunchedEffect(state.currentEpisodeGuid) {
+        val g = state.currentEpisodeGuid ?: return@LaunchedEffect
+        app.db.episodeHeatDao().observe(g).collect { row ->
+            heatBuckets = row?.let { com.lofipod.app.data.EpisodeHeatRecorder.decode(it.bucketsCsv) }
+        }
+    }
+    // Offline analysis: whole-file pause cut marks plus the measured
+    // duration to map them against. Same explicit state + collect shape
+    // as the heat row above, for the same flow-swap reason. The analyzer
+    // scans local files only (never a second network stream — that
+    // contends with live playback and the auto-download), so the effect
+    // re-keys on the episode's DOWNLOAD STATE: re-firing ensureAnalyzed
+    // the moment the download reaches COMPLETED is what starts the scan,
+    // and the repository makes repeat calls free (present row / in-flight
+    // scan short-circuit).
+    var episodeAnalysis by remember(state.currentEpisodeGuid) {
+        mutableStateOf<com.lofipod.app.audio.EpisodeAnalysis?>(null)
+    }
+    val analysisDownloadState =
+        state.currentEpisodeGuid?.let { downloadsByGuid[it]?.state }
+    LaunchedEffect(state.currentEpisodeGuid, analysisDownloadState, isPreview) {
+        val g = state.currentEpisodeGuid ?: return@LaunchedEffect
+        // Preview never scans: it's a static look at a non-playing episode
+        // whose local file may not be present. Live episodes resolve their
+        // local source (downloaded file or device content:// guid) from the
+        // guid alone.
+        if (!isPreview) app.episodeAnalysis.ensureAnalyzed(g)
+        app.episodeAnalysis.analysisFor(g).collect { episodeAnalysis = it }
+    }
+    // Scripture markers: one-shot per episode, cached-transcript-only (no
+    // network — transcripts arrive when the user opens the Transcript tab).
+    var scrubberMarkers by remember(state.currentEpisodeGuid) {
+        mutableStateOf<List<ScrubberMarker>>(emptyList())
+    }
+    LaunchedEffect(state.currentEpisodeGuid) {
+        val g = state.currentEpisodeGuid ?: return@LaunchedEffect
+        scrubberMarkers = withContext(Dispatchers.IO) { buildScriptureMarkers(app, g) }
     }
 
     // Re-snapshot the saved position into the displayed values whenever
@@ -238,11 +349,44 @@ fun PlayerScreen(
         onDispose { onPlayerTabsFullscreenChange(false) }
     }
 
+    // Expanded waveform panel (v0.11): press-and-hold on the playback bar
+    // swaps the artwork square for a pannable close-up of the analyzer's
+    // amplitude envelope (see WaveformPanel). Per-screen state, live mode
+    // only — preview has no playhead and deliberately never feeds the
+    // analyzer (a preview's audio URL must not be scanned under the live
+    // guid), so the panel would have nothing truthful to show there.
+    var waveformExpanded by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+
+    // The panel lives inside the top block, which tabsFullscreen removes
+    // wholesale, and its trigger only exists on the live scrubber. If
+    // either exit happens while the panel is open (active-tab tap; the
+    // playing episode drifting away from previewGuid via autoplay),
+    // collapse — otherwise the BackHandler below would keep intercepting
+    // back on behalf of a surface that is no longer on screen.
+    LaunchedEffect(tabsFullscreen, isPreview) {
+        if (tabsFullscreen || isPreview) waveformExpanded = false
+    }
+
+    // Back collapses the panel instead of leaving the player. This
+    // composes deeper than AppNav's player-route BackHandler
+    // (feedAwareBackFromPlayer in MainActivity), so it wins exactly while
+    // enabled — the gate must stay precisely "panel open", or the
+    // feed-aware back-to-episodes navigation silently breaks.
+    BackHandler(enabled = waveformExpanded) { waveformExpanded = false }
+
     // Diagnostics-tab toggle from Settings. When false (default) the player
     // tab strip is Notes / Details / Transcript only. When true, a 4th
     // "Diagnostics" tab joins for in-player live audio-chain health.
     val showDiagnosticsTab by remember(app) {
         com.lofipod.app.data.Settings(app).showDiagnosticsTabInPlayer
+    }.collectAsState(initial = false)
+
+    // Manual flush button (flush-valve icon). v0.10.1+; off by default. When
+    // enabled, sits to the right of the Speed chip with the chip itself
+    // staying horizontally centered.
+    val showFlushButton by remember(app) {
+        com.lofipod.app.data.Settings(app).showFlushButtonInPlayer
     }.collectAsState(initial = false)
 
     // Surface controller-side transient messages as snackbars so play-button
@@ -271,7 +415,7 @@ fun PlayerScreen(
                     when {
                         isPreview -> Text("Preview")
                         state.currentEpisodeGuid != null -> Icon(
-                            Icons.Filled.GraphicEq,
+                            painterResource(R.drawable.graphic_eq_24),
                             contentDescription = "Now playing",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(28.dp)
@@ -280,10 +424,18 @@ fun PlayerScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    // v0.10.15+: Home is the far-left affordance now.
+                    // Tap → Catalog. The "back to episodes" behaviour is
+                    // owned by the system back gesture (wired in
+                    // MainActivity's BackHandler to feedAwareBackFromPlayer
+                    // for the player route), so the down-chevron that used
+                    // to sit here is gone. One-tap-to-Catalog was the
+                    // common ask; for back-to-episodes use the system
+                    // back gesture / button.
+                    IconButton(onClick = onOpenCatalog) {
                         Icon(
-                            Icons.Filled.KeyboardArrowDown,
-                            contentDescription = "Back",
+                            painterResource(R.drawable.home_24),
+                            contentDescription = "Catalog",
                             modifier = Modifier.size(28.dp)
                         )
                     }
@@ -302,9 +454,10 @@ fun PlayerScreen(
                         IconButton(onClick = {
                             val next = (currentTier + 1) % 3
                             scope.launch {
-                                withContext(Dispatchers.IO) {
+                                val existing = withContext(Dispatchers.IO) {
                                     val dao = app.db.episodeStateDao()
-                                    if (dao.get(guid) == null) {
+                                    val row = dao.get(guid)
+                                    if (row == null) {
                                         // Synthesise a row so the tier sticks. Pull
                                         // identity from previewData if we have it.
                                         previewData?.episode?.let { ep ->
@@ -323,7 +476,19 @@ fun PlayerScreen(
                                     } else {
                                         dao.setFavoriteTier(guid, next)
                                     }
+                                    row
                                 }
+                                // Promotions surface in the notes system too —
+                                // canned auto-note (no-op on the clear-to-0 leg)
+                                // stamped at the live playback position if this
+                                // episode is loaded, else its saved resume
+                                // position (matches the episode-list heart).
+                                val posMs = if (state.currentEpisodeGuid == guid)
+                                    controller.currentPositionMs()
+                                else existing?.positionMs ?: 0L
+                                com.lofipod.app.data.recordPromotionNote(
+                                    app.db, guid, next, posMs
+                                )
                                 if (next == 2) {
                                     controller.recordMostExcellentPromotion(guid)
                                     snackbarHostState.showSnackbar("Promoted to most-excellent")
@@ -334,9 +499,45 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.width(4.dp))
                     }
+                    // Mark this moment (v0.11): one tap drops a timestamped
+                    // note with a canned body — no keyboard, designed for
+                    // driving/walking. Expand it later from the Notes tab
+                    // (it's an ordinary note: jumpable, editable, shareable).
+                    // Live playback only — a moment needs a playhead.
+                    if (!isPreview && state.currentEpisodeGuid != null) {
+                        IconButton(onClick = {
+                            val guid = state.currentEpisodeGuid ?: return@IconButton
+                            val posMs = controller.currentPositionMs()
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    app.db.episodeNoteEntryDao().upsert(
+                                        EpisodeNoteEntryEntity(
+                                            guid = guid,
+                                            createdAt = System.currentTimeMillis(),
+                                            playbackPosMs = posMs,
+                                            text = "Marked while listening",
+                                        )
+                                    )
+                                }
+                                snackbarHostState.showSnackbar(
+                                    "Moment marked at ${formatTime(posMs)}"
+                                )
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.note_add_24),
+                                contentDescription = "Mark this moment",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    // Home moved to navigationIcon slot (far left) in
+                    // v0.10.15 — see the navigationIcon block above. The
+                    // actions row now starts directly with My lists.
                     IconButton(onClick = onOpenMyLists) {
                         Icon(
-                            Icons.AutoMirrored.Filled.FormatListBulleted,
+                            painterResource(R.drawable.format_list_bulleted_24),
                             contentDescription = "My lists",
                             modifier = Modifier.size(28.dp)
                         )
@@ -348,7 +549,7 @@ fun PlayerScreen(
                         // in the top-bar title above + Catalog overflow).
                         // Keeps the two affordances visually separable.
                         Icon(
-                            Icons.Filled.Tune,
+                            painterResource(R.drawable.tune_24),
                             contentDescription = "Audio Fine-tuning",
                             modifier = Modifier.size(28.dp)
                         )
@@ -359,7 +560,7 @@ fun PlayerScreen(
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
-                                Icons.Filled.MoreVert,
+                                painterResource(R.drawable.more_vert_24),
                                 contentDescription = "More",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(28.dp)
@@ -372,7 +573,7 @@ fun PlayerScreen(
                             DropdownMenuItem(
                                 text = { Text("Playback history") },
                                 onClick = { menuExpanded = false; onOpenHistory() },
-                                leadingIcon = { Icon(Icons.Filled.History, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.history_24), null) }
                             )
                             // Share lives in the overflow (under "Playback
                             // history" per the player's existing ordering):
@@ -395,12 +596,25 @@ fun PlayerScreen(
                                         ctx.shareEnclosure(ep.audioUrl, ep.title)
                                     }
                                 },
-                                leadingIcon = { Icon(Icons.Filled.Share, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.share_24), null) }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (sleepTimerState != null) "Sleep timer (on)"
+                                        else "Sleep timer"
+                                    )
+                                },
+                                enabled = !isPreview,
+                                onClick = { menuExpanded = false; sleepDialogOpen = true },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.hourglass_empty_24), null)
+                                }
                             )
                             DropdownMenuItem(
                                 text = { Text("Settings") },
                                 onClick = { menuExpanded = false; onOpenSettings() },
-                                leadingIcon = { Icon(Icons.Filled.Settings, null) }
+                                leadingIcon = { Icon(painterResource(R.drawable.settings_24), null) }
                             )
                         }
                     }
@@ -458,18 +672,39 @@ fun PlayerScreen(
                     previewData?.podcast?.title ?: ""
                 else state.currentArtist ?: ""
 
-                // Bigger artwork with a thin-but-bold ink stroke between the
-                // image and the screen edge (the chunky border is part of the
-                // theme language — same as cassette/reel/ticker placeholder
-                // surfaces). Uses outline at 0.7-alpha so it reads on every theme.
-                ThemedArtwork(
-                    artworkUrl = displayedArtwork,
-                    size = 260.dp,
-                    modifier = Modifier.border(
-                        width = 3.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+                // Artwork square, or — while the hold-gesture panel is open —
+                // the expanded waveform in its place. Same 260dp height either
+                // way, so the title, scrubber, and transport below never
+                // reflow when the panel toggles; the artwork is the one
+                // element up here that is pure decoration, which is exactly
+                // why it's the one that cedes its space. Everything the
+                // panel needs to stay honest (scrubber for the whole-episode
+                // view, transport, the autoplay-countdown morph on the play
+                // button) stays visible around it.
+                if (waveformExpanded && !isPreview) {
+                    WaveformPanel(
+                        analysis = episodeAnalysis,
+                        positionSource = { controller.currentPositionMs() },
+                        onSeek = { controller.seekTo(it) },
+                        onClose = { waveformExpanded = false },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(260.dp),
                     )
-                )
+                } else {
+                    // Bigger artwork with a thin-but-bold ink stroke between the
+                    // image and the screen edge (the chunky border is part of the
+                    // theme language — same as cassette/reel/ticker placeholder
+                    // surfaces). Uses outline at 0.7-alpha so it reads on every theme.
+                    ThemedArtwork(
+                        artworkUrl = displayedArtwork,
+                        size = 260.dp,
+                        modifier = Modifier.border(
+                            width = 3.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+                        )
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(
                     displayedTitle,
@@ -493,7 +728,10 @@ fun PlayerScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
                     )
-                    if (displayedGuid != null) {
+                    // Device files (guid == their content:// URI) are already
+                    // local — the downloader ignores them by design, so the
+                    // button would be a dead control. Hide it instead.
+                    if (displayedGuid != null && !displayedGuid.startsWith("content://")) {
                         val download = downloadsByGuid[displayedGuid]
                         DownloadButton(
                             download = download,
@@ -528,20 +766,37 @@ fun PlayerScreen(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                val frac = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
-                Slider(
-                    value = frac.coerceIn(0f, 1f),
-                    onValueChange = { v ->
-                        // Preview slider is read-only — no seek target to apply
-                        // to since nothing is playing. The saved position from
-                        // episode_state is shown for context only.
-                        if (!isPreview && durationMs > 0) {
-                            controller.seekTo((v * durationMs).toLong())
-                        }
-                    },
-                    enabled = !isPreview,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (isPreview) {
+                    // Preview keeps the plain read-only Slider — no live
+                    // pause data, no heat accruing, nothing to structure.
+                    // The saved position from episode_state is context only.
+                    val frac = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
+                    Slider(
+                        value = frac.coerceIn(0f, 1f),
+                        onValueChange = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    StructuredScrubber(
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        heatBuckets = heatBuckets,
+                        pauses = scrubberPauses,
+                        analysis = episodeAnalysis,
+                        markers = scrubberMarkers,
+                        onSeek = { controller.seekTo(it) },
+                        // Press-and-hold opens the expanded waveform above.
+                        // The haptic matches the transport row's other
+                        // long-press (pause-skip sensitivity), which gets
+                        // the same pulse via combinedClickable.
+                        onExpandWaveform = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            waveformExpanded = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Row(Modifier.fillMaxWidth()) {
                     Text(formatTime(positionMs), style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.weight(1f))
@@ -552,7 +807,7 @@ fun PlayerScreen(
                 // enclosure file so one number covers both questions
                 // ("how much data?" / "how much disk?"). Hidden when the
                 // feed didn't publish an enclosure length.
-                episodeSizeBytes?.let { bytes ->
+                resolvedSizeBytes?.let { bytes ->
                     Spacer(Modifier.height(2.dp))
                     Row(modifier = Modifier.fillMaxWidth()) {
                         Spacer(Modifier.weight(1f))
@@ -564,22 +819,65 @@ fun PlayerScreen(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // SpaceEvenly + fillMaxWidth instead of fixed spacers: the
+                // fixed-size controls fit a 320dp-wide window (272dp usable
+                // inside the 24dp side padding) only if the gaps flex. Fixed
+                // 8-16dp spacers overflowed and clipped the outer buttons on
+                // compact/split-screen widths.
+                //
+                // The trailing symmetry slot is what puts the play button on
+                // the screen's midline. SpaceEvenly hands out equal GAPS, so
+                // the button sits centered only when the fixed widths on its
+                // two flanks match — and bare, they don't: pause-skip plus
+                // seek-back on the left against seek-forward alone on the
+                // right pushes the button rightward by half the width
+                // difference. An empty slot mirroring the pause-skip's exact
+                // footprint on the far right makes both flanks 116dp, and
+                // the equal-gap arithmetic then lands the play center on the
+                // row center at EVERY width — the gaps all grow or shrink by
+                // the same amount, so the symmetry (and the centering) holds
+                // even on windows narrow enough to drive them slightly
+                // negative, where adjacent ripple areas overlap a few dp but
+                // the glyphs themselves stay clear of each other.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
                     // Skip-back/forward only make sense for live playback.
                     // Drop them in preview so the transport row collapses to
                     // a single big Play button.
                     if (!isPreview) {
+                        // Pause-skip: tap = seek back to the previous audible
+                        // pause; long-press = sensitivity dialog. Box +
+                        // combinedClickable because IconButton has no
+                        // long-press slot.
+                        Box(
+                            modifier = Modifier
+                                .size(PauseSkipTouchTargetSize)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .combinedClickable(
+                                    onClick = { controller.skipBackToPreviousPause() },
+                                    onLongClick = { pauseSkipDialogOpen = true },
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painterResource(R.drawable.skip_previous_24),
+                                contentDescription = "Back to previous pause (hold to adjust sensitivity)",
+                                modifier = Modifier.size(38.dp)
+                            )
+                        }
                         IconButton(
                             onClick = { controller.seekBack() },
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
-                                Icons.Filled.Replay,
+                                painterResource(R.drawable.replay_24),
                                 contentDescription = "Back 15s",
                                 modifier = Modifier.size(56.dp)
                             )
                         }
-                        Spacer(Modifier.width(16.dp))
                     }
                     val countdown = rememberAutoplayCountdown(
                         if (isPreview) null else autoplayTimer
@@ -618,8 +916,8 @@ fun PlayerScreen(
                                 Spacer(Modifier.size(48.dp))
                             } else {
                                 Icon(
-                                    if (state.isPlaying && !isPreview) Icons.Filled.Pause
-                                    else Icons.Filled.PlayArrow,
+                                    if (state.isPlaying && !isPreview) painterResource(R.drawable.pause_24)
+                                    else painterResource(R.drawable.play_arrow_24),
                                     contentDescription = if (isPreview) "Play" else "Play/Pause",
                                     modifier = Modifier.size(48.dp)
                                 )
@@ -649,17 +947,24 @@ fun PlayerScreen(
                         }
                     }
                     if (!isPreview) {
-                        Spacer(Modifier.width(16.dp))
                         IconButton(
                             onClick = { controller.seekForward() },
                             modifier = Modifier.size(64.dp)
                         ) {
                             Icon(
-                                Icons.Filled.Forward30,
+                                painterResource(R.drawable.forward_30_24),
                                 contentDescription = "Forward 30s",
                                 modifier = Modifier.size(56.dp)
                             )
                         }
+                        // The symmetry slot — pure geometry, no control
+                        // lives here (nothing in the transport family wants
+                        // the position, and inventing a control to fill it
+                        // would be worse than the space). It balances the
+                        // pause-skip control so the play button's flanks
+                        // weigh the same; the comment above the Row carries
+                        // the full argument.
+                        Spacer(Modifier.size(PauseSkipTouchTargetSize))
                     }
                 }
                 // Error chip if the player just failed (live only). The
@@ -685,7 +990,7 @@ fun PlayerScreen(
                         label = { Text("Failed: ${state.errorMessage} — tap to retry") },
                         leadingIcon = {
                             Icon(
-                                Icons.Filled.ErrorOutline,
+                                painterResource(R.drawable.error_outline_24),
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
                             )
@@ -696,12 +1001,62 @@ fun PlayerScreen(
                 // Speed chip is a live-playback tweak — the per-podcast
                 // default-speed picker (top of the per-podcast Episodes list)
                 // is the equivalent affordance for preview mode.
+                //
+                // The Box keeps SpeedChip centered horizontally; the
+                // optional flush-valve icon (v0.10.1+) sits aligned to
+                // CenterEnd without disturbing the chip's center position.
                 if (!isPreview) {
                     Spacer(Modifier.height(8.dp))
-                    SpeedChip(
-                        speed = state.speed,
-                        onPick = { controller.setSpeed(it) }
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        SpeedChip(
+                            speed = state.speed,
+                            onPick = { controller.setSpeed(it) }
+                        )
+                        if (showFlushButton) {
+                            IconButton(
+                                onClick = { controller.flushAudio() },
+                                modifier = Modifier.align(Alignment.CenterEnd),
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.valve_24),
+                                    contentDescription = "Flush audio buffer",
+                                )
+                            }
+                        }
+                    }
+                    // Active sleep-timer readout — its OWN centered line, not
+                    // a CenterStart overlay in the SpeedChip box (the wide
+                    // "end of episode" label collided with the centered chip
+                    // on 360dp screens). Recomposition rides the 500ms
+                    // position poll while playing (the only time a timer can
+                    // be live — manual pause cancels it), so the countdown
+                    // stays fresh without its own ticker. Tap to adjust.
+                    sleepTimerState?.let { st ->
+                        Spacer(Modifier.height(4.dp))
+                        val label = when (st.mode) {
+                            is com.lofipod.app.player.SleepTimerMode.Minutes -> {
+                                val rem = ((st.endAtElapsedMs ?: 0L) -
+                                    android.os.SystemClock.elapsedRealtime())
+                                    .coerceAtLeast(0L)
+                                "Sleep %d:%02d".format(rem / 60_000, (rem % 60_000) / 1000)
+                            }
+                            com.lofipod.app.player.SleepTimerMode.EndOfEpisode ->
+                                "Sleep: end of episode"
+                        }
+                        AssistChip(
+                            onClick = { sleepDialogOpen = true },
+                            label = {
+                                Text(
+                                    label,
+                                    color = if (st.fading) MaterialTheme.colorScheme.primary
+                                    else LocalContentColor.current,
+                                )
+                            },
+                        )
+                    }
                 }
             }
 
@@ -720,6 +1075,122 @@ fun PlayerScreen(
             )
         }
     }
+
+    if (sleepDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { sleepDialogOpen = false },
+            title = { Text("Sleep timer") },
+            text = {
+                Column {
+                    Text(
+                        "Playback fades out over the last 30 seconds, then " +
+                            "pauses. Resume is always full volume.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    listOf(15, 30, 45, 60).forEach { min ->
+                        TextButton(onClick = {
+                            controller.startSleepTimer(
+                                com.lofipod.app.player.SleepTimerMode.Minutes(min)
+                            )
+                            sleepDialogOpen = false
+                        }) { Text("$min minutes") }
+                    }
+                    TextButton(onClick = {
+                        controller.startSleepTimer(
+                            com.lofipod.app.player.SleepTimerMode.EndOfEpisode
+                        )
+                        sleepDialogOpen = false
+                    }) { Text("End of episode") }
+                    if (sleepTimerState != null) {
+                        TextButton(onClick = {
+                            controller.cancelSleepTimer()
+                            sleepDialogOpen = false
+                        }) { Text("Turn off") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { sleepDialogOpen = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (pauseSkipDialogOpen) {
+        val pauseSkipSettings = remember { Settings(app) }
+        val pauseSkipSensitivity by pauseSkipSettings.pauseSkipSensitivity
+            .collectAsState(
+                initial = com.lofipod.app.audio.PauseTapProcessor.DEFAULT_SENSITIVITY
+            )
+        AlertDialog(
+            onDismissRequest = { pauseSkipDialogOpen = false },
+            title = { Text("Pause-skip sensitivity") },
+            text = {
+                Column {
+                    Text(
+                        "How small a gap in the audio counts as a pause when " +
+                            "skipping back. Higher catches short breaths between " +
+                            "sentences; lower only stops at real breaks.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Slider(
+                        value = pauseSkipSensitivity.toFloat(),
+                        onValueChange = { v ->
+                            val level = v.toInt().coerceIn(1, 5)
+                            if (level != pauseSkipSensitivity) {
+                                // Write-through: live processor immediately,
+                                // DataStore for persistence (same pattern as
+                                // the EQ screen's skip-silence level).
+                                com.lofipod.app.player.PlaybackService
+                                    .sharedPauseTap.setSensitivity(level)
+                                scope.launch {
+                                    pauseSkipSettings.setPauseSkipSensitivity(level)
+                                    // The offline analyzer's cut marks carry
+                                    // a sensitivity too, and the repository
+                                    // rescans any row whose stored level
+                                    // disagrees with the setting — but only
+                                    // when poked. Poke it AFTER the DataStore
+                                    // write lands (the scan reads the flow;
+                                    // firing early would re-scan at the old
+                                    // level and conclude nothing changed),
+                                    // cancelling any pass already mid-decode
+                                    // so a drag across several levels
+                                    // converges on the last one instead of
+                                    // finishing a stale scan first. Other
+                                    // sensitivity writers (Settings, audio
+                                    // diagnostics) need no hook: the marks
+                                    // are only visible here, and re-entering
+                                    // this screen re-fires ensureAnalyzed
+                                    // anyway.
+                                    state.currentEpisodeGuid?.let { g ->
+                                        app.episodeAnalysis.cancel(g)
+                                        app.episodeAnalysis.ensureAnalyzed(g)
+                                    }
+                                }
+                            }
+                        },
+                        valueRange = 1f..5f,
+                        steps = 3,
+                    )
+                    // Label pulls the min-silence value from the same table
+                    // the detector runs on, so re-tuning the processor can't
+                    // leave the UI advertising stale thresholds.
+                    val gapSec = com.lofipod.app.audio.PauseTapProcessor
+                        .minSilenceMsFor(pauseSkipSensitivity) / 1000f
+                    Text(
+                        String.format(Locale.getDefault(), "%d — gaps of ~%.1fs and longer", pauseSkipSensitivity, gapSec),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pauseSkipDialogOpen = false }) { Text("Done") }
+            },
+        )
+    }
 }
 
 /**
@@ -734,7 +1205,7 @@ private fun PlayerHeartIcon(tier: Int) {
                else LocalContentColor.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
-            if (tier > 0) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+            if (tier > 0) painterResource(R.drawable.favorite_24) else painterResource(R.drawable.favorite_border_24),
             contentDescription = when (tier) {
                 2 -> "Most-excellent (tap to clear)"
                 1 -> "Excellent (tap to upgrade)"
@@ -746,7 +1217,7 @@ private fun PlayerHeartIcon(tier: Int) {
         if (tier == 2) {
             Spacer(Modifier.width(2.dp))
             Icon(
-                Icons.Filled.Favorite,
+                painterResource(R.drawable.favorite_24),
                 contentDescription = null,
                 tint = tint,
                 modifier = Modifier.size(14.dp)
@@ -774,7 +1245,7 @@ private fun SpeedChip(
             label = { Text("Speed: ${"%.2fx".format(speed)}") },
             leadingIcon = {
                 Icon(
-                    Icons.Filled.Speed,
+                    painterResource(R.drawable.speed_24),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp)
                 )
@@ -799,7 +1270,7 @@ private fun SpeedChip(
                         open = false
                     },
                     leadingIcon = if (active) {
-                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                        { Icon(painterResource(R.drawable.check_24), contentDescription = null) }
                     } else null
                 )
             }
@@ -819,7 +1290,7 @@ private fun ReturnChip(
         label = { Text(label) },
         leadingIcon = {
             Icon(
-                if (reached) Icons.Filled.Check else Icons.Filled.Undo,
+                if (reached) painterResource(R.drawable.check_24) else painterResource(R.drawable.undo_24),
                 contentDescription = null,
                 modifier = Modifier.size(18.dp)
             )
@@ -827,7 +1298,7 @@ private fun ReturnChip(
         trailingIcon = {
             IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                 Icon(
-                    Icons.Filled.Close,
+                    painterResource(R.drawable.close_24),
                     contentDescription = "Dismiss",
                     modifier = Modifier.size(16.dp)
                 )
@@ -942,6 +1413,7 @@ private fun NotesTab(
         return
     }
     val app = LocalContext.current.applicationContext as LofiPodApp
+    val noteShareCtx = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { Settings(app) }
     val pauseOnNote by settings.pauseOnNote.collectAsState(initial = true)
@@ -953,11 +1425,19 @@ private fun NotesTab(
     var editEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var deleteEntry by remember { mutableStateOf<EpisodeNoteEntryEntity?>(null) }
     var resumeAfterDialog by remember { mutableStateOf(false) }
+    var studySheetGuid by remember { mutableStateOf<String?>(null) }
+
+    StudySheetDialogHost(
+        episodeGuid = studySheetGuid,
+        onDone = { studySheetGuid = null },
+    )
 
     fun pauseIfWanted() {
         if (pauseOnNote && controller.state.value.isPlaying) {
             resumeAfterDialog = true
-            controller.pause()
+            // Transient bracket, not an "I'm done" pause — preserves an
+            // armed sleep timer (closeDialog's play() never re-arms one).
+            controller.pauseTransient()
         }
     }
 
@@ -996,11 +1476,22 @@ private fun NotesTab(
                         else LocalContentColor.current,
                 modifier = Modifier.weight(1f)
             )
+            // Study sheet export — enabled once there are notes to export.
+            IconButton(
+                onClick = { studySheetGuid = episodeGuid },
+                enabled = entries.isNotEmpty(),
+            ) {
+                Icon(
+                    painterResource(R.drawable.share_24),
+                    contentDescription = "Share study sheet",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             // "Add note" needs a live playback position to anchor against.
             // In preview the button is disabled — past notes still surface
             // below and remain tappable to jump-and-play.
             FilledTonalButton(onClick = ::openAdd, enabled = !isPreview) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(painterResource(R.drawable.add_24), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Add note")
             }
@@ -1030,6 +1521,7 @@ private fun NotesTab(
                         onJump = { controller.jumpToNotePosition(entry) },
                         onEdit = { pauseIfWanted(); editEntry = entry },
                         onDelete = { deleteEntry = entry },
+                        onShare = { scope.launch { shareNoteEntry(noteShareCtx, entry) } },
                     )
                 }
             }
@@ -1176,6 +1668,37 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
             }
         }
 
+        // Embedded ID3 chapters (v0.11), when the CURRENT item carries
+        // them and this Details tab is showing that item. Tap to seek —
+        // controller.seekTo is latency-compensated.
+        val liveState by controller.state.collectAsState()
+        if (liveState.currentEpisodeGuid == episodeGuid && liveState.chapters.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text("Chapters", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            liveState.chapters.forEachIndexed { i, chp ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { controller.seekTo(chp.startMs) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        formatTime(chp.startMs),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        chp.title ?: "Chapter ${i + 1}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                    )
+                }
+            }
+        }
+
         // Per-episode EQ controls (Disable / one-off override) live on the
         // EQ screen now — that's where they belong alongside the chain. Tap
         // the EQ icon in the player's top bar to find them.
@@ -1183,7 +1706,13 @@ private fun DetailsTab(episodeGuid: String?, controller: PlayerController) {
         Spacer(Modifier.height(12.dp))
         if (ep == null) {
             Text(
-                "Episode metadata is not in the cache. Open this feed in Catalog to refresh.",
+                // Device files have no feed — "refresh the feed" is a
+                // nonsense instruction for them. guid == content:// URI
+                // identifies them cheaply here.
+                if (episodeGuid.startsWith("content://"))
+                    "A file from this device — no feed metadata to show."
+                else
+                    "Episode metadata is not in the cache. Open this feed in Catalog to refresh.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

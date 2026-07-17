@@ -9,10 +9,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,12 +28,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.lofipod.app.R
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lofipod.app.data.Settings
 import com.lofipod.app.data.db.EpisodeNoteEntryEntity
+import com.lofipod.app.util.shareNoteWithLink
 
 /**
  * Shared note card. Three actions — jump-to-position, edit, delete — kept in
@@ -54,6 +53,9 @@ fun NoteCard(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
     episodeTitle: String? = null,
+    /** Share the note (text + episode deep link) via the OS share sheet.
+     *  Default routes through [shareNoteEntry]; pass null to hide. */
+    onShare: (() -> Unit)? = null,
 ) {
     // Notes-text size from Settings — applied to the note body only, not
     // the citation row, so the citation stays compact regardless of how
@@ -85,22 +87,31 @@ fun NoteCard(
                 )
                 IconButton(onClick = onJump, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.PlayCircle,
+                        painterResource(R.drawable.play_circle_24),
                         contentDescription = "Jump to position",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
                     )
                 }
+                if (onShare != null) {
+                    IconButton(onClick = onShare, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            painterResource(R.drawable.share_24),
+                            contentDescription = "Share note",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
                 IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.Edit,
+                        painterResource(R.drawable.edit_24),
                         contentDescription = "Edit",
                         modifier = Modifier.size(20.dp)
                     )
                 }
                 IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.Delete,
+                        painterResource(R.drawable.delete_24),
                         contentDescription = "Delete",
                         modifier = Modifier.size(20.dp)
                     )
@@ -113,6 +124,45 @@ fun NoteCard(
             )
         }
     }
+}
+
+/**
+ * Share [entry] via the OS share sheet: the note text plus a
+ * `lofipod://note?...` deep link that opens this episode at the note's
+ * position on a receiving LofiPod instance. Episode identity (feedUrl +
+ * title) comes from the persisted episode_state row — guaranteed to exist
+ * for any episode that has notes, since notes are only written from
+ * playback surfaces that upsert the row first. Falls back to sharing the
+ * bare text when the row is somehow missing.
+ */
+suspend fun shareNoteEntry(
+    context: android.content.Context,
+    entry: EpisodeNoteEntryEntity,
+) {
+    val app = context.applicationContext as com.lofipod.app.LofiPodApp
+    val state = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        app.db.episodeStateDao().get(entry.guid)
+    }
+    if (state == null) {
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_TEXT, entry.text)
+        }
+        context.startActivity(
+            android.content.Intent.createChooser(send, "Share note").apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+        return
+    }
+    context.shareNoteWithLink(
+        noteText = entry.text,
+        episodeTitle = state.title,
+        feedUrl = state.feedUrl,
+        guid = entry.guid,
+        positionMs = entry.playbackPosMs,
+        positionLabel = formatPlaybackPos(entry.playbackPosMs),
+    )
 }
 
 /**

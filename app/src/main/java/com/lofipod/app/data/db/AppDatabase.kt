@@ -31,6 +31,24 @@ interface EpisodeStateDao {
     @Query("SELECT * FROM episode_state WHERE lastPlayedMillis > 0 ORDER BY lastPlayedMillis DESC LIMIT 1")
     suspend fun mostRecentlyPlayed(): EpisodeStateEntity?
 
+    /**
+     * Live view of the most recent episode still IN PROGRESS — played at
+     * some point, not archived, position past zero but short of the
+     * completion window. Drives the Catalog's "Continue listening" card;
+     * Room re-emits on every ticker save, so the card's progress bar
+     * advances while the episode plays. Rows with an unknown duration
+     * stay eligible (a stream whose duration never resolved is still
+     * resumable — the completion predicate can't be evaluated for it).
+     */
+    @Query(
+        "SELECT * FROM episode_state WHERE lastPlayedMillis > 0 " +
+            "AND archivedAt = 0 " +
+            "AND positionMs > 0 " +
+            "AND (durationMs <= 0 OR positionMs < durationMs - 5000) " +
+            "ORDER BY lastPlayedMillis DESC LIMIT 1"
+    )
+    fun observeMostRecentInProgress(): Flow<EpisodeStateEntity?>
+
     /** All episodes at exactly this favorite tier (1 = Excellent, 2 = Most-excellent). */
     @Query("SELECT * FROM episode_state WHERE favoriteTier = :tier ORDER BY lastPlayedMillis DESC")
     fun observeAtTier(tier: Int): Flow<List<EpisodeStateEntity>>
@@ -145,7 +163,10 @@ interface PlaybackCheckpointDao {
 @Dao
 interface EpisodeNoteEntryDao {
 
-    @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt ASC")
+    // Newest-first so the most recent note surfaces at the top of the
+    // Player's Notes tab and the per-episode Notes screen, matching the
+    // global notes browser.
+    @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt DESC")
     fun observeForEpisode(guid: String): Flow<List<EpisodeNoteEntryEntity>>
 
     @Query("SELECT * FROM episode_note_entry WHERE guid = :guid ORDER BY createdAt ASC")
@@ -469,9 +490,11 @@ interface LofiDownloadDao {
         EpisodeTranscriptEntity::class,
         AutoDownloadEntity::class,
         EpisodeScriptureEntity::class,
-        LofiDownloadEntity::class
+        LofiDownloadEntity::class,
+        EpisodeHeatEntity::class,
+        EpisodeAnalysisEntity::class
     ],
-    version = 17,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -488,6 +511,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun autoDownloadDao(): AutoDownloadDao
     abstract fun episodeScriptureDao(): EpisodeScriptureDao
     abstract fun lofiDownloadDao(): LofiDownloadDao
+    abstract fun episodeHeatDao(): EpisodeHeatDao
+    abstract fun episodeAnalysisDao(): EpisodeAnalysisDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -840,6 +865,58 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v17 → v18: episode_heat table — per-episode listen-intensity
+         * buckets (200 CSV ints) powering the structured scrubber's
+         * replay heatmap. Populated by PlaybackService's 10s save ticker;
+         * empty on migration (no historical per-position data exists to
+         * backfill). Derived analytics — excluded from Backup.kt's
+         * curated export set on purpose.
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_heat (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        bucketsCsv TEXT NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
+         * v18 → v19: episode_analysis table — read-ahead scan results
+         * (full-file audible-pause spans + a 2000-bucket waveform
+         * envelope) produced offline by EpisodeAudioAnalyzer for the
+         * structured scrubber to draw. Rows appear lazily as episodes
+         * are displayed and only for scans that ran to completion, so
+         * the table starts empty. The envelope is a BLOB (one unsigned
+         * byte per bucket) rather than house-style CSV — at 2000 buckets
+         * CSV would triple the row for a payload nobody reads in a
+         * sqlite shell; pause spans stay CSV. Derived analytics —
+         * excluded from Backup.kt's curated export set, like
+         * episode_heat.
+         */
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS episode_analysis (
+                        guid TEXT NOT NULL PRIMARY KEY,
+                        durationMs INTEGER NOT NULL,
+                        sensitivity INTEGER NOT NULL,
+                        pausesCsv TEXT NOT NULL,
+                        envelope BLOB NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
          * v15 → v16: add lofi_download table. The OkHttp-based downloader's
          * persistent state — replaces Media3's StandaloneDatabaseProvider +
          * DownloadIndex which we ditched in v0.6.9 after four versions of
@@ -943,7 +1020,8 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_9_10), timed(MIGRATION_10_11),
                         timed(MIGRATION_11_12), timed(MIGRATION_12_13),
                         timed(MIGRATION_13_14), timed(MIGRATION_14_15),
-                        timed(MIGRATION_15_16), timed(MIGRATION_16_17)
+                        timed(MIGRATION_15_16), timed(MIGRATION_16_17),
+                        timed(MIGRATION_17_18), timed(MIGRATION_18_19)
                     )
                     .build().also { instance = it }
             }

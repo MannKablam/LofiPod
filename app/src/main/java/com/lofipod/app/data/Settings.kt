@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore("lofipod_settings")
 
+/** One user-picked device audio file: SAF content:// URI + display name. */
+data class DeviceFileEntry(val uri: String, val name: String)
+
 class Settings(private val context: Context) {
 
     private val KEY_SOURCES_URI = stringPreferencesKey("sources_uri")
@@ -120,6 +123,48 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Per-feed episode sort order for the Episodes screen. Values:
+     * [EPISODE_SORT_FEED] (the RSS document's own sequence — for kabod
+     * packs that is part order), [EPISODE_SORT_NEWEST], and
+     * [EPISODE_SORT_OLDEST]. Per feed rather than global because the
+     * natural direction differs by show: a daily brief reads newest-first,
+     * a thru-the-Bible series oldest-first. Stored as one JSON object
+     * keyed by feedUrl (same single-string-key rationale as
+     * [deviceFiles]); feeds absent from the map are feed order, and
+     * setting a feed back to feed order removes its key so the object
+     * only carries deliberate overrides.
+     *
+     * Display-only: the autoplay feed-walk works over the feed's own
+     * episode order plus [autoplayDirectionUp], so re-sorting the list
+     * never changes what plays next.
+     */
+    val episodeSortOrders: Flow<Map<String, Int>> =
+        context.dataStore.data.map { prefs ->
+            val raw = prefs[KEY_EPISODE_SORT] ?: return@map emptyMap()
+            try {
+                val obj = org.json.JSONObject(raw)
+                buildMap {
+                    for (key in obj.keys()) put(key, obj.getInt(key))
+                }
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+
+    suspend fun setEpisodeSortOrder(feedUrl: String, order: Int) {
+        context.dataStore.edit { prefs ->
+            val obj = try {
+                org.json.JSONObject(prefs[KEY_EPISODE_SORT] ?: "{}")
+            } catch (_: Exception) {
+                org.json.JSONObject()
+            }
+            if (order == EPISODE_SORT_FEED) obj.remove(feedUrl)
+            else obj.put(feedUrl, order)
+            prefs[KEY_EPISODE_SORT] = obj.toString()
+        }
+    }
+
+    /**
      * Surfaces an extra "Diagnostics" tab on the Player screen alongside
      * Notes / Details / Transcript. When the user is actively listening and
      * something sounds wrong, this is the fastest path to the audio-chain
@@ -139,6 +184,21 @@ class Settings(private val context: Context) {
 
     suspend fun setShowDiagnosticsTabInPlayer(v: Boolean) {
         context.dataStore.edit { it[KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER] = v }
+    }
+
+    /**
+     * Show a flush-valve icon in the player screen for manual AudioTrack
+     * flush (v0.10.1+, redesigned in v0.10.10). Same vertical row as the
+     * speed chip, justified right (speed stays centered). Pressing the
+     * icon triggers
+     * [PlayerController.flushAudio]. Off by default — niche debugging
+     * affordance.
+     */
+    val showFlushButtonInPlayer: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SHOW_FLUSH_BUTTON_IN_PLAYER] ?: false }
+
+    suspend fun setShowFlushButtonInPlayer(v: Boolean) {
+        context.dataStore.edit { it[KEY_SHOW_FLUSH_BUTTON_IN_PLAYER] = v }
     }
 
     /**
@@ -169,6 +229,19 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Pause-skip sensitivity: 1 (long, deep pauses only) .. 5 (short gaps
+     * too). Feeds PauseTapProcessor, which powers the "skip back to the
+     * previous audible pause" transport control. Adjusted by long-pressing
+     * that control in the Player. Default 3 (≈0.7 s of near-silence).
+     */
+    val pauseSkipSensitivity: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_PAUSE_SKIP_SENSITIVITY] ?: 3).coerceIn(1, 5) }
+
+    suspend fun setPauseSkipSensitivity(level: Int) {
+        context.dataStore.edit { it[KEY_PAUSE_SKIP_SENSITIVITY] = level.coerceIn(1, 5) }
+    }
+
+    /**
      * Master "Audio enhancement" toggle from the EQ screen. Default true.
      * Distinct from the per-podcast `podcast_state.eqDisabled` override —
      * both feed into [com.lofipod.app.player.PlayerController.applyEqOverrideFor],
@@ -195,6 +268,166 @@ class Settings(private val context: Context) {
 
     suspend fun setDcBlockerEnabled(v: Boolean) {
         context.dataStore.edit { it[KEY_DC_BLOCKER_ENABLED] = v }
+    }
+
+    /**
+     * Tone filters (v0.11) — global corrective stage that runs before the
+     * per-podcast EQ in every phase mode. Like the DC blocker, these are
+     * source-conditioning controls rather than per-show voicing, so they
+     * live app-wide in Settings. 0 = off for all three.
+     */
+    val toneLowCutHz: Flow<Float> =
+        context.dataStore.data.map { it[KEY_TONE_LOW_CUT_HZ] ?: 0f }
+
+    suspend fun setToneLowCutHz(v: Float) {
+        context.dataStore.edit { it[KEY_TONE_LOW_CUT_HZ] = v }
+    }
+
+    val toneHighCutHz: Flow<Float> =
+        context.dataStore.data.map { it[KEY_TONE_HIGH_CUT_HZ] ?: 0f }
+
+    suspend fun setToneHighCutHz(v: Float) {
+        context.dataStore.edit { it[KEY_TONE_HIGH_CUT_HZ] = v }
+    }
+
+    /**
+     * Smart resume: on play-after-pause, step back proportionally to how
+     * long the listener was away (0s under 15s, up to 45s after a day) so
+     * the sermon's thread is re-established without manual rewinding.
+     * Applies in-session and across sessions. Default on.
+     */
+    val smartResumeEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SMART_RESUME] ?: true }
+
+    suspend fun setSmartResumeEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_SMART_RESUME] = v }
+    }
+
+    /**
+     * User-picked device audio files (SAF content:// URIs + display names),
+     * in the order they were added. Stored as a JSON array of
+     * {"uri": ..., "name": ...} objects — a single string key keeps insertion
+     * order (DataStore's stringSet does not) and survives names containing
+     * any delimiter. The URIs are persisted alongside
+     * takePersistableUriPermission grants taken at pick time.
+     */
+    val deviceFiles: Flow<List<DeviceFileEntry>> =
+        context.dataStore.data.map { prefs ->
+            val raw = prefs[KEY_DEVICE_FILES] ?: return@map emptyList()
+            try {
+                val arr = org.json.JSONArray(raw)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    DeviceFileEntry(uri = o.getString("uri"), name = o.getString("name"))
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+    /** Append [entries], deduplicating by URI (re-picking a file is a no-op). */
+    suspend fun addDeviceFiles(entries: List<DeviceFileEntry>) {
+        if (entries.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val existing = try {
+                org.json.JSONArray(prefs[KEY_DEVICE_FILES] ?: "[]")
+            } catch (_: Exception) {
+                org.json.JSONArray()
+            }
+            val seen = mutableSetOf<String>()
+            for (i in 0 until existing.length()) {
+                seen.add(existing.getJSONObject(i).getString("uri"))
+            }
+            for (e in entries) {
+                if (e.uri in seen) continue
+                seen.add(e.uri)
+                existing.put(
+                    org.json.JSONObject().put("uri", e.uri).put("name", e.name)
+                )
+            }
+            prefs[KEY_DEVICE_FILES] = existing.toString()
+        }
+    }
+
+    suspend fun removeDeviceFile(uri: String) {
+        context.dataStore.edit { prefs ->
+            val existing = try {
+                org.json.JSONArray(prefs[KEY_DEVICE_FILES] ?: "[]")
+            } catch (_: Exception) {
+                org.json.JSONArray()
+            }
+            val kept = org.json.JSONArray()
+            for (i in 0 until existing.length()) {
+                val o = existing.getJSONObject(i)
+                if (o.getString("uri") != uri) kept.put(o)
+            }
+            prefs[KEY_DEVICE_FILES] = kept.toString()
+        }
+        // Release the persisted SAF grant taken at pick time. Android caps
+        // persisted URI permissions per app; without this, heavy add/remove
+        // churn eventually exhausts the cap and NEW picks start failing
+        // silently. Throws if the grant is already gone (revoked, provider
+        // uninstalled) — that's the desired end state, so swallow it.
+        try {
+            context.contentResolver.releasePersistableUriPermission(
+                android.net.Uri.parse(uri),
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * 24 dB/oct low-cut slope toggle (LR4 — two cascaded Butterworth
+     * sections). Only audible while [toneLowCutHz] > 0. Default off = the
+     * original 12 dB/oct single section.
+     */
+    val toneLowCutSteep: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_TONE_LOW_CUT_STEEP] ?: false }
+
+    suspend fun setToneLowCutSteep(v: Boolean) {
+        context.dataStore.edit { it[KEY_TONE_LOW_CUT_STEEP] = v }
+    }
+
+    /**
+     * Voice-suite stage levels (0 = off, 1..3 staged), all default off.
+     * De-esser (sibilance tamer), Warmth (tube saturation), Leveler
+     * (slow gain rider), Air (top-octave exciter). Global like the tone
+     * filters; rehydrated by PlaybackService at boot.
+     */
+    val voiceDeEsserLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_DEESSER] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceDeEsserLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_DEESSER] = level.coerceIn(0, 3) }
+    }
+
+    val voiceWarmthLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_WARMTH] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceWarmthLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_WARMTH] = level.coerceIn(0, 3) }
+    }
+
+    val voiceLevelerLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_LEVELER] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceLevelerLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_LEVELER] = level.coerceIn(0, 3) }
+    }
+
+    val voiceAirLevel: Flow<Int> =
+        context.dataStore.data.map { (it[KEY_VOICE_AIR] ?: 0).coerceIn(0, 3) }
+
+    suspend fun setVoiceAirLevel(level: Int) {
+        context.dataStore.edit { it[KEY_VOICE_AIR] = level.coerceIn(0, 3) }
+    }
+
+    val toneTiltDb: Flow<Float> =
+        context.dataStore.data.map { (it[KEY_TONE_TILT_DB] ?: 0f).coerceIn(-6f, 6f) }
+
+    suspend fun setToneTiltDb(v: Float) {
+        context.dataStore.edit { it[KEY_TONE_TILT_DB] = v.coerceIn(-6f, 6f) }
     }
 
     /**
@@ -232,19 +465,55 @@ class Settings(private val context: Context) {
     }
 
     /**
-     * EQ phase-mode toggle. False (default) = minimum-phase biquad cascade
-     * (~6.4 ms total chain latency); true = linear-phase 4096-tap FIR
-     * convolution (~52 ms total). Linear preserves transient waveform shape
-     * exactly at the cost of higher CPU + latency. Default minimum because
-     * it's transparent for almost all listeners and the existing latency
-     * budget assumes it; opt-in for audiophiles who specifically want
-     * preserved transient response.
+     * Legacy EQ phase-mode Boolean (pre-v0.9.3). False = minimum-phase
+     * biquad; true = linear-phase 4096-tap FIR. Superseded by [phaseMode]
+     * below, but the Boolean key is **preserved** in DataStore so a
+     * downgrade (or a future re-read by something else) still finds it.
+     * v0.9.3's reader prefers the new enum key; if absent, migrates from
+     * the Boolean: true → "LINEAR_FIR", false → "PURE_IIR".
      */
     val phaseModeLinear: Flow<Boolean> =
         context.dataStore.data.map { it[KEY_PHASE_MODE_LINEAR] ?: false }
 
     suspend fun setPhaseModeLinear(v: Boolean) {
         context.dataStore.edit { it[KEY_PHASE_MODE_LINEAR] = v }
+    }
+
+    /**
+     * EQ phase mode (v0.9.3+). Three values:
+     *   - `"PURE_IIR"` — minimum-phase biquad cascade (~6.4 ms total
+     *     chain latency, no FIR convolution). Default. Fast slider
+     *     response, lowest CPU.
+     *   - `"MIN_FIR"` — minimum-phase FIR via UPC + cepstrum-derived
+     *     kernel (~29 ms total latency, no pre-ringing, surgical
+     *     magnitude precision). Best for transient-heavy speech.
+     *   - `"LINEAR_FIR"` — linear-phase FIR via UPC + symmetric kernel
+     *     (~70 ms total latency, preserves transient waveform shape,
+     *     audible pre-ringing on transients). Academic-pure option.
+     *
+     * Reads do an in-place migration: if the new key is absent and the
+     * legacy Boolean is present, derive the enum from it and surface
+     * that value. The DataStore is not written here — it's first written
+     * the next time the user actively chooses a mode in EqScreen.
+     */
+    val phaseMode: Flow<String> =
+        context.dataStore.data.map { prefs ->
+            prefs[KEY_PHASE_MODE]
+                ?: run {
+                    val legacy = prefs[KEY_PHASE_MODE_LINEAR] ?: false
+                    if (legacy) PHASE_MODE_LINEAR_FIR else PHASE_MODE_PURE_IIR
+                }
+        }
+
+    suspend fun setPhaseMode(value: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_PHASE_MODE] = value
+            // Keep the legacy Boolean in sync so external readers (any
+            // hypothetical telemetry, downgrade path) still see a usable
+            // value. true ↔ any FIR mode (MIN_FIR, LINEAR_FIR, MIXED);
+            // false ↔ pure IIR.
+            prefs[KEY_PHASE_MODE_LINEAR] = value != PHASE_MODE_PURE_IIR
+        }
     }
 
     // ---- Auto-backup ----
@@ -400,16 +669,61 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.booleanPreferencesKey("show_played_in_list")
         private val KEY_SHOW_DIAGNOSTICS_TAB_IN_PLAYER =
             androidx.datastore.preferences.core.booleanPreferencesKey("show_diagnostics_tab_in_player")
+        private val KEY_SHOW_FLUSH_BUTTON_IN_PLAYER =
+            androidx.datastore.preferences.core.booleanPreferencesKey("show_flush_button_in_player")
         private val KEY_AUTO_ARCHIVE_DAYS =
             androidx.datastore.preferences.core.intPreferencesKey("auto_archive_days")
         private val KEY_SKIP_SILENCE_LEVEL =
             androidx.datastore.preferences.core.intPreferencesKey("skip_silence_level")
+        private val KEY_PAUSE_SKIP_SENSITIVITY =
+            androidx.datastore.preferences.core.intPreferencesKey("pause_skip_sensitivity")
         private val KEY_AUDIO_ENHANCEMENT_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
         private val KEY_DC_BLOCKER_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("dc_blocker_enabled")
+        private val KEY_TONE_LOW_CUT_HZ =
+            androidx.datastore.preferences.core.floatPreferencesKey("tone_low_cut_hz")
+        private val KEY_TONE_HIGH_CUT_HZ =
+            androidx.datastore.preferences.core.floatPreferencesKey("tone_high_cut_hz")
+        private val KEY_TONE_TILT_DB =
+            androidx.datastore.preferences.core.floatPreferencesKey("tone_tilt_db")
+        private val KEY_TONE_LOW_CUT_STEEP =
+            androidx.datastore.preferences.core.booleanPreferencesKey("tone_low_cut_steep")
+        private val KEY_VOICE_DEESSER =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_deesser_level")
+        private val KEY_VOICE_WARMTH =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_warmth_level")
+        private val KEY_VOICE_LEVELER =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_leveler_level")
+        private val KEY_VOICE_AIR =
+            androidx.datastore.preferences.core.intPreferencesKey("voice_air_level")
+        private val KEY_DEVICE_FILES =
+            androidx.datastore.preferences.core.stringPreferencesKey("device_files_json")
+        private val KEY_EPISODE_SORT =
+            androidx.datastore.preferences.core.stringPreferencesKey("episode_sort_json")
+
+        /** Episode-list sort values for [episodeSortOrders]. Ints rather
+         *  than an enum for the same round-trip reason as the phase-mode
+         *  strings below. */
+        const val EPISODE_SORT_FEED = 0
+        const val EPISODE_SORT_NEWEST = 1
+        const val EPISODE_SORT_OLDEST = 2
+        private val KEY_SMART_RESUME =
+            androidx.datastore.preferences.core.booleanPreferencesKey("smart_resume_enabled")
         private val KEY_PHASE_MODE_LINEAR =
             androidx.datastore.preferences.core.booleanPreferencesKey("phase_mode_linear")
+        private val KEY_PHASE_MODE =
+            androidx.datastore.preferences.core.stringPreferencesKey("phase_mode")
+
+        /** Phase-mode enum values stored as strings in DataStore. Kept as
+         *  string-typed constants rather than a Kotlin enum because
+         *  DataStore preferences only support primitive types directly,
+         *  and a string key is the cleanest way to round-trip without an
+         *  extra serialization layer. */
+        const val PHASE_MODE_PURE_IIR = "PURE_IIR"
+        const val PHASE_MODE_MIN_FIR = "MIN_FIR"
+        const val PHASE_MODE_LINEAR_FIR = "LINEAR_FIR"
+        const val PHASE_MODE_MIXED = "MIXED"
         private val KEY_CANON_BROWSE_EXCLUDED =
             androidx.datastore.preferences.core.stringPreferencesKey("canon_browse_excluded_feeds")
         private val KEY_CANON_AUTOPLAY =

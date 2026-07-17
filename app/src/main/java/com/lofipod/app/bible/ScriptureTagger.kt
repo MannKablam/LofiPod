@@ -72,8 +72,21 @@ object ScriptureTagger {
         return tokens.take(n).joinToString(" ")
     }
 
+    /**
+     * All explicit references in [text], in order of appearance. Used by
+     * the structured scrubber's transcript-marker extraction — same
+     * anchoring rules and confidence semantics as [detect] (source is
+     * DESCRIPTION-tier since transcript prose isn't a title).
+     */
+    fun findAllRefs(text: String): List<Reference> =
+        REGEX.findAll(text).mapNotNull { m -> toReference(m, Source.DESCRIPTION) }.toList()
+
     private fun findFirst(text: String, source: Source): Reference? {
         val match = REGEX.find(text) ?: return null
+        return toReference(match, source)
+    }
+
+    private fun toReference(match: MatchResult, source: Source): Reference? {
         // The combined regex has named groups for the book token and the
         // numeric tail. We map the matched book token back to a canonical
         // name via [aliasMap] (case-insensitive, numeral-normalized).

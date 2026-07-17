@@ -1,6 +1,7 @@
 package com.lofipod.app.player
 
 import android.content.Context
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -8,7 +9,10 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioTrackBufferSizeProvider
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import com.lofipod.app.audio.EqAudioProcessor
+import com.lofipod.app.audio.PauseTapProcessor
 import com.lofipod.app.audio.SilenceSkippingProcessor
 
 /**
@@ -18,9 +22,13 @@ import com.lofipod.app.audio.SilenceSkippingProcessor
  * speed / pitch changes.
  *
  * Audio chain order:
- *   decoder -> EQ -> SilenceSkipping(custom) -> Sonic (speed) -> sink
+ *   decoder -> PauseTap -> EQ -> SilenceSkipping(custom) -> Sonic (speed) -> sink
  *
- * EQ runs first so its biquad coefficients are computed against the source's
+ * PauseTap is a pure passthrough observer that records the media positions
+ * of audible pauses for the "skip back to previous pause" control; it sits
+ * first so it sees the raw source signal and so its frame counting isn't
+ * affected by frames the silence-skipper drops.
+ * EQ runs next so its biquad coefficients are computed against the source's
  * native sample rate. Our silence-skipping runs against the EQ-treated signal
  * so a heavy bass cut doesn't accidentally re-classify low rumble as
  * "silence." Sonic operates downstream and preserves sample rate, so neither
@@ -36,7 +44,47 @@ class EqRenderersFactory(
     context: Context,
     private val eq: EqAudioProcessor,
     private val skipSilence: SilenceSkippingProcessor,
+    private val pauseTap: PauseTapProcessor,
 ) : DefaultRenderersFactory(context) {
+
+    init {
+        // MediaCodecSelector preferring SOFTWARE MP3 decoders over hardware
+        // ones. Field logs (LofiPod log 7d4b926806be.txt:683-684, 689-691,
+        // 708, 712-713, ...) show repeated MediaCodec accounting errors
+        // from `c2.android.mp3.decoder`:
+        //   D CCodecBuffers: Client returned a buffer it does not own
+        //   D MediaCodec: keep callback message for reclaim
+        //   I CCodecConfig: query failed after returning 8 values (BAD_INDEX)
+        // These are known Codec 2 software-decoder bugs on Android 13+
+        // when ExoPlayer rapidly transitions states (seek + speed change +
+        // resume). They co-occur with AudioTrack underruns at the HAL layer.
+        //
+        // Counterintuitively the issue is with `c2.android.mp3.decoder`
+        // (Google's Codec 2 SOFTWARE decoder) — not a hardware OEM
+        // decoder. The selector below prefers any NON-c2.android.* MP3
+        // decoder available on the device, falling back to the Codec 2
+        // version only if nothing else is registered. On Pixel devices
+        // this typically picks `OMX.google.mp3.decoder` (the older OMX
+        // software decoder) which has been stable across the Codec 2
+        // transition window.
+        //
+        // For non-MP3 codecs we let the default selector pick — they
+        // haven't shown the same accounting issues in field logs.
+        setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+            val defaults = MediaCodecSelector.DEFAULT.getDecoderInfos(
+                mimeType, requiresSecureDecoder, requiresTunnelingDecoder,
+            )
+            if (mimeType != MimeTypes.AUDIO_MPEG) return@setMediaCodecSelector defaults
+            // Partition: non-Codec2 software decoders first, then everything
+            // else (preserving relative order within each partition). The
+            // MediaCodecRenderer will try them in this order, so the first
+            // viable non-Codec2 entry wins.
+            val (preferred, fallback) = defaults.partition { info: MediaCodecInfo ->
+                info.softwareOnly && !info.name.startsWith("c2.android.")
+            }
+            preferred + fallback
+        }
+    }
 
     // Audio offload is implicitly disabled: we override buildAudioSink to return
     // our own DefaultAudioSink, and DefaultAudioSink.Builder doesn't enable offload
@@ -48,7 +96,7 @@ class EqRenderersFactory(
         enableAudioTrackPlaybackParams: Boolean
     ): AudioSink {
         val chain = DefaultAudioSink.DefaultAudioProcessorChain(
-            /* audioProcessors = */ arrayOf<AudioProcessor>(eq, skipSilence),
+            /* audioProcessors = */ arrayOf<AudioProcessor>(pauseTap, eq, skipSilence),
             /* silenceSkippingAudioProcessor = */ SilenceSkippingAudioProcessor(),
             /* sonicAudioProcessor = */ SonicAudioProcessor()
         )

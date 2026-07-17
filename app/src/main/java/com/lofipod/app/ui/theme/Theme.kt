@@ -69,8 +69,21 @@ fun LofiPodTheme(content: @Composable () -> Unit) {
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = spec.colors.background.toArgb()
-            window.navigationBarColor = spec.colors.background.toArgb()
+            // window.statusBarColor / navigationBarColor are deprecated in
+            // API 35+, replaced by edge-to-edge + WindowInsetsControllerCompat.
+            // LofiPod's targetSdk is 34 (we deliberately haven't opted into
+            // Android 15 runtime behavior changes — see v0.9.4 build log),
+            // so these setters still apply the expected colors. The proper
+            // fix when we bump targetSdk to 35 is to switch to edge-to-edge
+            // via WindowCompat.setDecorFitsSystemWindows(window, false) plus
+            // theme-XML <item name="android:statusBarColor"> as a fallback.
+            // For now, suppress the deprecation warning — the behavior is
+            // correct for our target API level.
+            @Suppress("DEPRECATION")
+            run {
+                window.statusBarColor = spec.colors.background.toArgb()
+                window.navigationBarColor = spec.colors.background.toArgb()
+            }
         }
     }
 

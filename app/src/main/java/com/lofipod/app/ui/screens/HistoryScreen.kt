@@ -6,21 +6,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.StopCircle
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.lofipod.app.LofiPodApp
+import com.lofipod.app.R
 import com.lofipod.app.data.Sources
 import com.lofipod.app.data.db.PlaybackCheckpointEntity
 import com.lofipod.app.player.PlayerController
@@ -93,7 +87,7 @@ fun HistoryScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            painterResource(R.drawable.arrow_back_24),
                             contentDescription = "Back",
                             modifier = Modifier.size(28.dp)
                         )
@@ -204,7 +198,7 @@ private fun FilterChipRow(
             label = { Text("All (${rows.size})") },
             leadingIcon = {
                 Icon(
-                    Icons.AutoMirrored.Filled.List,
+                    painterResource(R.drawable.list_24),
                     null,
                     modifier = Modifier.size(16.dp),
                 )
@@ -298,7 +292,7 @@ private fun HistoryCard(
                 }
                 IconButton(onClick = onJump, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.PlayCircle,
+                        painterResource(R.drawable.play_circle_24),
                         contentDescription = "Jump to this position",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
@@ -306,7 +300,7 @@ private fun HistoryCard(
                 }
                 IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Filled.Delete,
+                        painterResource(R.drawable.delete_24),
                         contentDescription = "Delete checkpoint",
                         modifier = Modifier.size(20.dp)
                     )
@@ -331,11 +325,12 @@ private fun shortReasonLabel(reason: String): String = when (reason) {
     else -> reason
 }
 
+@Composable
 private fun reasonIcon(reason: String) = when (reason) {
-    PlayerController.REASON_JUMP_FROM -> Icons.Filled.Undo
-    PlayerController.REASON_SESSION_END -> Icons.Filled.StopCircle
-    PlayerController.REASON_PROMOTED_TO_MOST_EXCELLENT -> Icons.Filled.Favorite
-    else -> Icons.Filled.PlayCircle
+    PlayerController.REASON_JUMP_FROM -> painterResource(R.drawable.undo_24)
+    PlayerController.REASON_SESSION_END -> painterResource(R.drawable.stop_circle_24)
+    PlayerController.REASON_PROMOTED_TO_MOST_EXCELLENT -> painterResource(R.drawable.favorite_24)
+    else -> painterResource(R.drawable.play_circle_24)
 }
 
 /**

@@ -8,4 +8,9 @@
     <cache-path
         name="updates"
         path="updates/" />
+    <!-- Study-sheet markdown exports (share/StudySheet.kt). Written on
+         demand, pruned after a day. -->
+    <cache-path
+        name="study_sheets"
+        path="study_sheets/" />
 </paths>

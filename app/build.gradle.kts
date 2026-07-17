@@ -7,18 +7,53 @@ plugins {
 
 android {
     namespace = "com.lofipod.app"
-    compileSdk = 34
+    // 34 → 35 (v0.9.4). Required by Media3 1.5.0+. Bumping compileSdk
+    // alone (not targetSdk) is a no-op for installed-app runtime behavior —
+    // it only lets us link against newer SDK symbols. targetSdk stays at 34
+    // so we haven't opted into Android 15 runtime behaviors (separate
+    // decision, separate risk; bump deliberately when ready to vet).
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.lofipod.app"
         minSdk = 28          // Android 9+; GrapheneOS targets recent versions
-        targetSdk = 34
+        targetSdk = 34       // Android 14 runtime behavior; see compileSdk note above
         // Release builds inject these from the tag-driven workflow. Local
         // builds and pushes-to-branch use the literals here. Versioning
         // discipline: bump these in the gradle file when tagging stops being
         // monotonic relative to history (rare).
         versionCode = (project.findProperty("lofipodVersionCode") as String?)?.toInt() ?: 2
         versionName = (project.findProperty("lofipodVersionName") as String?) ?: "0.2.0"
+
+        // ---- NDK / native build (v0.9.6+) ----
+        // The lofipod_fft .so is the JNI bridge to PFFFT (BSD-3-Clause FFT
+        // library). See app/src/main/cpp/CMakeLists.txt for the native
+        // build, app/src/main/java/com/lofipod/app/audio/PffftBridge.kt
+        // for the Kotlin side.
+        //
+        // ABIs: arm64-v8a (modern phones, primary), armeabi-v7a (older
+        // 32-bit ARM). Skip x86_64 / x86 — emulator-only, sideloaded app,
+        // not worth the build time.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+        externalNativeBuild {
+            cmake {
+                // -fno-exceptions / -fno-rtti shrink the .so a bit; we
+                // don't use either in the bridge. C++17 for the JNI .cpp.
+                cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti", "-O2")
+                cFlags += listOf("-O3")  // PFFFT benefits from -O3
+            }
+        }
+    }
+
+    // CMake project pointer + version. AGP packs the resulting .so files
+    // into the APK under lib/<abi>/lofipod_fft.so.
+    externalNativeBuild {
+        cmake {
+            path("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     /**
@@ -85,9 +120,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         compose = true
     }
@@ -95,6 +127,15 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+// v0.10.6: migrated from the deprecated `kotlinOptions { jvmTarget = "17" }`
+// block inside `android { ... }` to the new Kotlin 2.x compilerOptions DSL
+// at the top level. See https://kotl.in/u1r8ln for the migration rationale.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -106,14 +147,25 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    // material-icons-extended REMOVED in v0.10.4 — Google has deprecated
+    // this library (no longer publishing updates) in favor of Material
+    // Symbols. All ~50 icons in active use were migrated to Material
+    // Symbols vector drawables under app/src/main/res/drawable/, fetched
+    // via the design philosophy documented in ICON_PHILOSOPHY.md.
     implementation("androidx.navigation:navigation-compose:2.8.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // --- Media3 (ExoPlayer) ---
-    val media3 = "1.4.1"
+    // 1.4.1 → 1.5.1 (v0.9.1) and held through v0.9.4. The 1.5.0 release
+    // picks up the MP3 VBRI table-of-contents fix (#1904) plus
+    // DefaultAudioSink output-retry improvements that 1.4.x lacked.
+    // 1.5.x REQUIRES compileSdk 35 (and therefore AGP 8.7+) — bumped in
+    // v0.9.4 alongside this dep. R8 stays OFF — the silent-output
+    // regression from v0.3.0 is a Media3-internal reflection issue, not
+    // our code. Our EqRenderersFactory uses only public APIs.
+    val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")
     implementation("androidx.media3:media3-ui:$media3")

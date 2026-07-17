@@ -142,6 +142,7 @@ object KabodPackParser {
         var desc: String? = null
         var audioUrl: String? = null
         var audioType: String? = null
+        var audioLength: Long? = null
         var duration: String? = null
         var epArt: String? = null
         // kabod fields
@@ -172,6 +173,12 @@ object KabodPackParser {
                 "enclosure" -> {
                     audioUrl = parser.getAttributeValue(null, "url")
                     audioType = parser.getAttributeValue(null, "type")
+                    // Parity with RssParser: pick up the enclosure byte size
+                    // when the pack publishes one, so episode rows show the
+                    // "Nmb" budget readout without an HTTP probe. Zero and
+                    // negative values mean "not really known" — treat as null.
+                    audioLength = parser.getAttributeValue(null, "length")
+                        ?.toLongOrNull()?.takeIf { it > 0 }
                     XmlUtils.skip(parser)
                 }
                 else -> when (ns) {
@@ -220,7 +227,8 @@ object KabodPackParser {
             audioUrl = audioUrl!!,
             audioMimeType = audioType,
             durationSeconds = XmlUtils.parseDuration(duration),
-            episodeArtworkUrl = epArt
+            episodeArtworkUrl = epArt,
+            audioByteSize = audioLength,
         )
         val meta = KabodEpisodeMeta(
             partNumber = partNumber,

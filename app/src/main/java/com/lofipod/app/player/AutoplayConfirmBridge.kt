@@ -1,7 +1,7 @@
 package com.lofipod.app.player
 
 /**
- * Process-wide handoff between the activity-side [PlayerController] (which
+ * Process-wide handoff between the app-side [PlayerController] (which
  * owns the autoplay-confirmation timer) and the service-side
  * [PlaybackService] (which receives BT / vehicle / system-notification
  * media-button events via its `MediaSession.Callback.onPlayerCommandRequest`
@@ -10,9 +10,11 @@ package com.lofipod.app.player
  *
  * Lifecycle:
  *   - PlayerController.connect → [bind] (pins the live controller as the
- *     confirm target).
- *   - PlayerController.release → [unbind] (drops the pin so a stale
- *     reference can't keep the activity alive past its scope).
+ *     confirm target; the process-scoped controller re-pins itself on
+ *     every activity recreation, a harmless same-instance overwrite).
+ *   - PlayerController.release → [unbind] (drops the pin so a released
+ *     controller can't be driven by media buttons; unused on the
+ *     process-scoped happy path, where the pin lives as long as the JVM).
  *   - PlaybackService.MediaSession.Callback → [handleMediaButtonPlayPause]
  *     on every external play/pause attempt.
  */

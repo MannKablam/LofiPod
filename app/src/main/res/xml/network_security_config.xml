@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Default policy: HTTPS only. Cleartext HTTP is rejected on API 28+ unless
+    the destination domain appears in a domain-config block below.
+
+    Per-domain exceptions are added only when the upstream host has no
+    working HTTPS (e.g. expired/no certificate) AND the content is bundled
+    into a Kabod Pack we want to keep playable. Each exception is a known,
+    audited domain — never a wildcard.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!--
+        tapesfromscotland.org — host of William Still's Aberdeen-pulpit
+        archive (Leviticus + Hosea kabod packs). Apache 2.4 over HTTP only;
+        HTTPS endpoint serves an expired cert, so the only way to fetch
+        these mp3s is cleartext. Without this whitelist the audio
+        DataSource fails inside Media3 with HttpDataSourceException →
+        IOException → UnknownHostException (Android surfaces the cleartext
+        block as an opaque connection failure).
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">tapesfromscotland.org</domain>
+    </domain-config>
+</network-security-config>

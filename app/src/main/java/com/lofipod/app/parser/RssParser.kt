@@ -155,7 +155,20 @@ object RssParser {
                 "enclosure" -> {
                     audioUrl = parser.getAttributeValue(null, "url")
                     audioType = parser.getAttributeValue(null, "type")
-                    audioBytes = parser.getAttributeValue(null, "length")?.toLongOrNull()
+                    // RSS 2.0 enclosure `length` attribute is OPTIONAL and
+                    // some podcast platforms (Megaphone is the canonical
+                    // offender, but Castos / others do it for specific
+                    // shows too) emit `length="0"` as a placeholder when
+                    // they don't have the file size — possibly because they
+                    // can't pre-compute it ahead of CDN redirects, possibly
+                    // because the host's RSS generator just doesn't bother.
+                    // Treat `0` as "missing" (return null) so EpisodeRow
+                    // hides the size badge entirely rather than reading
+                    // "<1mb" for every episode in those podcasts. Negative
+                    // and unparseable values also become null.
+                    audioBytes = parser.getAttributeValue(null, "length")
+                        ?.toLongOrNull()
+                        ?.takeIf { it > 0L }
                     skip(parser)
                 }
                 else -> {

@@ -44,13 +44,44 @@ class EqAudioProcessor : BaseAudioProcessor() {
     @Volatile private var gainDb: Float = 0f          // volume boost, 0..+12 dB typical
     @Volatile private var enabled: Boolean = true
     @Volatile private var dcBlocker: Boolean = false  // pre-EQ DC removal; off by default
-    // When true, the EQ stage runs as a 4096-tap linear-phase FIR convolution
-    // (Phase C). When false (default), it runs as the 10-band minimum-phase
-    // biquad cascade (Phase A). The downstream chain (DC blocker, gain,
-    // oversampler, limiter, dither) is identical in both modes — only the EQ
-    // stage swaps.
-    @Volatile private var phaseModeLinear: Boolean = false
+    // EQ phase mode (v0.9.3+). Three values:
+    //   PURE_IIR (default): 10-band minimum-phase biquad cascade with
+    //     equal-power crossfade on band changes. Fast, low-latency, low CPU.
+    //   MIN_FIR: minimum-phase 4096-tap FIR via UPC convolution + real-
+    //     cepstrum kernel synthesis. Surgical magnitude precision, no
+    //     pre-ringing, ms-scale group delay.
+    //   LINEAR_FIR: linear-phase 4096-tap FIR via UPC convolution +
+    //     symmetric kernel. Preserves transient waveform shape, audible
+    //     pre-ringing on transients, ~46 ms group delay.
+    //
+    // The downstream chain (DC blocker, gain, oversampler, limiter, dither)
+    // is identical across all three modes; only the EQ stage swaps.
+    @Volatile private var phaseMode: PhaseMode = PhaseMode.PURE_IIR
     @Volatile private var dirty: Boolean = true       // recompute coefficients on next buffer
+
+    // ---- Tone filters (v0.11 "FabFilter-lite" corrective stage) ----
+    // Three zero-latency IIR controls that run BEFORE the EQ stage (right
+    // after the DC blocker) in every phase mode:
+    //   - lowCutHz  > 0: 12 dB/oct Butterworth high-pass (rumble removal)
+    //   - highCutHz > 0: 12 dB/oct Butterworth low-pass (hiss removal)
+    //   - tiltDb   != 0: complementary low/high shelf pair pivoting at
+    //     TILT_PIVOT_HZ — one knob from "darker" (negative) to "brighter"
+    //     (positive)
+    // Deliberately IIR (minimum-phase) even when the EQ stage runs FIR:
+    // corrective cuts *want* min-phase behavior (no pre-ringing), this is
+    // exactly how zero-latency mode works in the desktop parametrics the
+    // feature is modeled on, and it keeps the controls identical across
+    // all four phase modes with zero added latency.
+    @Volatile private var lowCutHz: Float = 0f
+    @Volatile private var highCutHz: Float = 0f
+    @Volatile private var tiltDb: Float = 0f
+    // v0.11 refinement: optional 24 dB/oct low-cut slope. When on, a second
+    // identical Butterworth section cascades after the first — two Q=0.707
+    // stages form a 4th-order Linkwitz-Riley high-pass (-6 dB at corner,
+    // 24 dB/oct skirt). Steeper rumble removal without touching the voice
+    // band above the corner.
+    @Volatile private var lowCutSteep: Boolean = false
+    @Volatile private var toneDirty: Boolean = true
 
     // ---- Internal DSP state ----
     private var sampleRate = 0
@@ -81,6 +112,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
     // dcBlockers[channel] — one DcBlocker per channel; each carries its own
     // x_prev/y_prev. Allocated in onConfigure once channelCount is known.
     private var dcBlockers: Array<DcBlocker> = emptyArray()
+    // Tone-filter biquads, one of each per channel. Allocated in onConfigure;
+    // configured lazily by [ensureToneCoefficients] when [toneDirty].
+    private var lowCutFilters: Array<Biquad> = emptyArray()
+    private var highCutFilters: Array<Biquad> = emptyArray()
+    private var tiltLowFilters: Array<Biquad> = emptyArray()
+    private var tiltHighFilters: Array<Biquad> = emptyArray()
     // Single TPDF generator for the Double → int16 truncation at the chain
     // output. Signal-independent noise (TPDF property) means we can share
     // one instance across channels without channel-correlation artifacts.
@@ -100,11 +137,30 @@ class EqAudioProcessor : BaseAudioProcessor() {
     // a multiplication, which spreads the spectrum) so it does. See
     // Oversampler.kt for the FIR design and polyphase math.
     private val oversampler = Oversampler()
-    // Linear-phase EQ via FFT overlap-add convolution. Used only when
-    // [phaseModeLinear] is true. Owns its own worker scope for kernel
-    // synthesis on band changes; reset on flush; released on processor reset.
-    // See LinearPhaseEq.kt for the kernel synthesis + convolution math.
-    private val linearPhaseEq = LinearPhaseEq()
+    // FIR EQ via UPC (uniform partitioned convolution). Used when phaseMode
+    // is MIN_FIR or LINEAR_FIR; idle when PURE_IIR. Owns its own worker scope
+    // for kernel synthesis on band changes; reset on flush; released on
+    // processor reset. The same FirEq instance handles both FIR modes —
+    // [FirEq.setMode] dispatches between the linear-phase symmetric kernel
+    // synthesis and the min-phase real-cepstrum synthesis path, both feeding
+    // the underlying [UpcConvolver].
+    private val firEq = FirEq()
+    // ---- Voice suite (v0.11 premium stages) ----
+    // Four staged (off/L1-L3) voice-treatment effects, modeled on the
+    // desktop mastering suites:
+    //   - deEsser + leveler: zero-latency, run at 1x on the pre-EQ frame
+    //     (corrective placement — the EQ and everything downstream see the
+    //     tamed, ridden signal).
+    //   - saturator (Warmth) + airExciter (Air): nonlinear, so they run
+    //     INSIDE the existing 2x oversampling envelope between upsampler
+    //     and limiter — harmonics land below the 2x Nyquist and the
+    //     downsampler's anti-alias FIR removes anything above the source
+    //     band. Zero added latency, no extra oversampler instances.
+    // All four are identical across every phase mode, like the tone stage.
+    private val deEsser = DeEsser()
+    private val leveler = Leveler()
+    private val saturator = Saturator()
+    private val airExciter = AirExciter()
     // Scratch arrays sized to channelCount, allocated on configure. Used to
     // hand whole frames between stages: 1x-rate arrays for input/output,
     // plus two 2x-rate arrays for the upsampler→limiter→downsampler bridge
@@ -117,24 +173,120 @@ class EqAudioProcessor : BaseAudioProcessor() {
     private var up1Frame: DoubleArray = DoubleArray(0)
     private var lim0Frame: DoubleArray = DoubleArray(0)
     private var lim1Frame: DoubleArray = DoubleArray(0)
-    // Scratch for popping linear-phase EQ output frames into per-channel
-    // doubles before they enter the gain → oversample → limiter chain.
-    // Sized at configure to channelCount; reused every frame.
-    private var linearPhasePop: DoubleArray = DoubleArray(0)
+    // Scratch for popping FIR EQ output frames into per-channel doubles
+    // before they enter the gain → oversample → limiter chain. Sized at
+    // configure to channelCount; reused every frame.
+    private var firPop: DoubleArray = DoubleArray(0)
+    // Pre-EQ frame scratch: the voice stages (leveler, de-esser) need the
+    // whole frame — all channels — for linked detection BEFORE the EQ
+    // cascade runs, so the IIR path decodes into this first.
+    private var framePre: DoubleArray = DoubleArray(0)
+    // Second low-cut section, cascaded when [lowCutSteep] (LR4 slope).
+    private var lowCutFilters2: Array<Biquad> = emptyArray()
+    // Audio-thread mirror of [lowCutSteep], set by ensureToneCoefficients
+    // alongside the coefficient swap so processTone stays branch-cheap.
+    private var steepActive = false
 
     fun setBands(newBands: List<EqBand>) {
         bands = newBands
         dirty = true
-        // Linear-phase EQ kicks off async kernel re-synthesis on its worker
-        // scope. Cheap to call even when phase mode is min — the worker just
+        // FIR EQ kicks off async kernel re-synthesis on its worker scope.
+        // Cheap to call even when phase mode is PURE_IIR — the worker just
         // produces a kernel that goes unused until the user toggles modes.
-        linearPhaseEq.setBands(newBands)
+        firEq.setBands(newBands)
         // Counter increments per call; the actual cross-fade only fires inside
         // ensureCoefficients (where we also log the breadcrumb event). Cheap
         // enough to call from the UI thread on every slider tick.
         AudioChainTelemetry.incBandChanges()
     }
     fun setGainDb(db: Float) { gainDb = db.coerceIn(-12f, 12f) }
+
+    /**
+     * Sleep-timer fade multiplier (1.0 = none). Owned by the sleep timer
+     * in PlayerController, which steps it along a half-cosine every 250ms
+     * during the final fade window and RESETS it to 1.0 on pause/cancel.
+     * Deliberately a dumb multiplier here — no ramp state, no curve.
+     * Applied in every output path INCLUDING the bit-exact passthrough
+     * copy (per-episode "Disable EQ" short-circuits before
+     * isPassthroughEffective, so the DSP-path fold alone would silently
+     * skip fading on EQ-disabled episodes).
+     */
+    @Volatile private var sleepFadeLinear: Double = 1.0
+    fun setSleepFade(fade: Double) {
+        sleepFadeLinear = fade.coerceIn(0.0, 1.0)
+    }
+    fun currentSleepFade(): Double = sleepFadeLinear
+
+    /** Low-cut (high-pass) corner in Hz; 0 disables. Takes effect next buffer. */
+    fun setLowCutHz(hz: Float) {
+        val v = if (hz <= 0f) 0f else hz.coerceIn(20f, 300f)
+        if (v == lowCutHz) return
+        lowCutHz = v
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_low_cut", if (v == 0f) "off" else "${v.toInt()} Hz")
+    }
+
+    /** High-cut (low-pass) corner in Hz; 0 disables. Takes effect next buffer. */
+    fun setHighCutHz(hz: Float) {
+        val v = if (hz <= 0f) 0f else hz.coerceIn(2_000f, 20_000f)
+        if (v == highCutHz) return
+        highCutHz = v
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_high_cut", if (v == 0f) "off" else "${v.toInt()} Hz")
+    }
+
+    /** Spectral tilt in dB (negative = darker, positive = brighter); 0 disables. */
+    fun setTiltDb(db: Float) {
+        val v = db.coerceIn(-6f, 6f)
+        if (v == tiltDb) return
+        tiltDb = v
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_tilt", "%+.1f dB".format(v))
+    }
+
+    /** 24 dB/oct low-cut slope (LR4). Only audible while low cut is on. */
+    fun setLowCutSteep(on: Boolean) {
+        if (on == lowCutSteep) return
+        lowCutSteep = on
+        toneDirty = true
+        AudioChainTelemetry.logEvent("tone_low_cut_slope", if (on) "24 dB/oct" else "12 dB/oct")
+    }
+
+    // ---- Voice suite setters (0 = off, 1..3 staged). The stage classes own
+    // their level as a volatile and self-apply parameter changes on the
+    // audio thread, mirroring SilenceSkippingProcessor.setLevel. ----
+    fun setDeEsserLevel(l: Int) {
+        if (l.coerceIn(0, 3) == deEsser.currentLevel()) return
+        deEsser.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_deesser", "L${deEsser.currentLevel()}")
+    }
+
+    fun setWarmthLevel(l: Int) {
+        if (l.coerceIn(0, 3) == saturator.currentLevel()) return
+        saturator.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_warmth", "L${saturator.currentLevel()}")
+    }
+
+    fun setLevelerLevel(l: Int) {
+        if (l.coerceIn(0, 3) == leveler.currentLevel()) return
+        leveler.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_leveler", "L${leveler.currentLevel()}")
+    }
+
+    fun setAirLevel(l: Int) {
+        if (l.coerceIn(0, 3) == airExciter.currentLevel()) return
+        airExciter.setLevel(l)
+        AudioChainTelemetry.logEvent("voice_air", "L${airExciter.currentLevel()}")
+    }
+
+    fun currentLowCutHz(): Float = lowCutHz
+    fun currentHighCutHz(): Float = highCutHz
+    fun currentTiltDb(): Float = tiltDb
+    fun currentLowCutSteep(): Boolean = lowCutSteep
+    fun currentDeEsserLevel(): Int = deEsser.currentLevel()
+    fun currentWarmthLevel(): Int = saturator.currentLevel()
+    fun currentLevelerLevel(): Int = leveler.currentLevel()
+    fun currentAirLevel(): Int = airExciter.currentLevel()
     fun setEnabled(on: Boolean) {
         enabled = on
         AudioChainTelemetry.enabled = on
@@ -145,26 +297,126 @@ class EqAudioProcessor : BaseAudioProcessor() {
         AudioChainTelemetry.logEvent("dc_blocker", if (on) "on" else "off")
     }
     /**
-     * Switch the EQ stage between minimum-phase biquad cascade (false,
-     * default) and linear-phase FIR convolution (true). The mode change
-     * takes effect on the next audio buffer; mid-buffer audio in flight
-     * through the previous mode is not cross-faded — there will be a brief
-     * (< 50 ms) audible artifact at the transition. Acceptable for a manual
-     * mode switch; could be smoothed with a parallel cross-fade later.
+     * Switch the EQ phase mode. Takes effect on the next audio buffer;
+     * mid-buffer audio in flight through the previous mode is not cross-
+     * faded — there will be a brief (< 50 ms) audible artifact at the
+     * transition. Acceptable for a manual mode switch.
+     *
+     * Side effect: full chain reset (DC blocker, biquads, FIR EQ, limiter,
+     * oversampler). Without it the post-EQ stages would briefly mix the
+     * previous mode's audio with the new mode's first output frames.
      */
+    fun setPhaseMode(newMode: PhaseMode) {
+        if (phaseMode == newMode) return
+        phaseMode = newMode
+        // Re-synthesize the FIR kernel for the new mode (no-op when
+        // PURE_IIR — FirEq idles).
+        firEq.setMode(
+            when (newMode) {
+                PhaseMode.LINEAR_FIR -> FirEq.Mode.LINEAR
+                PhaseMode.MIN_FIR -> FirEq.Mode.MIN_PHASE
+                PhaseMode.MIXED -> FirEq.Mode.MIXED
+                PhaseMode.PURE_IIR -> firEq.mode  // unchanged, FIR idles
+            },
+            bands,
+        )
+        chainReset()
+        AudioChainTelemetry.logEvent("phase_mode", newMode.storageKey)
+    }
+
+    /** Legacy boolean entrypoint kept for backwards compat with any caller
+     *  not yet migrated to [setPhaseMode]. True maps to LINEAR_FIR, false
+     *  to PURE_IIR. v0.9.0 callers (PlaybackService rehydrate) used this
+     *  shape; v0.9.3+ callers should prefer [setPhaseMode]. */
+    @Deprecated(
+        "Use setPhaseMode(PhaseMode) — supports the v0.9.3 three-mode lineup.",
+        ReplaceWith("setPhaseMode(if (on) PhaseMode.LINEAR_FIR else PhaseMode.PURE_IIR)")
+    )
     fun setPhaseModeLinear(on: Boolean) {
-        if (phaseModeLinear == on) return
-        phaseModeLinear = on
-        // Clear linear-phase state on entry / exit so a stale partial chunk
-        // from a prior session can't leak into the next mode switch.
-        linearPhaseEq.reset()
-        AudioChainTelemetry.logEvent("phase_mode", if (on) "linear" else "minimum")
+        setPhaseMode(if (on) PhaseMode.LINEAR_FIR else PhaseMode.PURE_IIR)
+    }
+
+    /**
+     * Reset every stateful DSP stage in the chain (DC blocker, biquad cascade
+     * + cross-fade state, linear-phase EQ accumulators/OLA tail/output ring,
+     * oversampler FIR delay lines, look-ahead limiter buffer + peak window).
+     * Called from [onFlush] (seek / setMediaItem) and from
+     * [setPhaseModeLinear] (mid-playback mode toggle). Idempotent and cheap;
+     * does not free or reallocate any buffers.
+     */
+    private fun chainReset() {
+        for (ch in filters) for (b in ch) b.reset()
+        for (ch in oldFilters) for (b in ch) b.reset()
+        for (b in dcBlockers) b.reset()
+        for (b in lowCutFilters) b.reset()
+        for (b in lowCutFilters2) b.reset()
+        for (b in highCutFilters) b.reset()
+        for (b in tiltLowFilters) b.reset()
+        for (b in tiltHighFilters) b.reset()
+        deEsser.reset()
+        leveler.reset()
+        saturator.reset()
+        airExciter.reset()
+        // The voice stages' meter state just went idle; park the UI-facing
+        // mirrors to match, or a flush with no follow-up DSP buffer (pause
+        // after seek, stop at track end) leaves the meters frozen on stale
+        // pre-flush values.
+        AudioChainTelemetry.parkVoiceMirrorsIdle()
+        limiter.reset()
+        oversampler.reset()
+        firEq.reset()
+        fadeRemaining = 0
     }
 
     /** Read-only accessor for the current phase mode. Used by the in-Player
-     *  diagnostics tab to surface "Linear (4096-tap FIR)" vs "Minimum
-     *  (biquad)" without needing a Settings round-trip on every recompose. */
-    fun isPhaseModeLinear(): Boolean = phaseModeLinear
+     *  diagnostics tab to surface "Linear-Phase FIR" / "Min-Phase FIR" /
+     *  "Pure IIR" without needing a Settings round-trip on every recompose. */
+    fun currentPhaseMode(): PhaseMode = phaseMode
+
+    /** Legacy boolean accessor kept for backwards compat with callers
+     *  that still treat phase mode as a 2-state. True iff a FIR mode is
+     *  active (either MIN_FIR or LINEAR_FIR). */
+    @Deprecated(
+        "Use currentPhaseMode() — supports the v0.9.3 three-mode lineup.",
+        ReplaceWith("currentPhaseMode() != PhaseMode.PURE_IIR")
+    )
+    fun isPhaseModeLinear(): Boolean = phaseMode != PhaseMode.PURE_IIR
+
+    /**
+     * Total chain latency from input to audible output, in microseconds.
+     *
+     *   - FIR EQ (when phaseMode is MIN_FIR or LINEAR_FIR): UPC block-
+     *     buffering delay + kernel group delay. MIN_FIR: BLOCK_SIZE only,
+     *     ≈ 23 ms at 44.1k (cepstrum kernel is energy-front-loaded, group
+     *     delay is sub-ms). LINEAR_FIR: BLOCK_SIZE + (KERNEL_LENGTH-1)/2,
+     *     ≈ 70 ms at 44.1k (symmetric kernel center). Always 0 when
+     *     phaseMode is PURE_IIR.
+     *   - Oversampler FIR group delay (both up + down stages combined):
+     *     `totalDelayFrames1x` samples at 1× rate, ≈ 1.4 ms at 44.1k.
+     *   - Limiter look-ahead: `drainFrameCount/2` 1×-equiv samples, ≈ 5 ms.
+     *
+     * Returns 0 when the chain is disabled or in effective passthrough —
+     * those paths copy bytes through untouched, no latency contribution.
+     *
+     * Used by [PlayerController.currentPositionMs] to subtract the chain's
+     * algorithmic delay from the position reported to the UI, so the
+     * progress bar tracks what the user is actually hearing rather than
+     * what the audio sink last wrote to AudioTrack. Watchdog and DB
+     * persistence intentionally stay on raw position. See
+     * _LOFIPOD_V1_BRIEF.md §A4.
+     */
+    fun getChainLatencyUs(): Long {
+        if (sampleRate == 0) return 0L
+        if (!enabled || isPassthroughEffective()) return 0L
+        // FirEq exposes the combined block-buffering + kernel-group-delay
+        // at 1× rate; convert to microseconds.
+        val firUs = if (phaseMode != PhaseMode.PURE_IIR) {
+            firEq.algorithmicDelayFrames1x.toLong() * 1_000_000L / sampleRate
+        } else 0L
+        val osUs = oversampler.totalDelayFrames1x.toLong() * 1_000_000L / sampleRate
+        val limUs = (limiter.drainFrameCount.toLong() / 2L) * 1_000_000L / sampleRate
+        return firUs + osUs + limUs
+    }
 
     /**
      * True when the chain would have no audible effect — every band is at 0 dB,
@@ -180,10 +432,29 @@ class EqAudioProcessor : BaseAudioProcessor() {
     private fun isPassthroughEffective(): Boolean {
         if (dcBlocker) return false
         if (gainDb != 0f) return false
+        if (toneActive()) return false
+        if (voiceActive()) return false
+        // NOTE deliberately NO sleepFadeLinear clause here: the passthrough
+        // copy loop multiplies the fade itself, so a FLAT/0dB config can
+        // stay on the bit-copy path for the whole fade. Forcing the DSP
+        // path instead (an earlier revision did) made FIR-mode users eat a
+        // ~23ms convolver re-prime gap right at fade onset — an audible
+        // dropout exactly when the transition should be seamless.
         val current = bands
         for (b in current) if (b.gainDb != 0f) return false
         return true
     }
+
+    /** True when any tone filter (low-cut / high-cut / tilt) is engaged. */
+    private fun toneActive(): Boolean =
+        lowCutHz > 0f || highCutHz > 0f || tiltDb != 0f
+
+    /** True when any voice-suite stage is engaged — the DSP path must run
+     *  so the stages actually process (same rationale as the DC-blocker
+     *  check above). */
+    private fun voiceActive(): Boolean =
+        deEsser.currentLevel() > 0 || leveler.currentLevel() > 0 ||
+            saturator.currentLevel() > 0 || airExciter.currentLevel() > 0
 
     fun currentBands(): List<EqBand> = bands
     fun currentGainDb(): Float = gainDb
@@ -208,6 +479,21 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // Configure here so the cutoff coefficient matches the new sample
         // rate; reused even when the toggle is off (cheap to keep around).
         dcBlockers = Array(channelCount) { DcBlocker().apply { configure(sampleRate) } }
+        // Tone-filter biquads. Coefficients depend on sample rate, so mark
+        // dirty and let ensureToneCoefficients reconfigure on the first
+        // buffer at the new rate.
+        lowCutFilters = Array(channelCount) { Biquad() }
+        lowCutFilters2 = Array(channelCount) { Biquad() }
+        highCutFilters = Array(channelCount) { Biquad() }
+        tiltLowFilters = Array(channelCount) { Biquad() }
+        tiltHighFilters = Array(channelCount) { Biquad() }
+        toneDirty = true
+        // Voice suite: de-esser + leveler at 1x, saturator + air at the 2x
+        // oversampled rate (they run inside the oversampling envelope).
+        deEsser.configure(sampleRate, channelCount)
+        leveler.configure(sampleRate, channelCount)
+        saturator.configure(2 * sampleRate, channelCount)
+        airExciter.configure(2 * sampleRate, channelCount)
         // Oversampler: 2x polyphase up/down. FIR coefficients depend only on
         // the FIR design parameters (length, cutoff, β), not on sample rate,
         // so configure here only allocates per-channel delay lines.
@@ -226,12 +512,23 @@ class EqAudioProcessor : BaseAudioProcessor() {
         up1Frame = DoubleArray(channelCount)
         lim0Frame = DoubleArray(channelCount)
         lim1Frame = DoubleArray(channelCount)
-        linearPhasePop = DoubleArray(channelCount)
-        // Linear-phase EQ: allocate per-channel state + synthesize the
-        // initial kernel from the current bands. Cheap to do even when phase
-        // mode is minimum — the kernel just sits unused until mode switches.
-        linearPhaseEq.configure(sampleRate, channelCount)
-        linearPhaseEq.setBands(bands)
+        firPop = DoubleArray(channelCount)
+        framePre = DoubleArray(channelCount)
+        // FIR EQ: allocate per-channel state + synthesize the initial kernel
+        // from the current bands at the current phase mode. Cheap to keep
+        // configured even when phase mode is PURE_IIR — the kernel sits
+        // unused until the user switches into a FIR mode.
+        firEq.configure(sampleRate, channelCount)
+        firEq.setMode(
+            when (phaseMode) {
+                PhaseMode.LINEAR_FIR -> FirEq.Mode.LINEAR
+                PhaseMode.MIN_FIR -> FirEq.Mode.MIN_PHASE
+                PhaseMode.MIXED -> FirEq.Mode.MIXED
+                PhaseMode.PURE_IIR -> FirEq.Mode.LINEAR  // FirEq idle in PURE_IIR; mode picked for first toggle
+            },
+            bands,
+        )
+        firEq.setBands(bands)
         dirty = true
 
         // Diagnostic snapshot: chain config + counters + breadcrumb. Logged
@@ -264,25 +561,12 @@ class EqAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun onFlush() {
-        for (ch in filters) for (b in ch) b.reset()
-        for (ch in oldFilters) for (b in ch) b.reset()
-        for (b in dcBlockers) b.reset()
-        // Reset the limiter delay line + peak window. Without this, a seek
-        // (which triggers onFlush) would emit ~5 ms of audio from BEFORE the
-        // seek as the start of the post-seek output, then the audio that
-        // currently lives in the buffer. Audible glitch.
-        limiter.reset()
-        // Reset the oversampler FIR delay lines — same reasoning as the
-        // limiter. ~16 frames at 1x of pre-seek audio would otherwise leak
-        // into the post-seek output.
-        oversampler.reset()
-        // Reset the linear-phase EQ accumulators + overlap-add tail so seeks
-        // don't leak ~46 ms of pre-seek audio out the convolution back end.
-        linearPhaseEq.reset()
-        // Cancel any in-flight fade — flush usually means a seek, and
-        // continuing a fade across a seek would mix stale state into the
-        // new audio.
-        fadeRemaining = 0
+        // Full chain reset on seek / setMediaItem / format-change-pre-resume.
+        // Without this, the limiter (~5 ms LA), oversampler (~16 frames @1x),
+        // FIR EQ (UPC FDL + overlap + output ring), biquad cross-fade state,
+        // and DC blocker (one-frame) would each leak a slice of pre-flush
+        // audio into the start of the post-flush output. See [chainReset].
+        chainReset()
         AudioChainTelemetry.incFlushes()
         AudioChainTelemetry.logEvent("flush")
     }
@@ -291,21 +575,32 @@ class EqAudioProcessor : BaseAudioProcessor() {
         filters = emptyArray()
         oldFilters = emptyArray()
         dcBlockers = emptyArray()
+        lowCutFilters = emptyArray()
+        lowCutFilters2 = emptyArray()
+        highCutFilters = emptyArray()
+        tiltLowFilters = emptyArray()
+        tiltHighFilters = emptyArray()
+        deEsser.reset()
+        leveler.reset()
+        saturator.reset()
+        airExciter.reset()
+        AudioChainTelemetry.parkVoiceMirrorsIdle()
         // Limiter + oversampler buffers freed via reset; configure will
         // reallocate next time.
         limiter.reset()
         oversampler.reset()
-        // Linear-phase EQ: reset state AND release the worker scope so the
+        // FIR EQ: reset state AND release the worker scope so the
         // synthesis coroutine doesn't outlive the processor lifecycle.
-        linearPhaseEq.reset()
-        linearPhaseEq.release()
+        firEq.reset()
+        firEq.release()
         frameInput = DoubleArray(0)
         frameOutput = DoubleArray(0)
         up0Frame = DoubleArray(0)
         up1Frame = DoubleArray(0)
         lim0Frame = DoubleArray(0)
         lim1Frame = DoubleArray(0)
-        linearPhasePop = DoubleArray(0)
+        firPop = DoubleArray(0)
+        framePre = DoubleArray(0)
     }
 
     private fun ensureCoefficients() {
@@ -348,6 +643,54 @@ class EqAudioProcessor : BaseAudioProcessor() {
     }
 
     /**
+     * Recompute the tone-filter coefficients when [toneDirty]. Unlike the
+     * band cascade there's no cross-fade machinery: these are corrective
+     * filters adjusted via discrete chips / a coarse slider, and the biquad
+     * state (z1/z2) is preserved across coefficient swaps, so transitions
+     * are click-free in practice.
+     */
+    private fun ensureToneCoefficients() {
+        if (!toneDirty) return
+        val lc = lowCutHz
+        val hc = highCutHz
+        val tilt = tiltDb
+        val steep = lowCutSteep
+        for (ch in 0 until channelCount) {
+            if (lc > 0f) {
+                lowCutFilters[ch].setHighpass(sampleRate, lc)
+                // Second identical section when steep: two cascaded Q=0.707
+                // Butterworth HPs = 4th-order Linkwitz-Riley, 24 dB/oct.
+                if (steep) lowCutFilters2[ch].setHighpass(sampleRate, lc)
+                else lowCutFilters2[ch].setIdentity()
+            } else {
+                lowCutFilters[ch].setIdentity()
+                lowCutFilters2[ch].setIdentity()
+            }
+            if (hc > 0f) highCutFilters[ch].setLowpass(sampleRate, hc)
+            else highCutFilters[ch].setIdentity()
+            if (tilt != 0f) {
+                tiltLowFilters[ch].setLowShelf(sampleRate, TILT_PIVOT_HZ, -tilt)
+                tiltHighFilters[ch].setHighShelf(sampleRate, TILT_PIVOT_HZ, tilt)
+            } else {
+                tiltLowFilters[ch].setIdentity()
+                tiltHighFilters[ch].setIdentity()
+            }
+        }
+        steepActive = steep && lc > 0f
+        toneDirty = false
+    }
+
+    /** Run one sample of channel [ch] through the tone-filter stage. */
+    private fun processTone(ch: Int, x: Double): Double {
+        var y = lowCutFilters[ch].process(x)
+        if (steepActive) y = lowCutFilters2[ch].process(y)
+        y = highCutFilters[ch].process(y)
+        y = tiltLowFilters[ch].process(y)
+        y = tiltHighFilters[ch].process(y)
+        return y
+    }
+
+    /**
      * Half-cosine fade weight for the NEW chain at fade position [progress]
      * (0.0 = start of fade, 1.0 = end). Returns a value in [0, 1] with zero
      * derivative at both ends — equal-power and inaudibly smooth. Old chain
@@ -377,8 +720,19 @@ class EqAudioProcessor : BaseAudioProcessor() {
             val src = inputBuffer.order(ByteOrder.nativeOrder())
             val byteCount = src.remaining()
             val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
-            while (src.hasRemaining()) {
-                out.putShort(src.short)
+            // Sleep fade applies even on the bit-exact path — one snapshot
+            // per buffer, one multiply per short when engaged. fade==1.0
+            // keeps the copy bit-identical (no float round-trip).
+            val fade = sleepFadeLinear
+            if (fade == 1.0) {
+                while (src.hasRemaining()) {
+                    out.putShort(src.short)
+                }
+            } else {
+                while (src.hasRemaining()) {
+                    val v = (src.short * fade).toInt().coerceIn(-32768, 32767)
+                    out.putShort(v.toShort())
+                }
             }
             out.flip()
             // Telemetry: mark this buffer as a passthrough hit. The transition
@@ -387,6 +741,11 @@ class EqAudioProcessor : BaseAudioProcessor() {
             if (!AudioChainTelemetry.passthrough) {
                 AudioChainTelemetry.passthrough = true
                 AudioChainTelemetry.logEvent("passthrough", "enter")
+                // The DSP path never runs in passthrough, so the voice-suite
+                // mirrors would otherwise hold their last DSP-buffer values
+                // forever (e.g. chain disabled mid-sibilant). Park them at
+                // idle once, on the transition.
+                AudioChainTelemetry.parkVoiceMirrorsIdle()
             }
             AudioChainTelemetry.incPassthroughBuffers()
             if (channelCount > 0) {
@@ -401,12 +760,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
         if (AudioChainTelemetry.passthrough) {
             AudioChainTelemetry.passthrough = false
             AudioChainTelemetry.logEvent("passthrough", "exit")
-            // Linear-phase mode keeps a stateful output queue and overlap-
-            // add tail. Resuming after a passthrough window (e.g. release of
-            // the Hold-to-A/B button) without reset would emit ~50 ms of
-            // stale pre-bypass audio before live audio caught up. Clear the
-            // state so resumption sounds like a clean restart instead.
-            if (phaseModeLinear) linearPhaseEq.reset()
+            // Full chain reset, not just firEq: EVERY stateful stage holds
+            // pre-bypass audio across a passthrough window — the
+            // oversampler's FIR delay lines and the limiter's ~5ms
+            // look-ahead would otherwise emit a fragment from before the
+            // window (an audible blip on Hold-to-A/B release). The FIR
+            // FDL/output-ring case this block originally handled is
+            // covered by chainReset too.
+            chainReset()
         }
         AudioChainTelemetry.incDspBuffers()
         AudioChainTelemetry.addFrames(frameCount)
@@ -418,19 +779,20 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // and underruns become likely.
         val dspStartNs = System.nanoTime()
 
-        // Linear-phase branch — FIR convolution path. The DC blocker still
-        // runs frame-by-frame upstream of the linear-phase EQ, but the EQ
-        // stage is a chunked overlap-add convolution rather than the biquad
-        // cascade. Output frame count per call may differ from input frame
-        // count (chunks accumulate then emit in 1024-frame bursts), so the
-        // helper handles its own [replaceOutputBuffer] sizing.
-        if (phaseModeLinear) {
-            queueInputLinearPhase(inputBuffer, frameCount)
-            val elapsedNsLinear = System.nanoTime() - dspStartNs
-            val audioNsLinear = if (sampleRate > 0) {
+        // FIR branch — UPC convolution path (LINEAR_FIR or MIN_FIR). The
+        // DC blocker still runs frame-by-frame upstream of the FIR EQ, but
+        // the EQ stage is a partitioned-convolution emit-on-block-boundary
+        // rather than the biquad cascade. Output frame count per call may
+        // differ from input frame count (frames accumulate then emit in
+        // BLOCK_SIZE-aligned bursts); the helper handles its own
+        // [replaceOutputBuffer] sizing.
+        if (phaseMode != PhaseMode.PURE_IIR) {
+            queueInputFir(inputBuffer, frameCount)
+            val elapsedNsFir = System.nanoTime() - dspStartNs
+            val audioNsFir = if (sampleRate > 0) {
                 frameCount.toLong() * 1_000_000_000L / sampleRate
             } else 0L
-            AudioChainTelemetry.recordBufferTiming(elapsedNsLinear, audioNsLinear)
+            AudioChainTelemetry.recordBufferTiming(elapsedNsFir, audioNsFir)
             return
         }
 
@@ -443,13 +805,21 @@ class EqAudioProcessor : BaseAudioProcessor() {
         // look-ahead limiter → dither → int16. See Biquad.kt for why precision
         // matters at the low end (31/62 Hz); Limiter.kt for why a real limiter
         // replaces the tanh waveshaper that lived here pre-Phase A5.
-        val gainLinear = 10.0.pow(gainDb / 20.0)
+        // Sleep fade folds into the per-buffer gain snapshot — the timer
+        // steps the volatile at 250ms, well above buffer cadence.
+        val gainLinear = 10.0.pow(gainDb / 20.0) * sleepFadeLinear
         val driveScale = 1.0 / 32768.0
         val invDrive = 32767.0
 
         // Snapshot toggles once per buffer — `dcBlocker` is volatile, so
         // toggling mid-buffer would otherwise produce a half-treated frame.
         val applyDcBlocker = dcBlocker
+        val applyTone = toneActive()
+        if (applyTone) ensureToneCoefficients()
+        val applyLeveler = leveler.currentLevel() > 0
+        val applyDeEsser = deEsser.currentLevel() > 0
+        val applyWarmth = saturator.currentLevel() > 0
+        val applyAir = airExciter.currentLevel() > 0
 
         for (frame in 0 until frameCount) {
             // Compute per-frame fade weights once; reuse across channels in
@@ -467,17 +837,29 @@ class EqAudioProcessor : BaseAudioProcessor() {
                 wNew = 1.0; wOld = 0.0
             }
 
-            // Pass 1: run each channel through DC blocker + biquad chain +
+            // Pass 0: decode + DC blocker + tone into [framePre] — the voice
+            // stages (leveler ride, de-esser detection) are linked across
+            // channels, so they need the WHOLE frame before the EQ runs.
+            for (ch in 0 until channelCount) {
+                val sampleI = src.short.toInt()
+                var x = sampleI * driveScale
+                if (applyDcBlocker) {
+                    x = dcBlockers[ch].process(x)
+                }
+                if (applyTone) {
+                    x = processTone(ch, x)
+                }
+                framePre[ch] = x
+            }
+            if (applyLeveler) leveler.processFrame(framePre)
+            if (applyDeEsser) deEsser.processFrame(framePre)
+
+            // Pass 1: run each channel through the biquad chain +
             // (cross-fade if active) + gain. Result lands in [frameInput] for
             // the limiter to consume as a whole frame (it needs ALL channels
             // for linked-stereo peak detection).
             for (ch in 0 until channelCount) {
-                val sampleI = src.short.toInt()
-                var x = sampleI * driveScale
-
-                if (applyDcBlocker) {
-                    x = dcBlockers[ch].process(x)
-                }
+                val x = framePre[ch]
 
                 // Run NEW chain. Always — even during fade, we still need
                 // the live filters' state to advance (so when the fade ends
@@ -526,6 +908,18 @@ class EqAudioProcessor : BaseAudioProcessor() {
             // First ~16 ms after every flush is silent priming output (FIR
             // delay lines + LA buffer ramp up from zeros). Inaudible.
             oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+            // Nonlinear voice stages run at 2x, pre-limiter: their harmonics
+            // sit below the 2x Nyquist and the downsampler strips anything
+            // above the source band. Warmth first, then Air, so the exciter
+            // works on the saturated (final) tonality.
+            if (applyWarmth) {
+                saturator.processFrame(up0Frame)
+                saturator.processFrame(up1Frame)
+            }
+            if (applyAir) {
+                airExciter.processFrame(up0Frame)
+                airExciter.processFrame(up1Frame)
+            }
             limiter.processFrame(up0Frame, lim0Frame)
             limiter.processFrame(up1Frame, lim1Frame)
             oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -555,6 +949,16 @@ class EqAudioProcessor : BaseAudioProcessor() {
         }
         out.flip()
 
+        // Voice-suite meters — once per buffer is plenty for the 250 ms
+        // diagnostics poll, and keeps the volatile writes out of the frame
+        // loop.
+        AudioChainTelemetry.deEsserGainLin = if (applyDeEsser) deEsser.lastGainLin else 1.0
+        AudioChainTelemetry.levelerGainLin = if (applyLeveler) leveler.lastGainLin else 1.0
+        AudioChainTelemetry.warmthActivity =
+            if (applyWarmth) saturator.currentActivityLin() else 0.0
+        AudioChainTelemetry.airActivity =
+            if (applyAir) airExciter.currentActivityLin() else 0.0
+
         // Push wallclock + audio-time to telemetry. Audio time is derived from
         // frameCount + sampleRate; processing time is the elapsed nanos since
         // [dspStartNs]. The diagnostics screen reads these to surface load
@@ -568,69 +972,94 @@ class EqAudioProcessor : BaseAudioProcessor() {
     }
 
     /**
-     * Linear-phase queueInput path. Replaces the biquad cascade (and its
-     * cross-fade machinery) with a 4096-tap FIR convolution provided by
-     * [linearPhaseEq]. The rest of the chain (DC blocker, gain,
-     * oversampler ↔ limiter, dither, truncation) is shared with the
-     * minimum-phase path.
+     * FIR-mode queueInput path. Replaces the biquad cascade (and its
+     * cross-fade machinery) with the 4096-tap UPC convolution provided by
+     * [firEq]. The rest of the chain (DC blocker, gain, oversampler ↔
+     * limiter, dither, truncation) is shared with the PURE_IIR path.
      *
-     * Output frame count != input frame count: the EQ accumulates input
-     * into [LinearPhaseEq.FRAME_SIZE] chunks before convolving, then emits
-     * in [LinearPhaseEq.FRAME_SIZE]-sized bursts. Total chain latency in
-     * this mode is ~52 ms (~46 ms FIR group delay + ~6.4 ms post-gain
-     * chain). When the EQ is still accumulating its first chunk after a
-     * configure / flush / mode switch, this method emits zero output bytes
-     * for the buffer (no [replaceOutputBuffer] call) and consumes the input
-     * fully — Media3's audio sink waits and queues more input on the next
+     * Output frame count != input frame count: FirEq accumulates input
+     * into [FirEq.BLOCK_SIZE] chunks before convolving, then emits in
+     * [FirEq.BLOCK_SIZE]-sized bursts. Total chain latency depends on
+     * mode — see [getChainLatencyUs]:
+     *   - MIN_FIR: ~29 ms (block delay + ms-scale kernel group delay
+     *     + ~6 ms post-gain chain).
+     *   - LINEAR_FIR: ~70 ms (block delay + symmetric kernel center
+     *     ~46 ms + post-gain chain).
+     *
+     * When FirEq is still accumulating its first block after a
+     * configure / flush / mode switch, this method emits zero output
+     * bytes for the buffer and Media3's audio sink waits for the next
      * call.
      */
-    private fun queueInputLinearPhase(inputBuffer: ByteBuffer, frameCount: Int) {
+    private fun queueInputFir(inputBuffer: ByteBuffer, frameCount: Int) {
         val src = inputBuffer.order(ByteOrder.nativeOrder())
         val driveScale = 1.0 / 32768.0
         val invDrive = 32767.0
-        val gainLinear = 10.0.pow(gainDb / 20.0)
+        val gainLinear = 10.0.pow(gainDb / 20.0) * sleepFadeLinear
         val applyDcBlocker = dcBlocker
+        val applyTone = toneActive()
+        if (applyTone) ensureToneCoefficients()
+        val applyLeveler = leveler.currentLevel() > 0
+        val applyDeEsser = deEsser.currentLevel() > 0
+        val applyWarmth = saturator.currentLevel() > 0
+        val applyAir = airExciter.currentLevel() > 0
 
-        // Pass 1: read the whole input buffer through the DC blocker into the
-        // linear-phase EQ. Per-channel accumulators inside [linearPhaseEq]
-        // hold partial chunks across queueInput calls; complete chunks
-        // (FRAME_SIZE samples per channel) trigger the FFT convolution.
+        // Pass 1: read the whole input buffer through the DC blocker + tone
+        // filters + voice stages (leveler ride, de-esser — same pre-EQ
+        // placement as the PURE_IIR path) into the FIR EQ. Per-channel
+        // accumulators inside [firEq] hold partial blocks across queueInput
+        // calls; complete blocks (BLOCK_SIZE samples per channel) trigger
+        // the UPC convolution.
         for (frame in 0 until frameCount) {
             for (ch in 0 until channelCount) {
                 val sampleI = src.short.toInt()
                 var x = sampleI * driveScale
                 if (applyDcBlocker) x = dcBlockers[ch].process(x)
+                if (applyTone) x = processTone(ch, x)
                 frameInput[ch] = x
             }
-            linearPhaseEq.pushFrame(frameInput)
+            if (applyLeveler) leveler.processFrame(frameInput)
+            if (applyDeEsser) deEsser.processFrame(frameInput)
+            firEq.pushFrame(frameInput)
         }
+        AudioChainTelemetry.deEsserGainLin = if (applyDeEsser) deEsser.lastGainLin else 1.0
+        AudioChainTelemetry.levelerGainLin = if (applyLeveler) leveler.lastGainLin else 1.0
 
-        // Pass 2: how many output frames are ready? May be 0 (the EQ is still
-        // accumulating its first chunk after a mode switch / flush / configure)
-        // or several thousand (if multiple chunks completed in one call).
-        val outputFrames = linearPhaseEq.outputFramesAvailable()
+        // Pass 2: how many output frames are ready? May be 0 (FIR EQ still
+        // accumulating its first block after a mode switch / flush /
+        // configure) or several blocks worth (if multiple completed in one
+        // call).
+        val outputFrames = firEq.outputFramesAvailable()
         if (outputFrames == 0) return
 
         val byteCount = outputFrames * channelCount * 2
         val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
 
         for (frame in 0 until outputFrames) {
-            linearPhaseEq.popFrame(linearPhasePop)
+            firEq.popFrame(firPop)
             // Apply gain and compute input-meter peak (same telemetry the
-            // min-phase path feeds).
+            // PURE_IIR path feeds).
             var inFramePeak = 0.0
             for (ch in 0 until channelCount) {
-                val v = linearPhasePop[ch] * gainLinear
+                val v = firPop[ch] * gainLinear
                 frameInput[ch] = v
                 val a = if (v >= 0) v else -v
                 if (a > inFramePeak) inFramePeak = a
             }
             AudioChainTelemetry.pushInputSample(inFramePeak)
 
-            // Same post-gain chain as the min-phase path: 2x upsample,
-            // limiter at 2x, 2x downsample, gated TPDF dither, int16
-            // truncation. Reusing the existing scratch arrays.
+            // Same post-gain chain as the PURE_IIR path: 2x upsample,
+            // Warmth + Air at 2x, limiter at 2x, 2x downsample, gated TPDF
+            // dither, int16 truncation. Reusing the existing scratch arrays.
             oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+            if (applyWarmth) {
+                saturator.processFrame(up0Frame)
+                saturator.processFrame(up1Frame)
+            }
+            if (applyAir) {
+                airExciter.processFrame(up0Frame)
+                airExciter.processFrame(up1Frame)
+            }
             limiter.processFrame(up0Frame, lim0Frame)
             limiter.processFrame(up1Frame, lim1Frame)
             oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -645,10 +1074,22 @@ class EqAudioProcessor : BaseAudioProcessor() {
             }
             AudioChainTelemetry.pushOutputSample(outFramePeak)
             AudioChainTelemetry.reductionDb = limiter.lastReductionDb
-            AudioChainTelemetry.fading = false  // no biquad cross-fade in linear-phase mode
+            AudioChainTelemetry.fading = false  // no biquad cross-fade in FIR mode
             AudioChainTelemetry.ditherActive = ditherEnabled
         }
         out.flip()
+
+        // Warmth/Air mirrors AFTER Pass 2, where those stages actually ran —
+        // mirroring up top with deEsser/leveler (which run in Pass 1) would
+        // publish a one-buffer-stale envelope, and on the first buffer after
+        // a 0→on toggle would leak the pre-toggle peak (pendingReset is only
+        // consumed inside processFrame). Zero-output buffers skip this via
+        // the early return above; the envelope doesn't advance without
+        // processFrame, so the last published value stays accurate.
+        AudioChainTelemetry.warmthActivity =
+            if (applyWarmth) saturator.currentActivityLin() else 0.0
+        AudioChainTelemetry.airActivity =
+            if (applyAir) airExciter.currentActivityLin() else 0.0
     }
 
     /**
@@ -682,42 +1123,62 @@ class EqAudioProcessor : BaseAudioProcessor() {
         }
         AudioChainTelemetry.incDrains()
 
-        val gainLinear = 10.0.pow(gainDb / 20.0)
+        val gainLinear = 10.0.pow(gainDb / 20.0) * sleepFadeLinear
         val invDrive = 32767.0
+        // Warmth/Air must keep running through the drain: the FIR engine
+        // buffers up to ~70 ms of REAL program audio upstream of the 2x
+        // nonlinear stages, and the upsampler's own delay lines always hold
+        // a pre-Warmth slice — draining without the stages would emit the
+        // final moments of every track dry (an audible level/tone step at
+        // track end with Warmth engaged).
+        val applyWarmth = saturator.currentLevel() > 0
+        val applyAir = airExciter.currentLevel() > 0
         // Post-gain chain delay at 1x rate. Common to both phase modes:
         // limiter.drainFrameCount is in 2x-rate frames (LA window in 2x
         // samples); divide by 2 for 1x equivalent. Add the oversampler's
         // combined up+down FIR group delay at 1x.
         val postGainDrain = oversampler.totalDelayFrames1x + limiter.drainFrameCount / 2
 
-        if (phaseModeLinear) {
-            // Linear-phase drain has two stages stacked back-to-back:
-            //   1) push zero frames into linearPhaseEq to flush any partial
-            //      accumulator chunk + the kernel's group delay (~46 ms).
-            //      Three FRAME_SIZE chunks of zeros covers a worst-case
-            //      partial accumulator (FRAME_SIZE-1 samples) + 2 chunks of
-            //      group delay flush + a chunk of slack.
+        if (phaseMode != PhaseMode.PURE_IIR) {
+            // FIR drain has two stages stacked back-to-back:
+            //   1) push zero frames into firEq to flush any partial input-
+            //      accumulator block + the convolver's FDL contribution.
+            //      FOUR blocks, not three: the 4096-tap kernel spans 4
+            //      partitions of 1024, and the last real block's
+            //      partition-3 contribution (taps 3072..4095 — the far
+            //      half of a LINEAR/MIXED symmetric kernel's post-peak
+            //      tail, ~23ms) only emerges after a 4th zero block.
+            //      Worst case: partial accumulator (BLOCK_SIZE-1) + 3
+            //      full partitions ≈ 4×BLOCK_SIZE.
             //   2) drain the post-gain chain (oversampler ↔ limiter) with
-            //      zero input, same as the min-phase drain below.
-            val zeroFramesIn = LinearPhaseEq.FRAME_SIZE * 3
+            //      zero input, same as the PURE_IIR drain below.
+            val zeroFramesIn = FirEq.BLOCK_SIZE * 4
             for (ch in 0 until channelCount) frameInput[ch] = 0.0
-            for (i in 0 until zeroFramesIn) linearPhaseEq.pushFrame(frameInput)
-            val linearOut = linearPhaseEq.outputFramesAvailable()
-            val totalDrainFrames = linearOut + postGainDrain
+            for (i in 0 until zeroFramesIn) firEq.pushFrame(frameInput)
+            val firOut = firEq.outputFramesAvailable()
+            val totalDrainFrames = firOut + postGainDrain
             AudioChainTelemetry.logEvent(
                 "eos_drain",
-                "linear: $linearOut + post: $postGainDrain @1x"
+                "fir: $firOut + post: $postGainDrain @1x"
             )
             val byteCount = totalDrainFrames * channelCount * 2
             if (byteCount <= 0) return
             val out = replaceOutputBuffer(byteCount).order(ByteOrder.nativeOrder())
-            // Stage 1: drain linearPhaseEq output through gain → post-gain chain.
-            for (frame in 0 until linearOut) {
-                linearPhaseEq.popFrame(linearPhasePop)
+            // Stage 1: drain firEq output through gain → post-gain chain.
+            for (frame in 0 until firOut) {
+                firEq.popFrame(firPop)
                 for (ch in 0 until channelCount) {
-                    frameInput[ch] = linearPhasePop[ch] * gainLinear
+                    frameInput[ch] = firPop[ch] * gainLinear
                 }
                 oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+                if (applyWarmth) {
+                    saturator.processFrame(up0Frame)
+                    saturator.processFrame(up1Frame)
+                }
+                if (applyAir) {
+                    airExciter.processFrame(up0Frame)
+                    airExciter.processFrame(up1Frame)
+                }
                 limiter.processFrame(up0Frame, lim0Frame)
                 limiter.processFrame(up1Frame, lim1Frame)
                 oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -728,10 +1189,20 @@ class EqAudioProcessor : BaseAudioProcessor() {
                     out.putShort(outI.toShort())
                 }
             }
-            // Stage 2: zero-input drain of the post-gain chain.
+            // Stage 2: zero-input drain of the post-gain chain. The
+            // upsampler's delay lines still hold pre-Warmth audio, so the
+            // nonlinear stages stay in the loop here too.
             for (ch in 0 until channelCount) frameInput[ch] = 0.0
             for (frame in 0 until postGainDrain) {
                 oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+                if (applyWarmth) {
+                    saturator.processFrame(up0Frame)
+                    saturator.processFrame(up1Frame)
+                }
+                if (applyAir) {
+                    airExciter.processFrame(up0Frame)
+                    airExciter.processFrame(up1Frame)
+                }
                 limiter.processFrame(up0Frame, lim0Frame)
                 limiter.processFrame(up1Frame, lim1Frame)
                 oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -746,7 +1217,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
             return
         }
 
-        // Min-phase drain — push zeros through oversampler ↔ limiter and emit.
+        // PURE_IIR drain — push zeros through oversampler ↔ limiter and emit.
         AudioChainTelemetry.logEvent("eos_drain", "$postGainDrain frames @1x")
         val byteCount = postGainDrain * channelCount * 2
         if (byteCount <= 0) return
@@ -759,6 +1230,14 @@ class EqAudioProcessor : BaseAudioProcessor() {
             // Same chain as the queueInput hot path, just with zero input.
             // Each call reads one stale frame off the back of the chain.
             oversampler.upsampleFrame(frameInput, up0Frame, up1Frame)
+            if (applyWarmth) {
+                saturator.processFrame(up0Frame)
+                saturator.processFrame(up1Frame)
+            }
+            if (applyAir) {
+                airExciter.processFrame(up0Frame)
+                airExciter.processFrame(up1Frame)
+            }
             limiter.processFrame(up0Frame, lim0Frame)
             limiter.processFrame(up1Frame, lim1Frame)
             oversampler.downsampleFrame(lim0Frame, lim1Frame, frameOutput)
@@ -787,5 +1266,13 @@ class EqAudioProcessor : BaseAudioProcessor() {
          * 44.1 / 48 kHz is 3 ms, inaudible.
          */
         const val FADE_LENGTH_SAMPLES = 2048
+
+        /**
+         * Pivot frequency for the tilt control's complementary shelf pair.
+         * ~700 Hz sits in the meat of speech formants — tilting around it
+         * trades "body" against "presence/air" symmetrically, which is the
+         * classic single-knob tone behavior the control is modeled on.
+         */
+        const val TILT_PIVOT_HZ = 700f
     }
 }

@@ -2,6 +2,2541 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.11.0 — Undo for bulk actions, waveform panel orientation (2026-07-16)
+
+The minor-bump release closing out the v0.11 UX era: everything since
+v0.10.31 ships under this tag, and main catches up to dev with it.
+
+- **Every bulk action has Undo.** The selection-mode sweeps (archive,
+  download, mark played, mark unplayed, queue) and the catalog cards'
+  feed/group-wide "Mark all played" all show a long-duration snackbar
+  with an Undo action, and undo is a real restore, not a re-toggle:
+  mark-played/unplayed capture each row's (position, duration,
+  lastPlayed) triple before overwriting — updatePosition writes all
+  three — and put back exactly what was there; rows the action created
+  return to never-played. Bulk archive restores each row's PRIOR
+  archivedAt (an already-archived row re-archived under Show-archived
+  keeps its original timestamp), and its download cleanup is deferred
+  until the undo window closes, so an undone archive is lossless.
+  Download/queue undos remove only what that action started — anything
+  already in flight or queued stays put.
+- **Waveform panel: fling, minimap, timestamps.** A quick pan release
+  now flings the window with the finger's exit velocity (exponential
+  decay, dead stop at either end — no bounce to misread as audio).
+  Along the bottom edge: a minimap of the whole episode with the
+  visible window highlighted and a live playhead dot, plus the window's
+  start/end media-time stamps in the corners — deep pans into a
+  two-hour sermon keep their bearings. Timestamps round to whole
+  seconds and ride a two-slot label cache + the text measurer's layout
+  cache, keeping the draw loop's steady state allocation-free.
+
+## v0.10.32 (shipped in v0.11.0) — Episode search reaches notes; unplayed chip retired (2026-07-16)
+
+Field feedback on v0.10.31's filter bar, same day it shipped.
+
+- **"Show played" moved out of Settings** (follow-up, same day): the
+  toggle only affects browsing the per-podcast list, so its switch now
+  lives where it acts — the Episodes screen's list menu (the swap-vert
+  menu grows a divider + "Show played" toggle under the sort options,
+  and the icon tints primary whenever ANY non-default view is active:
+  sorted or played-hidden). The Settings row is gone; the DataStore
+  setting underneath is unchanged, and the empty state points at the
+  menu when the filter leaves nothing.
+
+- **Unplayed chip removed** — played episodes auto-archive within days,
+  so a dedicated unplayed filter mostly duplicated the archive
+  machinery. The global "show played" toggle survives in Settings; the
+  episodes screen just stops re-selling it.
+- **Search bar, proper** — the freed row is now a full-width pill
+  (28dp-rounded OutlinedTextField) that searches titles, descriptions
+  (raw, deliberately — stripping HTML per keystroke isn't worth the
+  occasional markup hit), and the user's own note entries for this
+  feed's episodes. Notes load once per feed off IO (getAll + in-memory
+  group-by; a personal journal is a few hundred rows at most).
+- **Note hits explain themselves** — a row that surfaced only because a
+  note matched shows a tinted quote pill under its title: note glyph,
+  italic excerpt windowed around the hit, the matched run bolded in
+  primary. Title/description matches stay unadorned (the evidence is
+  already on the card).
+
+## v0.10.31 — Continue listening, unplayed chip, in-feed filter, more hold menus (2026-07-15)
+
+Second UX batch, building on v0.10.30's affordances — the four items the
+user picked off that entry's suggestions list. Ships as the v0.10.31 tag
+together with the two entries below.
+
+- **"Continue listening" card** — the most recent in-progress episode,
+  pinned above everything on the Catalog: artwork, title, minutes left,
+  a progress strip, and one tap from app open to resumed audio (resumes
+  via the same playEntity fallback chain the mini-player uses, then
+  opens the Player). Backed by a new `observeMostRecentInProgress()`
+  DAO query (in-progress = played, unarchived, short of the completion
+  window), so it renders off Room before any feed loads and its
+  progress creeps along with the 10s ticker. Shows "Now playing" with
+  the eq glyph when that episode is already live; hidden entirely when
+  nothing is mid-listen.
+- **Unplayed chip** — the episodes screen grew a filter bar under the
+  top bar: a FilterChip that surfaces the existing global "show played"
+  setting as a one-tap toggle (selected = unplayed only). Same switch
+  as Settings, now visible where it matters; the empty state explains
+  itself when the filter leaves nothing.
+- **In-feed title filter** — next to the chip, a compact text field
+  narrows the list to title matches (case-insensitive, title-only on
+  purpose — sermon titles carry the passage reference). Keyed per feed
+  so queries never leak across podcasts; composes with the unplayed
+  chip, archive visibility, and sort.
+- **Hold menus for the special cards** — group headers (CCM, John
+  Piper) get touch-and-hold: *Refresh these feeds* (per-child
+  refreshOne with one summary snackbar) and *Mark all played* (same
+  confirm dialog, now group-aware across all loaded children). The
+  gold Kabod card gets *Import pack…* (same SAF flow as the overflow)
+  and *Refresh packs*; the Device card gets *Add audio files…* — the
+  full picker + persistable-grant flow from DeviceFilesScreen, so
+  files land identically without opening the screen first.
+
+## v0.10.30 (shipped in v0.10.31) — Main-screen UX affordances (2026-07-15)
+
+Intuitiveness pass over the two browsing surfaces: the actions a podcast
+app is expected to have, where a thumb expects to find them.
+
+- **Episode sort, per feed** — swap-vert menu in the Episodes top bar:
+  Feed order (default — the RSS document's own sequence, which for kabod
+  packs is part order), Newest first, Oldest first. Persisted per feed
+  (a daily brief reads newest-first, a thru-the-Bible series
+  oldest-first) as one JSON object in DataStore; icon tints primary
+  while a non-default sort is active. Display-only by design: the
+  autoplay feed-walk runs on feed order + the direction setting, so
+  re-sorting the list never changes what plays next. Undated episodes
+  sink to the bottom, keeping their relative feed order (stable sort).
+- **Catalog cards: touch-and-hold context menu** — every podcast card
+  (top-level and group children) now opens a quick-action menu on
+  long-press, with the same haptic pulse as the app's other holds:
+  *Play newest episode* (by pubDate, straight to the player), *Refresh
+  this feed* (new `CatalogViewModel.refreshOne` — fetches just that
+  source and swaps its card in place), *Mark all played* (confirm
+  dialog first; the whole feed in one Room transaction so a
+  thousand-row archive doesn't jank), *Copy feed URL*.
+- **Pull-to-refresh on the catalog** — the standard reflex now drives
+  the same stale-while-revalidate refresh as the overflow item; the
+  indicator also reflects the background refresh already in flight on
+  cold start.
+- **Search is a visible top-bar icon** — finding an episode is a
+  first-class entry point; it was hiding in the overflow menu.
+- **Autoplay-direction wording** — the toggle's snackbar now says
+  "toward newer/older episodes" instead of "up/down the list", which
+  stopped being reliably true the moment the list became sortable.
+- **swap_vert_24** — sort glyph composed from the app's own
+  arrow_upward/arrow_downward paths so its stroke geometry matches the
+  autoplay-direction arrows it sits beside.
+
+## v0.10.29 (shipped in v0.10.31) — Read-ahead analyzer, scrubber redesign, end-of-playback fixes (2026-07-14)
+
+Background engine that scans an episode's audio ahead of playback and
+caches what the scrubber needs, plus the scrubber redesign that consumes
+it: replay heat as a real cold-to-hot heatmap, pause marks as whole-file
+cut marks. Same batch: a sweep over what happens when an episode reaches
+its natural end (advance, pause state, mark-played), and player-screen
+finishing touches (centered transport, sensitivity-change rescan hook).
+
+### Bug-hunt corrections (2026-07-15)
+
+A multi-agent bug hunt over the batch above surfaced eleven findings; six
+confirmed under adversarial verification, plus five more a session
+interruption left unadjudicated — all reviewed against the working tree
+and resolved here. Where a fix changed behavior the bullets below
+describe, the item here is authoritative (and those bullets are corrected
+in place).
+
+- **Analyzer scans local files only — it never streams.** The old
+  "progressive stream" fallback opened a second full-file HTTP fetch of
+  an episode that was still live-streaming and auto-downloading: exactly
+  the second-socket CDN contention `AUTOPLAY_DOWNLOAD_DELAY_MS` exists to
+  avoid (playback rebuffering, ~3x metered data), and a blocked network
+  read had no cancellation path off the single decode thread, so one
+  stalled CDN wedged every queued scan for the session. Now the scan
+  waits for the downloaded (or device `content://`) file — which playing
+  an episode produces within a minute anyway — and PlayerScreen re-fires
+  `ensureAnalyzed` when the download reaches COMPLETED. This one change
+  also closes the A→B transition-window bug (a fast advance scanned A's
+  audio under B's guid — it needed the streaming path) and the "one
+  transient stream failure poisons the guid for the whole session" trap.
+- **Heat baseline is the median, full stop.** Capping it at the
+  theoretical 1x rate broke below 1x: a single 0.75x/0.5x pass (both
+  quick-chip speeds) accrues MORE ticks per bucket than the 1x estimate,
+  so `min()` undercut the real single-pass rate and painted the whole bar
+  hot after one listen. The median already self-calibrates to any speed;
+  the cap only ever equaled it at ≥1x and only ever hurt below.
+- **Cut marks share the playhead's denominator.** Ticks map against the
+  player's duration now (like the thumb and every seek), not the scan's
+  own measured duration — otherwise on a VBR file whose two durations
+  disagree, every tick sat visibly ahead of or behind the audible pause
+  the playhead was sweeping. The waveform panel's playhead is clamped to
+  the envelope range for the same mismatch, so it pins at the end instead
+  of scrolling off-screen in the tail.
+- **Room re-emissions are de-duplicated.** `analysisFor` applies
+  `distinctUntilChanged`, so a sibling episode's scan landing (it
+  invalidates the whole table) no longer hands the panel a "new" but
+  byte-identical analysis that reset its viewport and killed a pan/drag
+  in flight — `EpisodeAnalysisEntity`'s content-equality equals finally
+  does something.
+- **Scrubber drag state can't leak across a gesture restart.** A key
+  change mid-drag (durationMs on a track transition, markers when the
+  transcript scan lands) cancelled the gesture coroutine past its reset
+  paths, freezing the thumb and swallowing the next tap; the handler now
+  clears isDragging/dragFrac up front on every (re)start.
+- **Marker label bubble placed physically.** `AbsoluteAlignment.TopLeft`
+  + `absoluteOffset` (and a dp lift, not raw px) so the bubble tracks its
+  tick under an RTL layout direction and doesn't collapse onto the track
+  at high density.
+- **End-of-stream save can't be un-pinned.** `saveEnded` pins the final
+  position to the duration, but the racing save-on-pause — and a later
+  onTaskRemoved/onDestroy save — could overwrite it short on a
+  duration-overstating source, un-marking a finished episode; those saves
+  now defer to `saveEnded` whenever the player is parked at STATE_ENDED.
+
+Known and deliberately left: the process-scoped PlayerController keeps
+the MediaSessionService bound for the process lifetime, so a paused
+swipe-from-recents no longer tears the service down promptly (it lingers
+until the OS reclaims the cached process). That is the direct cost of the
+autoplay-survives-the-activity change below; the wake lock is still
+released on pause, so it is a lingering-resource nuance, not a leak.
+Flagged for on-device evaluation rather than reverting a working feature.
+
+- **EpisodeAudioAnalyzer** — the app's first offline decode path:
+  MediaExtractor + MediaCodec, front-to-back scan producing (a) audible-
+  pause spans and (b) a 2000-bucket max-|amplitude| waveform envelope,
+  normalized to the file's peak. All scans share one dedicated
+  THREAD_PRIORITY_LOWEST thread (serialized, so live playback never
+  competes), memory stays flat via a 250 ms slice table max-pooled at
+  the end (never holds full PCM), and MP3s get the same
+  c2.android.mp3.decoder avoidance EqRenderersFactory already needed.
+- **Pause marks agree with the live tap** — detection borrows
+  PauseTapProcessor's exact sensitivity tables (thresholdFor widened to
+  public alongside the already-public minSilenceMsFor) and runs on the
+  same raw-source signal, so precomputed marks and live-recorded marks
+  land in the same place. Rows remember the sensitivity they were
+  scanned at; a changed setting triggers a rescan instead of serving
+  disagreeing marks.
+- **episode_analysis table (DB v18 → v19)** — guid-keyed like every
+  per-episode table; pause spans as `start:end` CSV, envelope as a flat
+  2 KB BLOB (one unsigned byte per bucket — CSV would triple the row
+  for a payload nobody reads in a shell). Only completed scans persist;
+  derived analytics, excluded from backup like episode_heat.
+- **EpisodeAnalysisRepository** — `analysisFor(guid)` Flow (deduplicated
+  with distinctUntilChanged) + `ensureAnalyzed(guid)` with per-guid job
+  dedup, per-session failure memory, and local-only source resolution
+  (downloaded .bin via completedFile, SAF content:// device files; no
+  network stream — see the 2026-07-15 corrections). Failure is silent by
+  contract: no analysis just means the UI draws no marks. Exposed as
+  `LofiPodApp.episodeAnalysis`.
+- **Scrubber replay heat, redrawn as a real heatmap** — the per-bucket
+  alpha rectangles (which rendered the 10s-tick vs. bucket-width
+  sampling beat as stripes) give way to one horizontal-gradient ramp,
+  deep blue through green/yellow/orange to red. Counts are smoothed
+  with a small triangular kernel, the single-pass baseline is
+  subtracted (median of visited buckets, which self-calibrates to
+  playback speed), and the remainder normalizes per episode — a plain
+  front-to-back listen leaves the track bare; only re-listened ranges
+  heat up, hottest always full red.
+- **Pause marks as cut marks** — silence boundaries draw as thin
+  neutral ticks overshooting the band top and bottom, editing-timeline
+  style. The analyzer's whole-file spans take over the layer when a scan
+  exists (mapped against the PLAYER's duration, the playhead's own
+  denominator); the live tap's session-limited spans remain the fallback.
+- **Player-screen wiring** — PlayerScreen fires `ensureAnalyzed` for
+  the playing episode (re-fired when its download reaches COMPLETED, so
+  the local scan starts the moment the file lands) and collects
+  `analysisFor` into the scrubber; no scan, no marks, no fuss.
+- **Expanded waveform view (hold the playback bar)** — press-and-hold
+  on the scrubber (never a seek, never a pause) swaps the artwork
+  square for WaveformPanel: the analyzer's 2000-bucket envelope at a
+  fixed 3dp-per-bucket magnification, pannable by dragging the wave,
+  with a draggable playhead line that seeks once on release. The window
+  auto-follows playback until the first pan; a recenter button snaps
+  back. Close via the X or the system back gesture (a tightly-gated
+  BackHandler, so feed-aware back is untouched otherwise). Playhead
+  motion rides the frame clock into a draw-phase-only state read —
+  zero recomposition per frame — and a pending/failed scan shows a
+  plain "Analyzing audio..." line so the hold always lands visibly.
+- **Feed-next advance can actually find its feed** — the STATE_ENDED
+  walk did a bare in-memory `cached(feedUrl)` lookup, which is empty
+  when the episode outlived the catalog visit that primed it and ALWAYS
+  empty for kabod:// packs (their synthetic feeds hydrate only through
+  KabodAssetLoader). Now it awaits disk hydration and falls back to the
+  kabod loader's `loadIntoCache`, same as every other cached() consumer.
+  Every dead end in the advance chain also drops an `autoplay_stop`
+  breadcrumb into the playback diagnostics ring (plus a snackbar for
+  the user-visible cases) — "autoplay just stops sometimes" is now a
+  readable trail instead of a bare return.
+- **End of stream is an honest pause** — ExoPlayer parks at ENDED with
+  playWhenReady still true, which kept every intent-to-play consumer
+  armed: the stall watchdog read the position pinned at the duration as
+  a stall (arm C would eventually seek backwards, yank the player out
+  of ENDED, and loop the tail), and onTaskRemoved read the session as
+  active. The service now drops playWhenReady at STATE_ENDED (play icon
+  flips everywhere; the advance calls play() a beat later exactly as if
+  tapped), and the watchdog treats ENDED like a pause regardless of
+  which side wins the propagation race.
+- **Mark-played hardening** — STATE_ENDED writes a final position pinned
+  to the best-known duration (a BUFFERING→ENDED hop fires no
+  save-on-pause, leaving the row a ticker write short of the completion
+  window), and both periodic saves stop letting a TIME_UNSET duration
+  snapshot clobber a known durationMs — one zero write was enough to
+  un-mark a completed episode.
+- **Autoplay advance survives the activity** — PlayerController is
+  process-scoped now (lives on LofiPodApp; MainActivity borrows it and
+  no longer releases it in onDestroy). The STATE_ENDED advance, the
+  confirmation countdown, and the sleep timer all run in the
+  controller's scope, so an activity-owned controller silently beheaded
+  them on swipe-from-recents while the service played on — the episode
+  just ended and nothing followed. connect() gained a reconnection
+  contract (healthy connection short-circuits; dead session rebuilds)
+  so activity recreation can't stack a second MediaController with a
+  doubled listener.
+- **Play button truly centered** — the transport row's SpaceEvenly hands
+  out equal gaps, but the fixed widths flanking the play button were
+  asymmetric (pause-skip + seek-back left vs. seek-forward alone right),
+  pushing it right of the screen midline. An empty slot mirroring the
+  pause-skip's footprint on the far right makes the flanks weigh the
+  same, so the equal-gap arithmetic centers the button at every window
+  width — compact ones included, where the gaps shrink symmetrically.
+- **Sensitivity changes re-scan the analyzer row** — committing a new
+  pause-skip sensitivity from the player's long-press dialog now pokes
+  ensureAnalyzed after the DataStore write lands (cancelling any
+  mid-decode pass first), so the scrubber's precomputed cut marks track
+  the live tap's level immediately instead of waiting for the next
+  screen entry.
+- **Catalog: added Compelled** — the conversion-testimony show (Paul
+  Hastings, `feeds.megaphone.fm/compelled`, iTunes 1412479643), inserted
+  directly after Mike Winger's BibleThinker in the catalog order.
+  displayName null so the feed's own "Compelled - Christian Stories &
+  Testimonies" title wins; feed artwork resolves, so no override.
+
+## v0.10.28 — Voice-suite activity visualizer (2026-07-12)
+
+The four voice stages are deliberately subtle, so it was never clear from
+listening whether they were actually doing anything. Now you can see it:
+
+- **EQ screen: live activity row** under the Voice suite buttons — four
+  mini-meters on the existing 250 ms telemetry tick. De-esser shows
+  high-band gain reduction (0..-10 dB, fills during sibilance, error
+  color). Leveler shows ride gain as a diverging bar (-10..+10 dB around
+  a center tick). Warmth and Air show the level of the wet signal each
+  stage is mixing in (-50..-10 dBFS fill range). A stage that's off reads
+  "off"; on-but-idle reads empty/"idle" — visually distinct.
+- **New activity meters in Saturator + AirExciter** — decayed peak
+  (~0.4 s half-life) of |wet - dry| actually applied, accumulated as
+  plain audio-thread state in the 2x hot loop (one subtract/abs/compare
+  per sample, no volatile writes there) and mirrored once per buffer by
+  EqAudioProcessor into two new AudioChainTelemetry fields
+  (warmthActivity / airActivity), matching the deEsser/leveler mirrors.
+- **All DSP-stopping transitions now park the four voice mirrors at
+  idle** (new AudioChainTelemetry.parkVoiceMirrorsIdle(), called from
+  chainReset/onReset/passthrough-enter) — previously the deesser/leveler
+  mirrors held their last DSP-buffer values forever if the chain dropped
+  to passthrough mid-word or a flush wasn't followed by another buffer
+  (pause after seek, stop at track end). In the FIR path the new
+  warmth/air mirrors publish after Pass 2 (where those stages run), so
+  they're never one buffer stale and a 0-to-on toggle can't leak the
+  pre-toggle envelope peak.
+- **Diagnostics Live section** gains warmth_act / air_act dBFS lines next
+  to deesser_GR / leveler_gain.
+
+## v0.10.27 — Bug-hunt sweep over v0.10.21–v0.10.26 (2026-07-11)
+
+Dedicated 4-angle hunt (audio-chain integration, player state machine,
+UI/persistence, fresh-eyes full-diff) plus Android Lint over everything
+since v0.10.20. Eleven fixes:
+
+- **Note dialog no longer disarms the sleep timer** — the pause-while-
+  writing bracket routed through the timer-cancelling pause() wrapper;
+  new pauseTransient() preserves an armed timer (jotting a note while
+  falling asleep used to mean playback ran all night).
+- **Retired-pack scripture rows purged** — Canon Browse showed dead
+  verse coverage for the deleted Leviticus packs forever; cleanup now
+  removes their episode_scripture rows, and Backup restore skips
+  RETIRED_PACK_IDS instead of resurrecting them.
+- **Queue hygiene at STATE_ENDED hoisted** — canon-order advance and
+  sleep-timer suppression both skipped the queue removal that only
+  lived inside advanceToNextInQueue; finished episodes replayed from
+  the queue. Removal now happens first, regardless of strategy. Plus a
+  2s guard against a Minutes-fire racing the episode's natural end.
+- **Passthrough exit does a FULL chainReset** — only firEq was reset,
+  so the oversampler/limiter emitted a ~5ms fragment of pre-bypass
+  audio on Hold-to-A/B release.
+- **Sleep-fade passthrough clause REMOVED** — the copy loop already
+  fades, and forcing the DSP path gave FLAT+FIR users a ~23ms convolver
+  re-prime dropout at fade onset. (The passthrough-loop multiply is the
+  load-bearing fade path for FLAT configs now — keep it.)
+- **PauseTap anchor race fenced** — a stale never-adopted anchor post
+  (speed change) could be adopted after a later seek's flush, offsetting
+  every recorded pause; adoption now requires a post newer than the
+  flush-time generation.
+- **FIR EOS drain: 4 zero blocks, not 3** — the 4096-tap linear kernel
+  spans 4 partitions; 3 truncated the final ~23ms of every track in
+  LINEAR/MIXED modes.
+- Sleep chip moved to its own centered line (the end-of-episode label
+  overlaid the speed chip at 360dp); heatmap state resets on episode
+  transition (collectAsState retained the previous episode's heat);
+  steep-slope chip no longer flashes "12" on entry; scripture-marker
+  building wrapped so a pathological transcript degrades to no markers
+  instead of crashing.
+
+Accepted (documented): BT/notification pause keeps a Minutes timer
+armed (it stands down safely if it expires while paused); drain tail
+un-faded if a track ends mid-fade (~6ms, rare); promotion-note casing
+follows the app's promotion phrase; same-ms note-PK collision;
+FirEq.release-kills-synthesis-scope flagged as a pre-existing latent
+(predates this work, needs its own investigation). Lint: all findings
+in touched files are the pre-existing UnstableApi/house-pattern noise.
+
+## v0.10.26 (shipped in v0.10.27) — Study sheets, structured scrubber, sleep timer, chapters, description search (2026-07-11)
+
+The "study instrument" batch — planned by three parallel design agents,
+coded one feature at a time, 2-angle reviewed before commit.
+
+### Study sheets (share/StudySheet.kt, StudySheetUi.kt)
+
+One tap (share icon on the Notes screen top bar + the Player Notes tab)
+exports a markdown study sheet: title/speaker/date/scripture header,
+the user's notes in POSITION order with timestamps, and — when a
+transcript is cached — optional inclusion modes chosen in a dialog:
+notes only / notes + cited paragraphs / notes + full transcript
+(citations by paragraph number in full mode). Paragraph matching is a
+proportional position estimate (transcripts carry no timestamps) and
+says so, per-citation and in the footer. Shared via the existing
+FileProvider (new study_sheets cache-path) with EXTRA_TEXT fallback
+under 200KB (Binder limit guard). Device files degrade to title+notes.
+
+### Structured scrubber (StructuredScrubber.kt + episode_heat)
+
+The Player's Slider is replaced (live mode; preview keeps a read-only
+Slider) by a 48dp-touch/30dp-visual track with three layers:
+- REPLAY HEATMAP: new episode_heat table (200 CSV buckets/episode, DB
+  v17→v18 migration), incremented by the service's 10s save ticker
+  (listen ticks only; mutex-serialized), sqrt-normalized color overlay,
+  live-updating via Room Flow.
+- PAUSE TICKS: PauseTapProcessor gained snapshotPauses(); paragraph
+  boundaries render as ticks (progressively, as decoded this session).
+- SCRIPTURE MARKERS: chapter:verse landmarks from the CACHED transcript
+  (never fetches): written citations via ScriptureTagger.findAllRefs +
+  spoken "chapter nineteen, verse two" phrasing via the new
+  SpokenScriptureExtractor (number-words to 99, book-scoped via kabod
+  metadata, rolling last-chapter for bare "verse N"). Paragraph-
+  proportional positions — landmarks, not dividers; tap seeks + shows
+  a label bubble; capped at 40, cross-book refs excluded when the
+  episode's book is known.
+Drag scrubs (seek fires on release only), tap seeks, marker taps win
+within 16dp.
+
+### Sleep timer (fade via EqAudioProcessor.setSleepFade)
+
+Player overflow → 15/30/45/60 min or End of episode. Final 30s is a
+half-cosine fade stepped at 4Hz through a new sleepFadeLinear volatile,
+folded into ALL output paths — the three DSP gain sites AND the
+bit-exact passthrough copy loop (per-episode EQ-disable bypasses the
+DSP path entirely, so the fold alone would have missed it). On fire:
+pause, fade reset to 1.0, pipeline flush (skipped at natural episode
+end so ENDED state survives). End-of-episode mode recomputes remaining
+each tick (seeks self-correct, speed-aware); it also suppresses
+auto-advance, and arming suppresses the autoplay-confirm beeps.
+Manual pause cancels the timer (togglePlay now routes through the
+pause() wrapper — review caught it bypassing); non-wrapper pauses
+(audio focus, BT) hold the fade and stand down quietly if the timer
+expires while paused. Countdown chip next to the speed chip.
+
+### Chapters + description search
+
+- ID3 CHAP chapters: read SERVICE-side from the real player's track
+  formats (Format.metadata doesn't survive MediaController marshaling)
+  via the new ChapterBridge; surfaced in PlayerState.chapters and
+  rendered as a tappable list in the Details tab. ≥2 chapters required
+  (degenerate single-CHAP encoders ignored). MP3/ID3 only by design.
+- Search now also matches episode DESCRIPTIONS: stripped + lowercased
+  index built once per cache snapshot off-main (new util/Html.kt
+  stripHtmlToPlainText — the extracted third copy of the strip chain),
+  two-pass so title hits never lose cap space, "in description" badge.
+
+### Post-review fixes (2-angle)
+
+Scrubber thumb no longer snaps to the playhead mid-drag (dragFrac was
+cleared by every position poll); gesture math uses the pointer scope's
+own size; sleep-timer contract violations fixed (see above); heat
+recorder mutex-serialized (overlapping IO ticks could cross-contaminate
+episode rows across a transition).
+
+## v0.10.25 (shipped in v0.10.27) — Bulk unplayed/queue, smart resume, mark-a-moment, transcript search (2026-07-11)
+
+Quality-of-life batch + the first "next plane" feature (transcript
+search). Note: bulk mark-PLAYED already existed (selection-mode
+check-circle icon, v0.10.15); this round adds its missing counterparts.
+
+- **Bulk actions**: selection-mode top bar gains a labeled overflow menu
+  with "Mark as unplayed" (position→0, duration PRESERVED — read from
+  the DB, not the possibly-stale UI map) and "Add to queue" (skips
+  already-queued; snackbar counts).
+- **Smart resume** (Settings → Playback, default on): resuming after a
+  pause steps back by an away-time curve — nothing under 15s, 3s after
+  a minute, 8s/15s/30s at 10min/1h/8h, 45s beyond — in-session (pause
+  tracked at the listener level, so notification/BT/focus-loss pauses
+  count) AND across sessions (derived from lastPlayedMillis in
+  playEpisode). Note-jumps/checkpoint jumps stay exact (forcedStartMs
+  bypass), and programmatic play() resumes (note-dialog close) are
+  deliberately exact too — the back-step belongs to the explicit
+  resume tap only.
+- **Mark this moment**: one-tap note_add button in the player top bar
+  drops a "Marked while listening" note at the current position — no
+  keyboard, built for driving; expand it later from the Notes tab like
+  any note (jumpable, editable, shareable).
+- **Transcript search**: the Search screen now also searches INSIDE
+  every transcript ever fetched (Room LIKE over the stored paragraphs,
+  debounced 250ms, 3+ chars). Hits render under an "In transcripts"
+  header with a word-boundary snippet and term highlight; tap opens
+  the episode's transcript. Entirely on-device.
+- Post-review fixes: bulk mark-unplayed no longer zeroes a DB-known
+  duration (would have permanently broken isPlayed/auto-archive for
+  the row); play() back-step removed (note-dialog resume desync);
+  overflow menu Box-anchored; snippet highlight uses the trimmed
+  needle. Accepted: SQL LIKE wildcard needles (%/_) over-match then
+  drop — quirky but harmless.
+
+## v0.10.24 (shipped in v0.10.27) — Chanski Leviticus pack v2: refs re-based on SermonAudio (2026-07-11)
+
+Audit of the Mark Chanski Leviticus pack against SermonAudio series
+38602 (the source of truth), same rigor as the Romans audit:
+
+- **Structure: exact match.** 37 sermons on SermonAudio; our 37 IDs,
+  dates (including the doubled 1994-09-25 for #4/#5), order, and
+  durations all agree. All audio URLs verified live
+  (cloud.sermonaudio.com, HEAD 200 spot checks).
+- **Scripture refs: v1 was wrong and is now fixed.** v1 inferred every
+  passage from preaching cadence ("the source page does not annotate
+  individual passages") — but SermonAudio's per-SERMON pages do carry a
+  Bible-text field, and against it our mid-series inference ran 1-2
+  chapters behind (18 conflicts, #8 through #35). v2 policy: adopt
+  SermonAudio's annotation verbatim where present (raw value preserved
+  per item in a new sourceBibleText field — parser-safe, schema-v2
+  additive); interpolate from surrounding annotated sermons where the
+  tag is book-only (#21, #25, #27, #32-34); derive from unambiguous
+  titles where SermonAudio has no tag (#4 Peace Offering → Lev 3, #11
+  Clean/Unclean → Lev 11, #13 Birth → Lev 12). Two source-tag oddities
+  reconciled as spans instead of silently overruled: #8 "Strange Fire"
+  (SA says 9:1-10; Nadab and Abihu is 10:1 → displayed 9–10) and #14
+  "Leprosy #1" (SA says 14; the laws start at 13 → displayed 13–14).
+  The v1 "chapter 6-7-9 gaps + #30 out of order" artifacts dissolve
+  under the corrected mapping (9 is covered by #8/#9; #29-31 are all
+  Lev 25 around the Jubilee sermon; 6-7 genuinely have no dedicated
+  sermon in the source's tagging).
+- **Enrichment:** channel gains kabod:speakerBio (pastor of Harbor
+  Reformed Baptist Church, Holland MI since 1994; author of Manly
+  Dominion / Womanly Dominion / Encouragement; hermeneutics instructor
+  at Reformed Baptist Seminary — from his SermonAudio speaker page);
+  contentNotes rewritten with the full mapping policy + audit trail;
+  packVersion 2. Church name confirmed as SermonAudio lists it
+  ("Harbor Reformed Baptist Church"). No new per-item descriptions
+  exist at the source (SA's blurbs match the ones we already carry).
+  Titles kept normalized (SA's own are inconsistent, including a
+  'Levititus' typo on #36).
+- Existing installs pick up the corrected refs on next launch —
+  installBundled always re-upserts episode_kabod rows.
+
+## v0.10.23 (shipped in v0.10.27) — Device files, gold Kabod card, pack curation + audit, sources viewer, BMC (2026-07-11)
+
+### Device files (new source)
+
+The user's phone is now a catalog source. A cool-slate "brushed steel"
+card pinned at the very top shows the device's own name (user-set name
+via Settings.Global "device_name", hardware model fallback) with a phone
+glyph; it opens the new Device files screen. Files are picked via SAF
+(OpenMultipleDocuments, audio/*), persisted as content:// URIs + display
+names in DataStore (JSON array — keeps insertion order) with persistable
+read grants, and play through the ordinary playEpisode path: synthetic
+Episode with guid = the content URI, feedUrl = device://files. That
+means resume positions, checkpoints, notes, EQ and the voice suite all
+work on device files for free. LofiPodDownloader.start now ignores
+non-http audio URLs so the auto-download machinery can't choke on
+content:// (previously it would have thrown inside OkHttp and left a
+spurious FAILED row).
+
+### Gold Kabod card ("bars of gold")
+
+The individual pack cards no longer stack up at the top of the catalog —
+one bullion-gold card (vertical gold gradient anchored on the app's
+MostExcellentGold, ingot-stack glyph, the same Stam-script kabod
+lettering as the pack chips at 34sp) now fronts for all of them, with
+"N packs · M items" and an aggregate new-count chip. Tapping opens the
+new Kabod packs screen, which renders the familiar KabodPackRow cards
+(now internal, shared with the catalog) and routes into the same
+episodes screen as before.
+
+### Pack curation + Romans audit
+
+- Leviticus curation per user direction: kept Mark Chanski's 37-part
+  series; deleted the William Still (23), Cities Church/Parnell (8) and
+  Andy Davis (1) packs — assets removed, Sources.KABOD_PACKS trimmed,
+  and a RETIRED_PACK_IDS cleanup in KabodAssetLoader.installBundled
+  purges kabod_pack / episode_kabod / podcast_source rows on existing
+  installs (explicit ID list so user-IMPORTED packs are never touched;
+  per-episode user data intentionally survives).
+- Piper Romans pack audited against desiringgod.org as source of truth:
+  a full 9-page pagination walk of the series listing yields exactly
+  225 sermons; the pack's 225 items match title-for-title and
+  date-for-date at every position (itemized diff, zero content
+  mismatches — the only variance is DG page slugs vs audio-file
+  slugs, which is DG's own naming, not drift). First/last sermons match
+  (1998-04-26 "The Author of the Greatest Letter Ever Written" →
+  2006-12-24 "Jesus Christ in the Book of Romans"), and the two v2
+  additions (#45 James excursus, #178 TCT vision-cast) are confirmed
+  present in DG's own series index. No pack changes needed.
+- Kabod vocabulary: user-facing "entries" renamed to "items" (catalog
+  card subtitle + import toast).
+
+### Post-review hardening (2-angle review before commit)
+
+- Back from the Player while a device file plays now returns to the
+  Device files screen — the feed-aware back handler was pushing an
+  episodes route for device://files that can never load (permanent
+  "Loading feed…" strand).
+- Removing a device file now releases its persisted SAF grant (Android
+  caps per-app grants; heavy churn would eventually make new picks fail
+  silently).
+- The Player's download button is hidden for device files (it was a
+  guaranteed no-op after the downloader's scheme guard); the Details
+  tab says "a file from this device" instead of telling the user to
+  refresh a nonexistent feed; the gold card shows no counts until the
+  cache hydrates instead of "0 packs · 0 items".
+- Accepted: stale queue entries from retired packs still play (https
+  URLs are real; only title/art are blank); Sources-viewer titles
+  resolve lazily from the cache.
+
+### Sources viewer + support
+
+- Settings → About gains "View sources document (read-only)": a new
+  Sources screen renders the compiled-in Sources canon (kabod packs +
+  podcast feeds with groups), selectable text, monospace URLs.
+- Settings gains a "Support the developer" section — the Buy-Me-a-Coffee
+  button ported style-for-style from Kontx (same buymeacoffee.com/
+  dev.laroix URL, BMC brand-yellow #FFDD57 outlined button, 10dp
+  corners, ACTION_VIEW). The button label keeps Kontx's coffee-cup
+  glyph as part of the ported brand style — the one deliberate
+  exception to the no-emoji UI rule.
+
+## v0.10.22 (shipped in v0.10.27) — Voice suite: de-esser, warmth, leveler, air + tone-filter refinements (2026-07-11)
+
+Premium "studio suite" pass on the audio engine — four new staged voice
+effects in the RX/Nectar/Ozone vein, plus refinements to the v0.10.20
+tone-filter stage. All new stages are global (like the tone filters),
+staged off/L1-L3 via the same StagedLevelButton language as skip-silence,
+persisted in DataStore, rehydrated at service boot, covered by both
+"Reset audio to defaults" paths, and identical across all four phase
+modes. Off = bit-identical passthrough (all four are folded into
+isPassthroughEffective).
+
+### Voice suite (new EqScreen section, below Tone filters)
+
+- **De-esser** (`DeEsser.kt`) — split-band sibilance tamer. Level-
+  independent detector: fast linked-channel envelopes of the >5.6 kHz
+  sidechain vs the full band; when the sibilance band rises within
+  margin (3/6/9 dB by level) of the full-band level, the high band is
+  compressed back at 1 dB/dB, capped at 4/7/10 dB. Reduction applies
+  only above the complementary split (`low + (x-low)*gain`), so it's
+  transparent between esses. Zero latency, pre-EQ.
+- **Warmth** (`Saturator.kt`) — tube-style soft saturation:
+  `tanh(drive*(x + even*x^2))`, peak-normalized, dry/wet mixed
+  (drive 1.6/2.6/4.0). Runs INSIDE the chain's existing 2x oversampling
+  envelope (upsample -> warmth -> air -> limiter -> downsample), so
+  harmonics land below the 2x Nyquist and the downsampler's anti-alias
+  FIR removes anything above the source band — no aliasing, zero added
+  latency, no extra oversampler. Per-channel 8 Hz DC trap on the wet
+  path kills the x^2 rectification offset.
+- **Leveler** (`Leveler.kt`) — slow vocal rider toward ~-20 dBFS:
+  ±4/7/10 dB range, gain slews at single-digit dB/sec (down ~3x faster
+  than up), FREEZES below -50 dBFS so pauses and noise floors never get
+  ridden up, 300 ms warmup hold after every flush. Word-level dynamics
+  untouched; only episode-scale loudness drift is flattened. Pre-EQ,
+  upstream of the de-esser.
+- **Air** (`AirExciter.kt`) — top-octave exciter: complementary split at
+  7.2 kHz, high band through a unity-normalized tanh, mixed back at
+  0.14/0.25/0.38. Small signals get a clean ~1-3 dB lift; louder highs
+  sprout low-order harmonics ("detail," not plain treble). Also inside
+  the 2x envelope; sits after Warmth and downstream of the de-esser so
+  tamed sibilance isn't re-excited.
+
+Chain order is now: DC blocker -> tone filters -> Leveler -> De-esser ->
+EQ (IIR or FIR) -> gain -> 2x { Warmth -> Air -> limiter } -> dither.
+The IIR hot loop gained a pass-0 (decode whole frame first) because the
+leveler/de-esser detectors are linked across channels; the FIR path
+already frame-batched. Diagnostics: live `deesser_GR` / `leveler_gain`
+readouts + voice-suite levels in the chain spec (AudioChainTelemetry
+gained two mirrors, updated once per buffer).
+
+### Tone-filter refinements
+
+- **24 dB/oct low-cut slope option** — second cascaded Butterworth
+  section (= 4th-order Linkwitz-Riley) behind a 12/24 chip pair that
+  appears while a low cut is engaged. Default stays 12.
+- **High-cut options extended** with 14 kHz and 16 kHz chips (gentler
+  hiss shaving than the old 12 k ceiling); the chip row is now
+  horizontally scrollable so six chips fit narrow screens.
+- **Settings-screen "Reset audio to defaults" gap fixed** — it now
+  resets the DC blocker, tone filters and voice suite like the
+  Audio-diagnostics reset always did (previously those survived a
+  "reset to defaults", which was a lie of omission).
+
+### Post-review hardening (3-angle DSP/UI/perf review before commit)
+
+- **Warmth normalization bug (caught in review):** the first cut
+  normalized the waveshaper by peak (`/tanh(d)`), whose small-signal
+  gain is `d/tanh(d)` — a +2/+6/+11 dB loudness boost by level that
+  would have parked the limiter in constant gain reduction. Now
+  slope-normalized (`/d`): program level passes at unity, only peaks
+  round off — actual tube behavior, loudness-neutral.
+- **EOS drain now runs Warmth/Air** (all three drain loops): the FIR
+  engine buffers up to ~70 ms of real audio UPSTREAM of the 2x stages,
+  so draining without them emitted the end of every track dry.
+- Leveler target recalibrated -20 → -16 dBFS (peak-envelope reference
+  reads several dB above RMS; -20 pulled well-mastered content
+  audibly quieter instead of being transparent).
+- Voice-suite buttons: `next` level computed from the live processor
+  (not the DataStore mirror, which lags a round-trip — rapid taps were
+  dropping cycles), and `collectAsState(initial=)` seeds from the live
+  level so the buttons don't flash "off" on screen entry.
+- Accepted trade-offs from review: the IIR hot loop's new two-pass
+  shape costs ~0.03% CPU even with voice stages off (kept — fusing
+  back would duplicate the crossfade block); 24 dB/oct slope choice is
+  remembered across low-cut off/on (a preference, not a bug); de-esser
+  band-vs-band detector can miss a sibilant masked by a loud vowel
+  (inherent to the level-independent design).
+
+## v0.10.21 (shipped in v0.10.27) — Pause-skip, promotion notes, quick-scroll, playback-order fixes (2026-07-11)
+
+Five asks in one pass: a new transport control, notes-system integration
+for promotions, list ergonomics, and a sweep of playback-consistency bugs
+(Kabod vs streams).
+
+### Skip back to the previous audible pause
+
+New transport button (left of Back-15s): tap seeks to just before the end
+of the most recent silence gap — sentence/paragraph boundary — so "wait,
+what did he just say" costs one tap instead of scrubbing. Long-press opens
+a sensitivity dialog (1..5, default 3 ≈ 0.7 s gaps; persisted in
+DataStore, mirrored live into the processor).
+
+Mechanics: new `PauseTapProcessor` — a passthrough observer FIRST in the
+audio chain (decoder → PauseTap → EQ → SkipSilence → Sonic → sink). It
+peak-scans 16-bit PCM frames, reconstructs media positions as
+anchor + framesSinceFlush/sampleRate (anchors posted from PlaybackService
+on seeks / item transitions / READY; adopted at the first buffer after a
+flush), and keeps a ring of the last 512 pauses. Sitting before Sonic
+makes it speed-immune; before the silence-skipper makes it drop-immune.
+Repeated taps walk back through successive pauses (1.2 s guard window).
+Unanchored stretches record nothing and the button falls back to the
+plain 15 s skip — degrade, never lie.
+
+### Promotions surface in Notes
+
+Promoting an episode to Excellent or Most-excellent now auto-drops a
+canned note ("Promoted to Excellent" / "Promoted to most-excellent") at
+the live playback position (or the saved resume position from the episode
+list). Both heart sites (Player top bar, episode-row heart) write it.
+Demotions write nothing; the notes stay as history.
+
+### Notes ordering
+
+`observeForEpisode` now ORDER BY createdAt DESC — Player Notes tab and
+per-episode Notes screen show the newest note first, matching the global
+notes browser.
+
+### Quick-scroll in the episodes list
+
+New `FastScroller` overlay (reusable BoxScope composable): slim thumb on
+the right edge, fades in with scrolling, draggable to jump proportionally
+through the list; while dragging, a bubble shows the episode's publish
+month (MM/yy — kabod parts without pubDates show "n / total"). Hidden
+under 25 items.
+
+### Playback-order and speed fixes (the irksome ones)
+
+- **Stale-speed leak (prime stall suspect):** leaving a feed that has a
+  per-podcast `defaultSpeed` for one that doesn't never reset the player —
+  `playbackParameters` survive `setMediaItem`, so audio kept the old 2.0×
+  while `AudioChainTelemetry.playbackSpeed` was reset to 1.0×. That
+  telemetry drives the PerfHint wall-clock budget, so the OS got a budget
+  2× too generous → downclock → AudioTrack-underrun stalls, exactly at
+  Kabod↔stream transitions. Both `playEpisode` and the cold-start restore
+  now reset the *player* too (guarded to skip the call when already 1.0×).
+- **Kabod part-order autoplay survives cache misses:** the part-order
+  advance silently fell through to the pubDate walk (arbitrary part on
+  multi-preacher packs) whenever the pack wasn't in the in-memory repo
+  cache (service outliving UI, process restart). Now hydrates via
+  `kabodLoader.loadIntoCache`, and never pubDate-walks a numbered series
+  even if the pack is unreadable.
+- **Canon autoplay no longer hijacks numbered series:** finishing Kabod
+  part N with canon-order autoplay enabled jumped cross-pack to
+  `nextInCanon` instead of part N+1. Canon advance now defers to part
+  order when the finished episode carries a partNumber.
+
+### Post-review hardening (8-angle self-review before commit)
+
+- Transport row switched to fillMaxWidth + SpaceEvenly (fixed spacers
+  overflowed 320dp-wide/split-screen windows and clipped the outer
+  buttons).
+- FastScroller drag now maps over the same denominator as the thumb
+  (total − visible), killing a top-of-track dead zone and the
+  thumb-snap on release.
+- Pause-skip guard trimmed 1.2s → 400ms: the just-passed pause is
+  reachable on the first tap (landing before a pause's end already
+  self-excludes it on repeat taps, so the big guard was overkill).
+- Pause-skip: single-pass frame copy via a scratch array (the
+  SilenceSkipping-style rewind+re-read doubled audio-thread buffer
+  reads for no reason in a pure passthrough); pause query snapshots
+  under the lock and scans outside it; dropped a redundant
+  `awaitingAnchor` flag; re-anchor on onPlaybackParametersChanged so a
+  speed-change pipeline rebuild can't leave the tap dormant; dialog
+  labels pull from the same ms table the detector runs on.
+- Promotion notes: at most one per tier per episode (heart-cycling laps
+  would otherwise pile up duplicates); Player-screen fallback position
+  now uses the episode's saved resume position, matching the episode
+  list; per-feed speed application centralized in one helper
+  (playEpisode + cold-start restore shared diverging copies).
+- Canon autoplay end-of-pack regression (introduced mid-pass, caught in
+  review): canon now yields to Kabod part order only while a next part
+  actually exists, so finishing the last part still continues to the
+  next passage in canon. Part lookup also skips DB-metadata rows missing
+  from the loaded pack asset instead of halting the series at the gap.
+- "Reset audio to defaults" (Settings + Audio diagnostics) now also
+  resets pause-skip sensitivity.
+
+Known-but-unchanged (deliberate): Kabod part-advance stays gated behind
+the same `autoPlayNextInFeed` toggle as regular feeds (one autoplay
+concept); guid namespacing across user-imported packs is still by
+convention only (a collision guard would orphan existing state — revisit
+if user-authored packs become a thing); promotion auto-note dedup means
+a re-promotion after a demotion won't stamp a fresh note (the original
+anointment note is the record).
+
+## v0.10.20 — Tune-up pass: tone filters, shared-note deep links, Kabod parity (2026-06-09)
+
+Broad pass across the four asks: Kabod/RSS feature parity, richer audio
+tuning, shareable notes, and a round of bug fixes.
+
+### Tone filters (FabFilter-lite corrective stage)
+
+New zero-latency IIR stage in `EqAudioProcessor`, upstream of the EQ in
+**every** phase mode (it runs as min-phase biquads outside the FIR engine,
+which is exactly how zero-latency mode works in desktop parametrics):
+
+  - **Low cut** — 12 dB/oct Butterworth high-pass at 40/60/80/120 Hz
+    (rumble, plosive thumps).
+  - **High cut** — 12 dB/oct low-pass at 8/10/12 kHz (tape hiss on the
+    older sermon archives).
+  - **Tilt** — ±6 dB complementary shelf pair pivoting at 700 Hz; one
+    slider from darker to brighter.
+
+Biquad grew `setHighpass` / `setLowpass` / `setLowShelf` / `setHighShelf`
+(RBJ cookbook, same Nyquist guards as `setPeaking`, so 16 kHz-mono Kabod
+sources stay well-behaved). Global like the DC blocker; persisted in
+DataStore; rehydrated by PlaybackService; included in the diagnostics
+screen's "Reset audio to defaults"; UI in Audio Fine-tuning above Phase
+mode. Off = bit-identical passthrough (folded into the
+isPassthroughEffective check).
+
+### Shared-note deep links
+
+Share icon on every note card (per-episode Notes screen, Player Notes tab,
+global notes browser). Shares the note text + episode title + position +
+a `lofipod://note?feed=…&guid=…&t=…` link. On a receiving LofiPod:
+
+  - Direct link tap (ACTION_VIEW, new `lofipod` scheme intent-filter), or
+  - share the message INTO LofiPod (ACTION_SEND text/plain — the URI is
+    extracted from the surrounding prose, for messengers that don't
+    linkify custom schemes).
+
+Resolution: in-memory cache → disk hydration → kabod asset loader → live
+one-off feed fetch. Plays the episode at the note's position and routes to
+the Player. Misses surface a toast instead of failing silently.
+
+### Kabod / RSS parity
+
+  - **Autoplay advances by part order.** `advanceToNextInQueue` now
+    consults `episode_kabod.partNumber` when the finished episode belongs
+    to a pack: next unplayed part wins, end-of-pack stops cleanly. The
+    pubDate walk was wrong for multi-preacher packs where dates aren't
+    monotonic with the passage order — this was the biggest "packs play
+    differently" gap.
+  - **Part + scripture on episode rows.** "Part N · <passage>" meta line
+    in EpisodesScreen for pack episodes (was buried in the Player Details
+    tab).
+  - **`enclosure length` parsed** by KabodPackParser (RSS parser already
+    did) so future packs can ship sizes without the HTTP probe.
+  - **EpisodesScreen survives cold entry.** Was a one-shot cache read that
+    rendered a permanent "Feed not loaded." if the screen was reached
+    before the catalog hydrated (deep links, process-death restore). Now
+    awaits disk hydration and falls back to the kabod asset loader.
+
+### Bug fixes
+
+  - **Canon-order autoplay never armed the confirmation window** —
+    `tryAdvanceToNextInCanon` didn't set `lastPlayWasAutoplay`, so canon
+    advances skipped the 3:10 beep/auto-pause guard AND the delayed
+    auto-download path. Both now engage.
+  - **Blank artist line after retry / note-jump / canon advance** — those
+    reconstruct-from-state paths passed `podcastTitle = ""`. New
+    `podcastTitleFor(feedUrl)` resolves from the live cache, then the
+    hardcoded sources list.
+  - **Cold-start restore ignored per-podcast default speed** — resuming
+    via the restored mini-player ran at 1.0× until manually re-set.
+  - **Stale legacy global EQ rehydrate removed** from PlaybackService —
+    it read the pre-v0.6.12 `eq_bands` DataStore key (which nothing
+    writes anymore), so an ancient curve could audibly flash between
+    service start and the first track transition.
+  - **EqScreen copy** claimed "EQ + master gain are global" — wrong since
+    the v0.6.12 per-podcast reshape. Rewritten.
+  - SCREEN_MAP.md refreshed (CatalogScreen/catalog, missing routes, deep
+    link section).
+
+## v0.10.19 — Kabod playback fixes: cleartext HTTP whitelist + Nyquist guard (2026-05-15)
+
+Two field-bug fixes from the v0.10.18 content drop. Both shipped together
+because both surface the same way (Kabod Pack episode fails to play) on
+different code paths.
+
+### 1. William Still pack: cleartext HTTP block
+
+**Symptom.** `monergism-still-leviticus` and `monergism-still-hosea`
+episodes fail with:
+
+```
+HttpDataSourceException: java.io.IOException:
+  java.util.concurrent.ExecutionException:
+  java.net.UnknownHostException ...
+```
+
+The `UnknownHostException` is a misleading surface error — DNS for
+`tapesfromscotland.org` resolves fine on every other client. The real
+cause is Android's API 28+ default that rejects cleartext (HTTP)
+network traffic unless explicitly whitelisted. Both Still packs source
+their audio from `http://tapesfromscotland.org/Audio*/N.mp3`; the host's
+HTTPS endpoint serves an expired certificate (verified via curl —
+`SEC_E_CERT_EXPIRED`) so we can't simply rewrite the URLs.
+
+**Fix.** New file `app/src/main/res/xml/network_security_config.xml`
+declares HTTPS-only as the global default plus a single domain-config
+exception for `tapesfromscotland.org` (and subdomains) marked
+`cleartextTrafficPermitted="true"`. The other six kabod packs use HTTPS
+already and are unaffected by the global default. Manifest's
+`<application>` element gets `android:networkSecurityConfig=
+"@xml/network_security_config"`.
+
+### 2. Kabod packs only worked in PURE_IIR mode (FIR/MIN_FIR/MIXED broken)
+
+**Symptom.** With phase mode set to anything other than PURE_IIR
+(`MIN_FIR`, `LINEAR_FIR`, `MIXED`), Kabod Pack episodes failed silently
+to produce audio while standard RSS-feed podcasts played fine. The user
+was effectively pinned to PURE_IIR for sermon listening.
+
+**Root cause.** Kabod packs ship a far wider audio-format range than
+typical RSS podcasts:
+
+  - `sermonaudio-chanski-leviticus` — 16 kHz mono
+  - `monergism-still-*`             — 22.05 kHz mono
+  - `desiringgod-piper-romans`      — 32 kHz stereo
+  - `citieschurch-parnell-leviticus`— 44.1 kHz joint-stereo
+  - `sermonaudio-allen-ezekiel`     — 48 kHz stereo
+
+LofiPod's 10-band EQ has fixed centers `31, 62, 125, 250, 500, 1000,
+2000, 4000, 8000, 16000` Hz. At 16 kHz source rate the Nyquist limit
+is 8 kHz — so the **8 kHz band sits AT Nyquist** and the **16 kHz band
+sits ABOVE Nyquist**. At 22.05 kHz the 16 kHz band is above Nyquist.
+The RBJ peaking-EQ cookbook formulas degenerate above Nyquist:
+
+  - `w0 = 2π · centerHz / sampleRate` exceeds π
+  - `cos(w0)` and `sin(w0)` wrap to negative or zero
+  - `alpha = sin(w0) / (2Q)` flips sign or vanishes
+  - resulting biquad coefficients describe a non-physical response
+
+**Why PURE_IIR survived but FIR broke.** At LofiPod's default FLAT
+preset (`gainDb = 0` on every band) the cookbook math has a happy
+coincidence: `A = 10^(0/40) = 1`, so `b·A == b/A` exactly, the
+numerator and denominator polynomials cancel coefficient-for-coefficient,
+and the biquad reduces to identity (1·x + 0·z⁻¹ + 0·z⁻²). The FIR
+kernel synthesis (`FirEq.biquadMagSquared`) **also** returns 1.0 in
+this degenerate case, so FLAT-preset users wouldn't have noticed.
+
+But the FIR kernel synthesis evaluates the magnitude across the
+entire `[0, π]` frequency axis (not just at `w0`). For any non-flat
+band whose centerHz exceeds Nyquist, the cookbook coefficients produce
+finite but extreme magnitude values across the audible band — those
+fold into the kernel via the IFFT and propagate as silence-or-noise
+through the UPC convolver. PURE_IIR's biquad cascade sees the same
+ill-conditioned coefficients but its time-domain feedback path tends
+to converge to a near-passthrough state when state isn't being driven
+hard, so it sounded "fine" even when mathematically wrong.
+
+**Fix.** Both `Biquad.setPeaking` (the IIR coefficient setter) and
+`FirEq.biquadMagSquared` (the FIR kernel-synthesis magnitude target)
+now early-return identity / unity respectively when
+`centerHz · 2 >= sampleRate`. The check is a single multiplication
+and one branch — immeasurable cost. Bypassed bands carry zero
+information about the source's spectrum since the source has no
+content above its own Nyquist limit anyway, so this is a defensive
+guard with no audible side-effect on the legitimate response.
+
+### Files touched
+
+  - `app/src/main/res/xml/network_security_config.xml` (new)
+  - `app/src/main/AndroidManifest.xml` (added `networkSecurityConfig`
+    attribute on `<application>`)
+  - `app/src/main/java/com/lofipod/app/audio/Biquad.kt` (Nyquist guard
+    in `setPeaking`)
+  - `app/src/main/java/com/lofipod/app/audio/FirEq.kt` (Nyquist guard
+    in `biquadMagSquared`)
+
+## Content — Kabod packs: 6 new packs + Romans v2 + schema v2 (2026-05-14)
+
+Content drop, no code-path changes beyond a 6-line additive list extension
+in `Sources.kt`. Catalog grows from 1 bundled Kabod Pack to 7.
+
+### New packs (six pastors × three Old-Testament books)
+
+  - `monergism-still-leviticus` — William Still, *Expositions on Leviticus*,
+    Gilcomston South Church of Scotland (Aberdeen). 23 expositions covering
+    Leviticus 1–27. Audio courtesy of Tapes from Scotland; Monergism index.
+  - `monergism-still-hosea` — William Still, *Exposition of Hosea*, same
+    pulpit. 11 expositions covering Hosea 1–14.
+  - `sermonaudio-chanski-leviticus` — Mark Chanski, *Leviticus Series*,
+    Harbor Reformed Baptist Church (Holland, MI). 37 verse-by-verse sermons,
+    Aug 1994 – Dec 1995. Per-sermon scripture refs mapped from the
+    chronological cadence (the SermonAudio catalog doesn't annotate
+    individual passages); two banner entries dropped, "Laws Concerning
+    Birth"/"Laws Concerning Leprosy" picked up under chronological numbering
+    rather than the title's mis-leading `#1` suffix.
+  - `sermonaudio-allen-ezekiel` — Joe W. Allen Jr., *Ezekiel*, Grace Family
+    Fellowship Reformed Baptist (Russell Springs, KY). 43 English sermons,
+    May 2020 – May 2021, covering Ezekiel 1–48. The source page advertises
+    77; that count includes 33 ASL duplicates, filtered out via
+    `language=eng` in the enclosure URL. The 43-vs-77 audit signal is
+    captured in `<kabod:partTotal>` / `<kabod:advertisedTotal>` per the v2
+    schema below.
+  - `twojourneys-davis-leviticus` — Andy Davis, *Leviticus: God's Demand for
+    Holiness in a Sin Defiled World*, First Baptist Church (Durham, NC).
+    Single-session whole-book class rather than a verse-by-verse series;
+    bundled as a one-item Kabod Pack so the catalog UI carries the same
+    metadata richness as multi-part packs.
+  - `citieschurch-parnell-leviticus` — Jonathan Parnell + 4 guests
+    (Joe Rigney, Mike Schumann, David Mathis, Kenneth Ortiz), *Leviticus
+    (Fall 2022)*, Cities Church (St. Paul, MN). 8 sermons across the whole
+    book, 2 Oct – 20 Nov 2022. Per-item `<kabod:speaker>` overrides flag
+    each guest preacher.
+
+All six wired into `Sources.KABOD_PACKS` (additive list extension; no
+behaviour change). `KabodAssetLoader.installBundled()` picks them up at
+next launch (idempotent on `packId`).
+
+### Romans pack v1 → v2
+
+`desiringgod-piper-romans.kabod` shipped at 223 sermons in v1, but the
+canonical desiringgod.org series page lists 225. The two missing:
+
+  - **Does James Contradict Paul?** (1999-08-08, James 2:14–26) — preached
+    inside the Romans series as an excursus on faith vs. works; the source
+    page indexes it under Romans even though its primary text is James.
+    Inserted at chronological position #45.
+  - **Treasuring Christ Together: The Vision and Its Cost** (2004-12-05,
+    Romans 15:14–21) — Bethlehem's multi-site / church-plant vision-cast,
+    preached from Romans 15. Inserted at chronological position #178.
+
+After insertion, all `partNumber`s renumbered 1..225 in document order.
+Pack-level `<kabod:packVersion>` bumped to 2; `<kabod:contentNotes>`
+records the v1→v2 delta inline.
+
+### Kabod schema v2 (additive, parser-safe)
+
+The KabodPackParser uses `else -> XmlUtils.skip(parser)` for unknown
+namespace elements (KabodPackParser.kt:97, 206), so additive `kabod:` tags
+are silently ignored by the current parser and safe to author today.
+
+New channel-level fields, all under the same `https://lofipod.app/ns/kabod/1`
+namespace (no breaking bump to `/2`):
+
+  - `<kabod:packSchemaVersion>` — `"2"` once any v2 field is present.
+  - `<kabod:packVersion>` / `<kabod:packRevisionDate>` — content revision +
+    last-edit date so backups can detect drift.
+  - `<kabod:church>` / `<kabod:churchLocation>` — where the series was
+    preached. Surfaces context the bare `<itunes:author>` line can't.
+  - `<kabod:partTotal>` / `<kabod:advertisedTotal>` — the audit pair. A
+    mismatch records that the source claims more (or fewer) entries than
+    the pack actually bundles. This is exactly the signal that would have
+    flagged Romans v1's 223-vs-225 gap from the start.
+  - `<kabod:audioHost>` — primary audio CDN/host (informational; helps
+    users plan offline downloads on metered networks).
+  - `<kabod:contentNotes>` — free-form maintenance notes (v1/v2 history,
+    why counts diverge, dating placeholders, etc.).
+
+The parser doesn't read these *yet* — they're authoring-time documentation
++ a forward-compatible foundation. A future parser pass could surface the
+v2 fields (e.g. show `<kabod:church>` as a subtitle in the catalog, or
+warn when `partTotal != advertisedTotal`) without any pack edits.
+
+`KABOD_SCHEMA.md` (gitignored, on-disk reference) updated to document the
+v2 fields, the namespace-vs-application versioning split, and an
+authoring checklist.
+
+### Why `partTotal` matters
+
+Single-source fact: a series is verse-by-verse complete iff every chapter
+of its bookOfBible has at least one item whose `<kabod:scriptureRef>`
+covers it. With `<kabod:partTotal>` and `<kabod:advertisedTotal>` both
+present, an offline auditor can cross-reference the actual `<item>` count
+against the source's claim and flag drift before users notice. The Romans
+223-vs-225 gap survived a previous build pass; the v2 audit pair is the
+fence to keep it from happening again.
+
+### Files touched
+
+  - `app/src/main/assets/kabod/desiringgod-piper-romans.kabod` (v1 → v2,
+    +2 sermons, partNumber renumbered 1..225)
+  - `app/src/main/assets/kabod/monergism-still-leviticus.kabod` (new)
+  - `app/src/main/assets/kabod/monergism-still-hosea.kabod` (new)
+  - `app/src/main/assets/kabod/sermonaudio-chanski-leviticus.kabod` (new)
+  - `app/src/main/assets/kabod/sermonaudio-allen-ezekiel.kabod` (new)
+  - `app/src/main/assets/kabod/twojourneys-davis-leviticus.kabod` (new)
+  - `app/src/main/assets/kabod/citieschurch-parnell-leviticus.kabod` (new)
+  - `app/src/main/java/com/lofipod/app/data/Sources.kt` (+6 SourceEntry
+    rows in KABOD_PACKS — purely additive list extension)
+  - `KABOD_SCHEMA.md` (gitignored; v2 fields + versioning policy + author
+    checklist)
+  - `tools/_kabod-gen/generate_packs.py` (gitignored; one-off generator
+    script that produced the pack outputs from cached source-site HTML)
+
+## v0.10.17 — Kabod chip: real Stam font (Culmus Stam Ashkenaz CLM) (2026-05-14)
+
+User feedback on v0.10.16: the hand-drawn Compose Canvas glyph looked
+amateurish. Fair call — a single-purpose geometric reconstruction of
+four letters can't match a font designed by a sofer. Swapping in a
+real Stam font.
+
+### Vendored Stam Ashkenaz CLM from Culmus
+
+`app/src/main/res/font/stam_ashkenaz_clm.ttf` — pulled from Culmus
+0.133 (https://culmus.sourceforge.io/), unmodified, ~15 KB. Designed
+by Yoram Gnat 2007–2010.
+
+License: GNU GPL v2 with the standard font embedding exception that
+explicitly permits embedding unmodified fonts in any document/app
+without GPL contamination. See `STAM_LICENSE.md` in the repo root for
+the full attribution + license text.
+
+The font ships authentic tagin (תגין) — the three-pronged kether
+crowns on the canonical "shatnez gatz" letters (שעטנז גץ), plus the
+identifying thorns / kotzin on dalet, bet, etc. Exactly the
+sofer-quill aesthetic the Kabod Pack chip was trying to reach.
+
+### Code changes
+
+`CatalogScreen.kt`:
+  - Added `stamHebrewFamily = FontFamily(Font(R.font.stam_ashkenaz_clm))`
+    at module scope so the FontFamily is constructed once.
+  - The kabod chip's `Text("כבוד")` now passes `fontFamily =
+    stamHebrewFamily` and bumps `fontSize` from 14 → 16 sp to give the
+    detail in the Stam letterforms room to read.
+  - Removed v0.10.16's `KabodStamGlyph` composable + `drawKaf` /
+    `drawBet` / `drawVav` / `drawDalet` / `drawTagin` helpers and
+    their `Color` / `Path` / `Stroke*` / `DrawScope` / `Canvas`
+    imports. ~200 lines net deletion despite gaining the font.
+
+### Files touched
+
+  - `app/src/main/res/font/stam_ashkenaz_clm.ttf` (new — vendored font)
+  - `STAM_LICENSE.md` (new — attribution at repo root)
+  - `app/src/main/java/com/lofipod/app/ui/screens/CatalogScreen.kt`
+
+## v0.10.16 — Kabod chip: hand-drawn Stam glyph with tagin (2026-05-14)
+
+The Kabod Pack badge previously rendered the Hebrew word כבוד via the
+Android system font fallback (Noto Sans Hebrew). Clean print typography
+but missing the tagin (תגין / kether crowns) that mark Stam (סת"ם)
+sofer-style sacred-text writing — the visual tradition the Kabod Pack
+naming gestures toward.
+
+Android ships no Stam font, and no permissively-licensed Hebrew Stam
+font is available via Google Fonts / Material's font path, so we draw
+the four letters and their crowns as Compose Canvas paths. Stylised,
+not authentic ksav ari — but unmistakably "this is a sacred-text word,
+not chip filler."
+
+### Drawing details
+
+`KabodStamGlyph` composable in CatalogScreen.kt. Single Canvas, RTL
+positioning (kaf rightmost, dalet leftmost), per-letter helper
+functions for the four shapes:
+
+  - **drawKaf** — open on the left, smooth bottom corner (StrokeJoin.Round)
+  - **drawBet** — same C-shape as kaf but with the bottom-right kotzo
+    thorn and miter joins for the sharp bet corners
+  - **drawVav** — narrow single vertical stroke with small flag at top
+  - **drawDalet** — Γ-shape (top + right side only) with the top-right
+    kotzo thorn that distinguishes dalet from resh
+
+`drawTagin` paints three small zigzag crowns across each letter's top
+edge — vertical stem + filled triangular flag curling up-left, matching
+the traditional sofer-quill ornament. Vav gets 1 crown instead of 3
+since it's narrow.
+
+Stroke weights, gap proportions, and crown sizes are all derived from
+the Canvas height so the glyph scales cleanly if the chip is resized.
+
+### Why not a font file
+
+Considered: Culmus's Stam Ashkenaz CLM (GPL with font exception, safe
+for a sideloaded app) and Stam Sefarad CLM. Both would render proper
+ksav and authentic tagin. Trade-off: ~150-300 KB per font file in the
+APK + a font-loading code path. For a single 4-letter glyph on one
+chip in the catalog, the Canvas approach is the simpler answer.
+
+If the Hebrew vocabulary expands beyond this chip in a future tag,
+revisit the font-file path — the Canvas hand-drawing scales poorly.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/ui/screens/CatalogScreen.kt`
+
+## v0.10.15 — UI: Home to far-left, EpisodesScreen + NotesBrowser bulk-select (2026-05-14)
+
+Three user-driven UI changes. No playback-pipeline changes.
+
+### 1. PlayerScreen: Home icon moves to navigationIcon (far left)
+
+Previously Home (one-tap-to-Catalog, added v0.10.9) sat in the actions
+row between Heart and My Lists. The down-chevron back button held the
+navigationIcon slot. Per user direction:
+
+  - Home now occupies the navigationIcon slot (leftmost in the top bar).
+  - The down-chevron back button is removed entirely.
+  - Tap Home → Catalog. Back gesture → episodes/{currentFeed} (feed-aware).
+
+To preserve the v0.10.12 feed-aware-back behavior without the visible
+chevron, MainActivity gains a second BackHandler block scoped to the
+"player" route that calls `feedAwareBackFromPlayer(nav,
+playerState.currentFeedUrl)`. The existing BackHandler for
+non-primary routes stays. The two `enabled` predicates are mutually
+exclusive so exactly one handler fires per back press.
+
+### 2. EpisodesScreen: speed icon removed; long-press bulk-select added
+
+  - Per-podcast default-speed icon removed from the top bar. The
+    `DefaultSpeedDialog` composable is also removed (it was the only
+    consumer). Stored override in `podcast_state.defaultSpeed` is still
+    respected by `PlayerController.playEpisode` if previously set —
+    there's just no in-app UI to edit it now. Restore from git history
+    if a future entry point is wanted.
+  - Long-press any episode row → enters selection mode. Long-press
+    additional rows or tap-with-selection-active → toggles each row's
+    membership. Selected rows show a check glyph in the title row + a
+    `tertiaryContainer` background tint.
+  - Top bar transforms while selection non-empty:
+    `[X clear] "N selected" | [Archive] [Download] [Mark played]`
+  - Bulk actions (one-direction; no toggle):
+    - **Archive** — sets `archivedAt = now` for each selected; also
+      removes any extant downloads (matches the per-row archive behavior).
+    - **Download** — starts a download for each selected episode that
+      isn't already QUEUED/DOWNLOADING/COMPLETED. Manual user intent,
+      so we use the inline-start path (no autoplay 15s delayed-fire);
+      also clears any auto_download flag so the finished-TTL sweep
+      doesn't auto-remove the user's explicit choice.
+    - **Mark played** — pins `position = duration` so the isPlayed
+      check returns true and rows fade / line-through.
+  - System back gesture exits selection mode (BackHandler) rather than
+    popping the screen.
+  - The card's interaction model uses Compose's `combinedClickable` —
+    one onClick + onLongClick path replaces the previous two-step
+    expand-only behavior. Title tap still independently routes to
+    preview when not in selection mode.
+
+### 3. NotesBrowserScreen: long-press bulk-select + bulk-delete
+
+The global notes browser previously had only a "play" affordance per
+card (the play_circle_24 icon → jumpToNotePosition). Per-episode
+NotesScreen and PlayerScreen's Notes tab already had play / edit /
+delete per row. The global browser had no delete path at all — to
+delete a note the user had to drill into the episode's NotesScreen
+and find the row.
+
+Added long-press selection + bulk-delete:
+
+  - Long-press a card → enter selection mode.
+  - Tap-with-selection-active or long-press additional cards → toggle
+    membership.
+  - Top bar transforms while selection non-empty:
+    `[X clear] "N selected" | [Delete (red)]`
+  - Tap Delete → confirmation dialog ("Delete N notes? This can't be
+    undone."). Confirm → loops `EpisodeNoteEntryDao.delete(guid,
+    createdAt)` for each selected key. The per-row dao has no
+    multi-delete; the loop is fine for typical bulk-select counts.
+  - Local `entries` list is filtered after the delete completes so the
+    LazyColumn reflects the change immediately (no DAO observe path
+    here — it's a snapshot list).
+  - System back exits selection mode.
+
+Selection key shape: `"guid@createdAt"` (matches the LazyColumn key
++ the composite primary key in `episode_note_entry`). Decomposed at
+delete-time via `lastIndexOf('@')`.
+
+The per-episode NotesScreen + PlayerScreen Notes tab still have their
+existing per-row delete affordance and weren't touched in this pass.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/ui/screens/PlayerScreen.kt`
+  - `app/src/main/java/com/lofipod/app/ui/MainActivity.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/EpisodesScreen.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/NotesBrowserScreen.kt`
+
+## v0.10.14 — Auto-download from autoplay: delayed-fire instead of deferred (2026-05-14)
+
+User report: after v0.10.12 / v0.10.13 stabilised playback, the
+autoplay-induced auto-download wasn't firing for screen-off sessions.
+
+**Root cause.** v0.10.12 introduced a defer-on-screen-off branch in
+playEpisode that upserted the auto_download row but skipped the inline
+`app.downloadsApi.start(ep)`, relying on `fireDeferredAutoDownload` to
+pick it up on next track change or STATE_ENDED. On a 30-minute episode
+played screen-off, that meant the download didn't START until the
+episode ENDED — the user finished listening to an episode they never
+had offline. The intent of auto-download (offline for scrub / re-listen)
+was defeated.
+
+**Fix.** Replace the "defer entirely" branch with a "delay slightly"
+branch. Autoplay-induced plays now schedule the download for
+`AUTOPLAY_DOWNLOAD_DELAY_MS` (15s) after `playEpisode` — long enough for
+the streaming socket to ramp + DSP chain to settle past the initial-
+buffer cost spike, short enough that a typical podcast episode is
+downloaded well before the user finishes listening. Manual user-tap
+plays remain inline-start with no delay.
+
+The scheduled job is cancel-and-replace per controller: a fast skip-next
+cancels the pending fire and reassigns to the new episode. The previous
+episode's `auto_download` row stays put and is picked up by
+`fireDeferredAutoDownload(outgoingId)` on the transition or by
+`fireDeferredAutoDownloadOrphans` on next connect.
+
+Re-check at fire time: if the user manually started / completed / removed
+the download during the 15s window, the scheduled fire is a no-op
+(`auto_download_delayed_skip` instead of `auto_download_delayed_fire`).
+
+`pendingAutoDownloadJob` + `pendingAutoDownloadGuid` are torn down in
+`PlayerController.release()` so a leftover schedule from a destroyed
+activity can't fire against a stale `app.downloadsApi`.
+
+### New diagnostics events
+
+  - `auto_download_delayed_fire` — autoplay-induced download started after the 15s settle.
+  - `auto_download_delayed_skip` — scheduled fire bailed because download was already in flight / completed / manually started in the interim.
+
+The v0.10.12 `auto_download_deferred` identifier is removed from active
+code; HELP_TEXT keeps a one-line historical note so anyone reading
+older logs can still decode it.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/AudioDiagnosticsScreen.kt`
+
+## v0.10.13 — Field-log-driven playback fixes (2026-05-14)
+
+User-provided logcat (`LofiPod log 7d4b926806be.txt`) exposed three
+distinct bugs the v0.10.12 diagnostics pass would have caught but
+weren't directly addressed. Fixing them all here, plus codec-selector
+mitigation for the kernel-layer audio HAL stalls observed in the same
+log.
+
+### Fix #1: Autoplay-confirmation timer was silently broken by its own beep
+
+**Symptom** (log lines 619-660): at T=60s into an autoplay window, the
+first beep fired, BeepPlayer.duckedBeep called `player.pause()` to
+silence the podcast under the beep tone, the pause traversed
+MediaController IPC to MediaSession, and our own
+`AutoplayConfirmCallback.onPlayerCommandRequest` intercepted it as if
+it were a remote BT/notification press — fired
+`confirmAutoplayContinuation`, cancelled the timer job, which
+propagated into the in-flight beep coroutine as JobCancellationException
+("Piezo beep failed; skipping audio strike"). The pause was denied
+(RESULT_INFO_SKIPPED), Media3's SessionResult Bundle construction failed
+its internal assertion ("Ignoring malformed Bundle for SessionResult"),
+and the podcast continued playing under a half-played beep.
+
+**Net effect since the autoplay-confirmation feature shipped:** every
+autoplay-induced episode was uninterruptible after the first beep at
+T=60s. Beep #2 / #3 and the T=190s auto-pause never fired. Battery
+drained overnight on long episode chains.
+
+**Fix** (PlaybackService.kt): gate the autoplay-confirm intercept on
+`controller.uid != Process.myUid()`. Our own MediaController's pauses
+(BeepPlayer, togglePlay, the timer's own auto-pause, any future
+internal path) now always pass through to default Media3 handling.
+Only true remote controllers (BT, vehicle, system notification) trigger
+the autoplay-confirm intercept.
+
+Also logs `autoplay_confirm_remote` to AppDiagnostics when a remote
+intercept fires, so back-end triage can see what remote controller
+triggered a confirmation (uid + package name).
+
+### Fix #2: FATAL crash on activity destroy ("Service not registered")
+
+**Symptom** (log lines 9-25): on activity destroy after a particular
+playback session, `PlayerController.release()` called
+`controller?.release()`, which inside Media3's MediaControllerImplBase
+called `ContextImpl.unbindService`, which threw
+`IllegalArgumentException: Service not registered` — known Media3 race
+on the service binding teardown path.
+
+**Fix** (PlayerController.kt): wrap both `controller?.removeListener` and
+`controller?.release()` in try/catch. We're tearing down the activity
+anyway; the framework's accounting is already screwed at that point.
+Log to AppDiagnostics under `controller_release_failed` so we can see
+how often this still fires post-fix.
+
+### Fix #3: AudioTrack underruns invisible to the diagnostics surface
+
+**Symptom** (log lines 607-775, 90+ seconds of sustained underruns): the
+user's reported 3-5s playback loop showed up at the kernel audio HAL
+layer as repeated `AudioTrack: getTimestamp_l device stall time
+corrected using current time` messages at 3-9 second intervals, plus
+MP3 decoder bookkeeping confusion. None of this surfaced on our
+diagnostics screen — we were only watching ExoPlayer's BUFFERING<->READY
+state at the renderer layer.
+
+**Fix** (PlaybackService.kt): added an `AnalyticsListener` to the
+ExoPlayer instance with overrides for `onAudioUnderrun`,
+`onAudioSinkError`, `onAudioCodecError`, and `onAudioDecoderInitialized`.
+Underruns are aggregated into 30-second windows (matching arm C's window
++ wake-lock oscillation window) so a chronic storm produces one entry
+per window with count + worst-elapsed-feed-gap, not one per underrun.
+
+New event identifiers:
+  - `audio_underrun_window`: N underruns in 30s, worst gap M ms, buffer K ms.
+  - `audio_sink_error`: DefaultAudioSink threw.
+  - `audio_codec_error`: MediaCodec threw.
+  - `audio_decoder_init`: which decoder Media3 picked (lets us verify Fix #4 took effect).
+
+### Fix #4: Software MP3 decoder preference (`c2.android.mp3.decoder` bookkeeping bugs)
+
+**Symptom** (log lines 683-691, 708-715, 728-732, ...): repeated
+`CCodecBuffers: Client returned a buffer it does not own according to
+our record` + `MediaCodec: keep callback message for reclaim` +
+`CCodecConfig: query failed after returning 8 values (BAD_INDEX)` from
+`c2.android.mp3.decoder`. Google's Codec 2 software MP3 decoder is
+known buggy on Android 13+ when ExoPlayer rapidly transitions states
+(seek + speed change + resume). Co-occurs with the AudioTrack underrun
+storm.
+
+**Fix** (EqRenderersFactory.kt): override `setMediaCodecSelector` to
+prefer non-`c2.android.*` software MP3 decoders. The selector partitions
+available decoders into preferred (`softwareOnly && !c2.android.*`) and
+fallback (everything else, preserving relative order). On Pixel devices
+this typically picks `OMX.google.mp3.decoder` — the older OMX software
+decoder that hasn't shown the same accounting issues. For non-MP3 codecs
+we use the default selector unchanged.
+
+If a device has no non-Codec2 MP3 decoder registered, the fallback path
+still picks the Codec 2 one — better than refusing playback. The
+`audio_decoder_init` AppDiagnostics event reports which decoder actually
+got picked so we can confirm the override took effect.
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+  - `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+  - `app/src/main/java/com/lofipod/app/player/EqRenderersFactory.kt`
+  - `app/src/main/java/com/lofipod/app/audio/BeepPlayer.kt` (comment only)
+  - `app/src/main/java/com/lofipod/app/ui/screens/AudioDiagnosticsScreen.kt` (HELP_TEXT)
+
+## v0.10.12 — Playback hardening pass (2026-05-14)
+
+Five long-standing playback issues addressed in one pass, with diagnostics
+wiring so the next regression report has hard data instead of "it loops."
+Untagged so each fix can be verified together on device before the next
+release tag.
+
+### 1. Reverse download handoff (file removed → stream)
+
+`PlayerController.observeDownloadCompletion` had only the forward direction
+(stream → downloaded file when a download completes mid-playback). The
+inverse — removing a download while the player is reading from `file://`
+— left a dangling MediaItem pointing at a now-deleted file; the next
+seek/read produced `ERROR_CODE_IO_FILE_NOT_FOUND` and the user lost
+playback.
+
+Added `triggerReverseDownloadHandoff(c, guid, httpUrl)`: when the byId
+collect sees the current episode's entry vanish (or transition out of
+COMPLETED) while we're on a `file://` MediaItem, reconstruct the HTTP URL
+from `episode_state`, build a new MediaItem with the original metadata
+(title/artist/artwork/extras preserved), `setMediaItem(item, savedPos);
+prepare(); play()` if we were playing. Snackbar: "Download removed —
+resuming from stream."
+
+Also clears `handoffTriggeredForGuid` on remove so a future re-download
+of the same episode re-arms the forward handoff. Both handoff directions
+now log to AppDiagnostics under `handoff_forward` / `handoff_reverse`.
+
+### 2. Feed-aware back from Player
+
+`MainActivity` previously walked the back stack from Player using a
+`naturalParent` inferred at entry time. Two failure modes:
+  - Mini-player / "Now Playing" / system notification entry to Player from
+    Catalog produces stack `[catalog, player]`. Back lands on Catalog.
+  - Queue / autoplay-in-feed advance across feeds: stack still says
+    `[catalog, episodes/{feedA}, player]` but the playing episode is now
+    from feedB. Back lands on feedA — wrong feed.
+
+Fix: PlayerController now carries the current episode's `feedUrl` through
+`MediaMetadata.extras` (key `EXTRA_FEED_URL`), `pushState` surfaces it on
+`PlayerState.currentFeedUrl`, and the Player route's `onBack` calls a new
+`feedAwareBackFromPlayer(nav, currentFeedUrl)` which pops back to Catalog
+and pushes `episodes/{currentFeed}`. Result: back from Player always
+lands on the episodes screen of whatever's currently playing, regardless
+of how the user got to Player.
+
+The preview route (`player/preview/{guid}`) keeps its existing smartBack
+— its back stack is always correct because it's only entered by tapping
+an episode title in EpisodesScreen.
+
+Falls back to plain smartBack when `currentFeedUrl` is null (legacy
+MediaItem from a session restored against an older binary). Logged as
+`back_nav_fallback` vs. `back_nav_feed_aware` in AppDiagnostics.
+
+### 3. Sticky stall watchdog (arm C — oscillation-proof)
+
+The screen-off-autoplay 3-5s playback loop reported by the user is the
+DSP chain underrunning under thermal/clock pressure, with ExoPlayer
+oscillating between BUFFERING and READY every few seconds. Neither
+existing watchdog arm caught it:
+  - Arm A resets `lastForwardProgressAtMs` every time `onIsPlayingChanged`
+    flips back to true → never crosses the 6s threshold.
+  - Arm B resets `bufferingStartedAtMs = 0` the moment state leaves
+    BUFFERING → never crosses the 8s threshold within a single window.
+
+Result: stalls log was empty even while playback was visibly stuck.
+
+Added arm C: ring buffer of `(wallclockMs, currentPositionMs)` sampled
+every poll tick (1s) while `playWhenReady=true`, REGARDLESS of isPlaying
+or playbackState. After 20s of accumulated samples, compares actual
+position advance to speed-adjusted wall-clock advance over the last 30s
+window. Trips when ratio < 30%. Survives BUFFERING↔READY oscillation
+because the ring is only cleared on `pause` / watchdog stop / seek-
+backward (discontinuity guard).
+
+Trigger uses the same `triggerStallRecovery` as arms A and B (seek back
+100ms force-flush + snackbar + diagnostics breadcrumb under
+`renderer_stall` with kind `sticky_Npct_over_Ms`).
+
+### 4. Wake-lock oscillation detector
+
+When the DSP chain underruns at 3-5s cadence, `isPlaying` flip-flops and
+the wake lock acquires/releases on the same cadence. Added a corroborating
+signal in `PlaybackService.acquirePlaybackWakeLock`: ring of recent
+acquire timestamps, trimmed to a 30s window. When ≥5 acquires accumulate
+within the window, drop a `wake_lock_oscillation` AppDiagnostics entry
+(throttled to 1/min). Pairs with arm C — when both fire in the same
+window, the user has clear evidence of underrun thrashing.
+
+### 5. Deferred auto-download on screen-off autoplay
+
+`playEpisode` was firing `app.downloadsApi.start(ep)` inline on every
+play, including autoplay-induced ones. With the screen off the kernel
+downclocks aggressively; opening a second HTTP socket to the same CDN
+while the streaming socket is still ramping compounded with DSP under-
+budget to produce the loop.
+
+Fix: when `wasAutoplay=true` AND `PowerManager.isInteractive == false`,
+upsert the `auto_download` row (so `fireDeferredAutoDownload` picks it
+up at the next track change / wake) but SKIP the inline `start()` call.
+Manual user-tap plays and autoplay with the screen on keep the inline
+start. Logged as `auto_download_deferred` in AppDiagnostics.
+
+### 6. Artwork fallback chain hardened
+
+Two call sites collapsed the fallback chain into a single stored value:
+  - `restoreLastEpisodeIfNeeded` only read `state.artworkUrl` (set at
+    first play time; can be null or stale).
+  - `playEntity` (MyLists promoted-play) only read
+    `EpisodeStateEntity.artworkUrl`.
+
+Both now refresh against `app.repo.cached(feedUrl)` — the in-memory
+podcast cache hydrated on startup — and resolve as
+`liveEpArt ?: livePodArt ?: storedArt` (or `livePodArt ?: liveEpArt ?:
+storedArt` for podcastArt), restoring the full episode↔podcast fallback
+in both directions.
+
+### Diagnostics surface
+
+New `AppDiagnostics.Category.PLAYBACK` with `recordPlayback(identifier,
+detail)`. AudioDiagnosticsScreen renders a new "Playback events" section
+(also included in the clipboard dump) showing newest-first breadcrumbs:
+
+  - `track_change` — episode swap with from/to guids, autoplay flag, feed.
+  - `handoff_forward` / `handoff_reverse` — download swap direction.
+  - `auto_download_deferred` — screen-off+autoplay skip.
+  - `wake_lock_oscillation` — N acquires in 30s.
+  - `back_nav_feed_aware` / `back_nav_fallback` — back-from-Player target.
+
+HELP_TEXT updated with one-line definitions for every new event kind +
+the three stall-watchdog arm signatures (`no_progress_Ns`, `buffering_Ns`,
+`sticky_Npct_over_Ms`).
+
+### Files touched
+
+  - `app/src/main/java/com/lofipod/app/diagnostics/AppDiagnostics.kt`
+  - `app/src/main/java/com/lofipod/app/player/PlayerController.kt`
+  - `app/src/main/java/com/lofipod/app/player/PlaybackService.kt`
+  - `app/src/main/java/com/lofipod/app/ui/MainActivity.kt`
+  - `app/src/main/java/com/lofipod/app/ui/screens/AudioDiagnosticsScreen.kt`
+
+## v0.10.11 — Revert v0.10.10's icon swap; keep wording fix (2026-05-13)
+
+I misread the user's v0.10.10 request. They were pointing out that the
+SETTINGS COPY used the word "plunger" while the actual icon we ship is
+a valve — i.e., the WORDING was inconsistent with the icon, not that
+the icon needed changing. v0.10.10 swapped the icon (wrong fix) AND
+updated the wording (correct fix).
+
+This tag reverts the icon swap:
+  - Restored `res/drawable/valve_24.xml` (Material Symbols valve glyph,
+    same as v0.10.2-v0.10.9).
+  - Deleted v0.10.10's custom `flush_valve_24.xml` (the dual-flush
+    button design).
+  - PlayerScreen reference back to `R.drawable.valve_24`.
+
+The "plunger" → "flush-valve" wording changes from v0.10.10 are KEPT.
+They were the actual fix the user asked for — the Settings copy now
+matches the icon we ship. No "plunger" wording anywhere in the
+codebase post-v0.10.10.
+
+## v0.10.10 — Manual-flush icon redesigned (REVERTED in v0.10.11) (2026-05-13)
+
+[Reverted — see v0.10.11 above. v0.10.10 incorrectly swapped the icon
+when only the wording needed updating. The custom flush_valve_24.xml
+from this tag is no longer in the tree.]
+
+Original change was a custom dual-flush button vector drawable
+replacing the Material Symbols `valve` glyph. Reverted because the
+user's actual request was a wording correction, not an icon change.
+
+## v0.10.9 — Stale-while-revalidate catalog UX + home-icon nav (2026-05-13)
+
+Two user-reported polish items:
+
+**1. Catalog appeared to hang during feed refresh.**
+
+The Catalog's loading state was an all-or-nothing takeover: if `loading
+== true` (any feed still refreshing), the entire catalog body was hidden
+behind the FeedProgressList, even when cached entries were available
+from disk. On a fresh launch where the disk cache had ~13 of 14 feeds
+but one was slow, the user couldn't interact with any of the 13 ready
+podcasts until the laggard finished (or timed out at 60s).
+
+**Fix:** stale-while-revalidate UX. The catalog body now always renders
+cached entries immediately if any exist. During an in-flight refresh,
+a thin `LinearProgressIndicator` + `"Refreshing feeds X / N …"` banner
+appears above the LazyColumn. Full-screen `FeedProgressList` only fires
+on cold start when nothing is cached yet.
+
+Result: subsequent launches render catalog instantly; even partial
+disk-cache coverage gets the user to a usable list immediately.
+
+**2. No quick way to jump to Catalog from the Player.**
+
+Previously: tap back-chevron on Player → goes to Episodes → tap back
+again → Catalog. Two taps.
+
+**Fix:** new Home icon in the Player top-bar actions row (left of
+MyLists). One tap pops the back stack all the way to `"catalog"`
+without popping the catalog itself. Wired via
+`nav.popBackStack("catalog", inclusive = false)` from MainActivity.
+
+Icon: `res/drawable/home_24.xml` — Material Symbols `home`, fetched
+from google/material-design-icons. First addition to the drawable set
+since the v0.10.4 mass migration; follows the convention documented in
+`ICON_PHILOSOPHY.md`.
+
+The Player's actions row now has 5 IconButtons: Heart, Home, MyLists,
+EQ, Overflow. Fits on standard 360dp+ phone widths.
+
+## v0.10.8 — HTTP HEAD/Range probe for missing episode sizes (2026-05-13)
+
+v0.10.7 fixed the "<1mb" display bug by hiding the size when the RSS
+feed didn't supply one. v0.10.8 goes further: it actually probes the
+audio URL to learn the real size when the RSS doesn't have it. Most
+podcast apps don't bother; LofiPod doing this well is a small but real
+differentiator.
+
+**Strategy (cheap and reliable):**
+
+  1. **HTTP HEAD** request to the audio URL → Content-Length header.
+     ~500 bytes per probe.
+  2. **HTTP GET with `Range: bytes=0-0`** as fallback when HEAD doesn't
+     return Content-Length (some CDNs strip it on HEAD, some return 405
+     to HEAD entirely). The `Content-Range: bytes 0-0/<total>` response
+     header contains the size. ~1 KB per probe; works on essentially
+     every audio CDN because Range requests are universal for
+     resumable downloads.
+
+**New file:** `EpisodeSizeProber.kt` (~180 LOC). OkHttp-backed
+HEAD/Range prober. Caches results in an in-memory
+`StateFlow<Map<String, Long?>>` (Long? value distinguishes
+"probed and got size" from "probed but no size — don't retry").
+Persists to `filesDir/episode_size_cache.json` so subsequent launches
+render instantly from the cache. Concurrency-capped at 4 parallel
+probes (Semaphore) so a fast scroll doesn't trigger hundreds of
+simultaneous HTTP requests.
+
+**Lazy + on-demand:** the prober is called from `LaunchedEffect` in
+`EpisodeRow` and `PlayerScreen` only when a row composes AND the
+RSS-supplied size is null. Idempotent — re-rendering the same row is a
+no-op (the prober's in-session dedup `Set<String>` of attempted URLs
+short-circuits). As probes complete, the StateFlow emits and visible
+rows recompose with the resolved size.
+
+**Bandwidth cost:** roughly 1 MB across an entire podcast library
+(~1000 episodes × ~1 KB per probe), once. Then the JSON cache covers
+it forever.
+
+**Wired in:** `LofiPodApp.episodeSizes` (lazy singleton),
+`EpisodesScreen.EpisodeRow` (per-row probe + display merge),
+`PlayerScreen` (player-screen size readout). Both display sites read
+`resolvedSize = ep.audioByteSize ?: probedSizes[ep.audioUrl]` —
+RSS-supplied value wins when present, prober result is the fallback.
+
+**For The Pour Over specifically** (the canonical Megaphone-hosted
+"all length=0" offender): episodes will now show real sizes
+(typically 15-30 MB for a 12-minute episode at 256 kbps) once the
+prober has had a moment to run after the user opens the episode list.
+
+## v0.10.7 — Hide misleading "<1mb" badge for podcasts that emit `length="0"` (2026-05-13)
+
+User-reported bug: every episode in The Pour Over (and Simple Farmhouse
+Life) was displaying `<1mb` in the episode-row size badge. Investigation
+showed that some podcast hosting platforms emit
+`<enclosure ... length="0" type="audio/mpeg"/>` for all episodes,
+either because they can't pre-compute size before CDN redirects or
+because their RSS generator doesn't bother filling it in.
+
+Megaphone's feed for The Pour Over is the canonical offender; checked
+directly via the live RSS XML:
+```
+<enclosure url="..." length="0" type="audio/mpeg"/>
+```
+for every `<item>` in the feed. Castos does it correctly for most
+shows but presumably has shows like Simple Farmhouse Life with
+similar gaps.
+
+Our `RssParser.kt` was reading `"0".toLongOrNull()` → `0L` →
+`audioByteSize = 0L`. The `EpisodeRow`'s display block then ran the
+size through `formatMb(0L)` which returned `"<1mb"` (per the
+`bytes / 1_048_576L == 0` branch). Result: every episode showed
+"<1mb" as if it were a tiny clip.
+
+**Fix:** `RssParser.kt` now treats `length="0"` (and any non-positive
+value) as missing data, returning `null` for `audioByteSize`. The
+`EpisodeRow`'s display block already uses `ep.audioByteSize?.let { ... }`,
+so a null value hides the size badge entirely — cleaner than showing
+misleading data.
+
+**Self-healing cache:** `FeedDiskCache.kt` (which deserializes cached
+feeds from disk) also applies the `takeIf { it > 0L }` filter, so
+existing users with cached feeds containing `audioByteSize = 0` will
+have those values silently treated as null on the next launch. No
+force-refresh needed.
+
+## v0.10.6 — Address compile warnings (2026-05-13)
+
+Clean-up tag. v0.10.5 built green with four non-blocking warnings;
+this addresses all four. No functional changes.
+
+1. **`kotlinOptions { jvmTarget = "17" }` → `kotlin { compilerOptions
+   { ... } }`.** The `kotlinOptions` DSL inside `android { }` is
+   deprecated as of the Kotlin Gradle plugin 2.0.x. Migrated to the
+   top-level `kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17)
+   } }` block (placed between `android { }` and `dependencies { }` in
+   `app/build.gradle.kts`). Per https://kotl.in/u1r8ln.
+
+2. **`Divider()` → `HorizontalDivider()`** at `NotesScreen.kt:102`.
+   Material3 renamed `Divider` to `HorizontalDivider`; the old name is
+   a deprecated alias. Mechanical replacement.
+
+3. **`window.statusBarColor` / `window.navigationBarColor`** in
+   `Theme.kt`. Deprecated in API 35+ in favor of edge-to-edge +
+   `WindowInsetsControllerCompat`. LofiPod's `targetSdk` is still 34
+   (we deliberately stayed at 34 in v0.9.4 — bumping targetSdk would
+   opt into Android 15 runtime behavior changes that need their own
+   audit). On targetSdk 34 the deprecated setters still apply colors
+   correctly. Wrapped in `@Suppress("DEPRECATION")` with a comment
+   pointing at the proper edge-to-edge migration for when targetSdk
+   eventually bumps to 35.
+
+4. **`MediaSession.Callback.onPlayerCommandRequest`** override in
+   `PlaybackService.kt`. Media3 1.5 deprecated this signature. The
+   functional behavior (intercepting `COMMAND_PLAY_PAUSE` during the
+   autoplay-confirmation timer) is still called correctly by Media3's
+   internal dispatch. Wrapped in `@Suppress("DEPRECATION")` with a
+   comment pointing at the eventual migration to the non-deprecated
+   overload.
+
+## v0.10.5 — v0.10.4 build fixes + PFFFT NEON SIMD enabled (2026-05-13)
+
+CI failure on v0.10.4 surfaced four build errors + an unrelated SIMD
+issue I noticed in the same build log. This tag fixes all five.
+
+**v0.10.4 build errors (4):**
+
+1. `MainActivity.kt` — missing `painterResource` + `R` imports. My
+   PowerShell import-fix script's regex anchored on
+   `androidx.compose.ui.platform.LocalContext`, which MainActivity
+   doesn't import. The fallback (insert after package line) didn't fire
+   either. Manually added the two imports.
+
+2. `AudiophileNotesScreen.kt` — same root cause, manual fix.
+
+3. `NonAudiophileLofiNotesScreen.kt` — same root cause; without the
+   `import com.lofipod.app.R`, Kotlin's resolver saw two candidate
+   `R` classes (likely `android.R` and the implicit module R) and
+   reported "None of the following candidates is applicable." Adding
+   the explicit import disambiguates.
+
+4. `HistoryScreen.kt` — the `reasonIcon` helper function returns an
+   icon based on a `when` over reason strings. After the migration its
+   body became `when (...) { -> painterResource(...) }`. But
+   `painterResource()` is `@Composable`, and `reasonIcon` itself was
+   declared as a plain (non-composable) `private fun`. Added the
+   `@Composable` annotation. Both call sites of `reasonIcon` are
+   inside Composable contexts (`leadingIcon = { ... }` lambdas), so
+   they accept the annotated helper.
+
+**PFFFT SIMD fix — separate but important:**
+
+The v0.10.4 build log showed:
+  - `arm64-v8a`: `building float with simd disabled !` warning from
+    `pf_float.h:68`
+  - `armeabi-v7a`: same warning + `unsupported CMAKE_SYSTEM_PROCESSOR
+    'armv7-a'` from marton78's `target_optimizations.cmake:71`
+
+Investigation: PFFFT requires `PFFFT_ENABLE_NEON=1` to be defined to
+activate its NEON SIMD code paths (it's opt-in, not auto-detected from
+the standard `__ARM_NEON` compiler macro). marton78's CMake has logic
+to set it when `CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64"`, but
+on Android NDK builds the processor variable can be `armv7-a` (the
+architecture name) which doesn't match, AND for arm64-v8a the
+detection isn't firing reliably either. Result: PFFFT compiled in
+SCALAR mode, no NEON. The whole point of v0.9.6 was to get the 3-5×
+NEON speedup; without it, we have all the JNI complexity for ~zero
+gain over the original JTransforms.
+
+Fix: force-define `PFFFT_ENABLE_NEON=1` on the PFFFT static-lib target
+from MY CMakeLists, gated on `ANDROID_ABI` being one of the two ARM
+ABIs we build for. Bypasses marton78's auto-detection entirely.
+
+**Net of v0.10.5:** build green (assuming no further failures
+surface), and the JNI PFFFT path actually runs NEON-accelerated as
+intended.
+
+## v0.10.4 — Full icon migration to Material Symbols (2026-05-13)
+
+User-driven: after v0.10.3 documented the design philosophy for future
+icons, user asked "go ahead with the full icon swap." So we did.
+
+**Scope:** 51 unique icons across 23 .kt files migrated from
+`Icons.Filled.X` / `Icons.AutoMirrored.Filled.X` to
+`painterResource(R.drawable.<name>_24)`. The deprecated
+`androidx.compose.material:material-icons-extended` dependency removed
+from `app/build.gradle.kts`.
+
+**Execution path:**
+  1. Bulk-fetched 51 Material Symbols vector drawables via PowerShell
+     Invoke-WebRequest from
+     `https://raw.githubusercontent.com/google/material-design-icons/master/symbols/android/<icon>/materialsymbolsoutlined/<icon>_24px.xml`.
+     Saved under `app/src/main/res/drawable/<snake_case>_24.xml`.
+     Three special cases: `error_outline_24.xml` from
+     `error_24px.xml`, `favorite_border_24.xml` from
+     `favorite_24px.xml` (default outlined), `favorite_24.xml`
+     from `favorite_fill1_24px.xml` (filled variant).
+  2. Post-processed each drawable: stripped
+     `android:tint="?attr/colorControlNormal"` so Compose's
+     `LocalContentColor` tint is the sole source. Ensured
+     `android:autoMirrored="true"` on the four RTL-aware drawables
+     (arrow_back, format_list_bulleted, list, playlist_add).
+  3. Bulk PowerShell replace across all .kt files: longest-key-first
+     literal substitution from each `Icons.X.Y` to
+     `painterResource(R.drawable.snake_case_24)`. Resolved prefix
+     collisions (PlaylistAddCheck before PlaylistAdd, FavoriteBorder
+     before Favorite, etc.).
+  4. Imports cleanup: added
+     `import androidx.compose.ui.res.painterResource` and
+     `import com.lofipod.app.R` to all 23 affected files; removed
+     all `androidx.compose.material.icons.*` imports
+     (Icons base, filled.*, filled.Specific, automirrored.filled.X).
+  5. Removed `material-icons-extended` from
+     `app/build.gradle.kts`.
+
+**Verification:** Grep across all .kt files post-migration:
+  - 0 references to `Icons.`
+  - 0 references to `import androidx.compose.material.icons.`
+
+**Updated docs:**
+  - `ICON_PHILOSOPHY.md` reflects the completed migration + migration
+    history section documenting the special cases.
+
+**APK size impact:** material-icons-extended (the entire ~2000-icon
+set) was ~25 MB compiled into the APK because R8 is OFF. The 51 vector
+drawables we now ship are ~10 KB total. Net APK shrinkage in the
+several-megabyte range.
+
+**Licensing reminder:** Material Symbols are Apache-2.0 from Google.
+`LICENSE-MATERIAL-SYMBOLS.txt` already shipping in
+`app/src/main/assets/licenses/` (added v0.10.3). About-screen
+attribution credits "Material Symbols (Apache-2.0, Google)".
+
+## v0.10.3 — Icon design philosophy + Material Symbols license attribution (2026-05-13)
+
+Documentation tag. No code-behavior changes.
+
+Background: while swapping the plunger icon to a Material Symbols
+valve glyph (v0.10.2), we surfaced that `material-icons-extended` is
+officially deprecated and no longer published in the latest Compose
+Material 3 release. A full migration of the ~50 existing icon
+references is high-churn and low-benefit (the existing icons render
+fine; the visual style difference is subtle). The pragmatic call: keep
+the existing icons on the deprecated library for now, establish the
+Material Symbols convention for all FUTURE icons, and document it.
+
+**New file: `ICON_PHILOSOPHY.md` at repo root.** Codifies:
+  - Source: Google's Material Symbols (Apache-2.0, fonts.google.com/icons
+    + google/material-design-icons on GitHub)
+  - Style: Outlined (matches valve_24)
+  - Form: Vector drawables in `res/drawable/<snake_case_name>_24.xml`
+  - Compose usage: `Icon(painter = painterResource(R.drawable.x_24),
+    contentDescription = "...")`
+  - When to add as Material Symbols (new icons, refreshes) vs not
+    (bulk-rewriting existing icons that work fine)
+  - Step-by-step fetch + integration recipe for adding a new icon
+  - Eventual full-migration path once R8 minification can be re-enabled
+
+**New file: `app/src/main/assets/licenses/LICENSE-MATERIAL-SYMBOLS.txt`.**
+Apache-2.0 text bundled in the APK. Settings → About attribution now
+mentions Material Symbols.
+
+**Profitability / licensing summary** (since this was the user's
+concern):
+  - Apache-2.0 is the most permissive viable license for an
+    icon set. Fully compatible with closed-source, commercial,
+    sideloaded, or any distribution model. Zero royalties. No
+    copyleft. Patent grant included. The only requirement is
+    attribution (NOTICE / LICENSE file inside the APK, which we
+    have).
+  - PFFFT (BSD-3-Clause) and JTransforms (BSD-2-Clause), used by the
+    audio chain, are equally permissive. LofiPod has zero licensing
+    or profitability constraints from its current dependencies.
+
+## v0.10.2 — Swap plunger icon to Material Symbols "valve" (2026-05-13)
+
+v0.10.1's manual flush button used `Icons.Filled.Plumbing` from
+material-icons-extended (visually a wrench, since "Valve" isn't in the
+older Material Icons set that Compose's extended library uses). Swapped
+to the Material Symbols valve glyph proper, bundled as a vector
+drawable at `res/drawable/valve_24.xml` (path data from Google's
+material-design-icons GitHub repo, Apache-2.0).
+
+PlayerScreen renders it via `painterResource(R.drawable.valve_24)`
+inside the existing Icon composable — Compose still applies its
+`LocalContentColor` tint over the white fill, so theme color follows
+automatically.
+
+No behavior change. Just visual.
+
+## v0.10.1 — Min FIR Kaiser fix + auto-flush on mode switch + manual flush plunger (2026-05-13)
+
+Three fixes / features in response to first real-device testing of the
+v0.9.0 → v0.10.0 audio rebuild:
+
+**Bug: Min FIR ~5% of original volume.** Root cause: I was applying the
+symmetric Kaiser window (β=6) to the min-phase kernel. Kaiser's value is
+~1.0 at the center of the array and ~0.015 at the edges. The linear-phase
+kernel has its impulse energy at the center, so Kaiser there is a no-op
+(multiply by ~1). The min-phase kernel has all its energy at the START
+of the array (causal, energy-front-loaded), so Kaiser at index 0 ≈ 0.015
+multiplied straight against the dominant taps was a -36 dB attenuation
+of the kernel. Combined with energy spread over the first few hundred
+samples this surfaced as ~5% audible volume. Fix: removed the Kaiser
+multiplication from synthMinPhaseKernel — the cepstrum kernel naturally
+tapers to near-zero in its tail, so truncation alone is fine. Mixed
+mode escaped the bug because its min-phase contribution is time-shifted
+to the center where Kaiser ≈ 1.0, and the magnitudes are crossover-scaled.
+
+**Bug fix: auto-flush on phase-mode switch.** Toggling phase mode
+called chainReset() which cleared the chain's internal state — but the
+AudioTrack already had 1.5-3 s of pre-switch PCM queued ahead, which
+continued playing through the now-cleared chain. For Linear FIR
+specifically this could surface as "0% volume at 1× speed" or
+"buffering loop until a manual flush." Now EqScreen's mode-switch chips
+call PlayerController.flushAudio() after the chain state change, which
+issues a Media3 seek to currentPosition − 50 ms — guaranteed-real
+flush (same-position seeks are sometimes deduped) with a ~50 ms audible
+rewind. Acceptable cost for a mode switch.
+
+**Feature: manual flush plunger icon (opt-in).** Settings → "Show
+manual flush button on Player" (off by default). When enabled, a
+plunger icon appears to the RIGHT of the Speed chip in the player.
+Speed chip stays horizontally centered (via Box layout with
+contentAlignment=Center for the chip, Alignment.CenterEnd for the
+plunger). Tap → calls PlayerController.flushAudio() with the same
+50 ms rewind. Useful when something sounds contaminated and a clean
+restart is the fastest fix, without disrupting position much.
+
+Icon: Icons.Filled.Plumbing (material-icons-extended). Closest match
+to "plunger" semantically in the Material set; visually a wrench /
+plumbing tool.
+
+## v0.10.0 — Audio rebuild endpoint: content + diagnostics polish (2026-05-13)
+
+Content/polish tag closing out the audio rebuild arc that started at
+v0.9.0. No engineering changes — just documentation of what shipped.
+
+**Audiophile Notes page** (Settings → Notes for audiophiles): full
+content rewrite. New sections:
+  - Signal chain diagram now shows the four-way EQ-stage dispatch (Pure
+    IIR / Min FIR / Linear FIR / Mixed).
+  - Float64 / Float32 boundaries — explains where the audio thread runs
+    in single precision (the FIR convolution via PFFFT) and where it
+    stays in double (everything else).
+  - Phase modes (four-way lineup) — full descriptive section for each
+    mode + "when to use each."
+  - UPC: uniform partitioned convolution — algorithm description, Wefers
+    + Gardner refs, why it's cheaper than monolithic OLA.
+  - Min-phase kernel via real cepstrum — Mian & Nainer 1982 /
+    Oppenheim-Schafer §10.5 derivation, step-by-step recipe.
+  - Cross-fade on band changes — describes both biquad parallel-path
+    and FIR dual-kernel crossfade (v0.9.8).
+  - Latency-compensated transport — pro-DAW-style position reporting.
+  - Zero-allocation audio-thread discipline — DoubleRing fix, why
+    autoboxing on the audio thread is dangerous, the v0.9.0 sweep.
+  - Updated CPU footprint section with PFFFT NEON timings + ADPF.
+  - Updated licenses + attribution with PFFFT BSD-3 + Wefers/Mian-Nainer
+    algorithmic credits.
+
+**Plain-language Lofi Notes page** (Settings → Audio guide): phase
+modes section rewritten for the 4-mode lineup. Friendly tone, no jargon.
+"If you're not sure which to pick — Pure IIR is genuinely the best
+default."
+
+**Audio Diagnostics chain spec** (Settings → Audio diagnostics): new
+per-mode block under the chain spec section. Surfaces the active
+phase mode + (for FIR modes) kernel length, kernel synthesis method,
+UPC partition count, FFT library (PFFFT arm64 NEON SIMD), and
+pre-ringing characteristic. The "Mode chip" tooltip style the brief
+described (long-press for tooltip) is deferred — these diagnostics
+lines serve the same purpose with less UI complexity. Audio chain
+latency line is also now live + mode-aware (reads
+EqAudioProcessor.getChainLatencyUs() instead of the post-EQ-only
+totalLatencyFrames1x baseline that was here pre-v0.10.0).
+
+**What v0.10.0 does NOT bring:** no engineering changes. The audio
+chain itself is unchanged from v0.9.8. This tag is purely the
+documentation + telemetry surface that completes the rebuild arc.
+
+**v1.0.0 status:** still reserved. The audio rebuild from v0.9.0 →
+v0.10.0 is the engineering arc. v1.0.0 is the user-triggered
+public-release push when the app is judged suitable for general use.
+
+## v0.9.8 — Band-change crossfade in UpcConvolver (2026-05-13)
+
+Brief #10 lands: zipper-free EQ slider drags in FIR modes. Adds a
+parallel-path dual-kernel mix during a ~93 ms fade window after each
+`setKernelTaps` call. With UPC's input-history FDL, the same FDL drives
+both old and new kernel multiply-accumulates — no need for separate
+input buffers; just one extra IFFT and ~3 extra MACs per channel per
+block during the fade.
+
+**How it works:**
+  - `setKernelTaps` now captures the current live `kernelPartitionSpectra`
+    as `prevKernelPartitionSpectra` before publishing the new one, and
+    arms `fadeChunksRemaining = FADE_CHUNKS` (= 4 blocks ≈ 93 ms at
+    1024 @ 44.1k).
+  - `processBlock` checks the fade counter at the top of each block.
+    When fading, it runs the same FDL against BOTH kernels (new in
+    `accumSpec`, old in `accumSpecOld`), IFFTs both, then mixes the
+    time-domain outputs via a linear α ramp:
+      `out[n] = newOut[n] * α + oldOut[n] * (1 - α)`
+    where α grows from `fadeIdx/FADE_CHUNKS` at the start of the chunk
+    to `(fadeIdx + 1)/FADE_CHUNKS` at the end.
+  - After `FADE_CHUNKS` blocks, the prev kernel reference is dropped
+    and the dual-path machinery goes dormant again.
+
+**Rapid slider drag handling:** each `setKernelTaps` captures whatever
+the current live kernel is (which might itself be a mid-fade new kernel)
+as the new "prev" and restarts the fade from α=0. The user always hears
+a smooth ramp from the immediately-prior live state to the new state,
+regardless of drag speed.
+
+**CPU cost during fade:** one extra IFFT and one extra set of P MACs
+per channel per block. With PFFFT's NEON SIMD, that's well within budget
+even at 2× playback on mid-range ARM. After the fade window the cost is
+identical to v0.9.7 — no permanent overhead.
+
+**Reset behavior:** `UpcConvolver.reset()` (called from chainReset on
+seek / flush / mode toggle) clears the prev kernel reference and zeros
+the fade counter, so the chain comes back from a flush without an
+unwanted ramp-from-pre-flush-state.
+
+**Affects modes:** Min FIR, Linear FIR, Mixed — all three FIR modes
+inherit the crossfade for free since they all go through the same
+UpcConvolver. PURE_IIR has its own biquad cross-fade machinery
+(separate code path).
+
+This was the brief's last unfinished engineering item. The remaining
+deferred item is #12 (off-thread DSP worker with SPSC ring) — pure
+optimization that's mostly mooted by PFFFT's 3-5x speedup in v0.9.6.
+Skipping for now.
+
+## v0.9.7 — PFFFT integration fixes (preempting v0.9.6 CI failure) (2026-05-13)
+
+Web-search-driven preemptive fix tag — v0.9.6's PFFFT integration had
+three wrong assumptions about marton78/pffft's repo layout that would
+have failed the CI build at CMake configure / compile time:
+
+**1. Source-file path was wrong.** v0.9.6's CMakeLists tried to compile
+`${pffft_src_SOURCE_DIR}/pffft.c` directly. marton78/pffft's source is
+split across multiple .c files under `src/` (e.g., `src/pffft_common.c`,
+`src/pffft_priv_impl.h`) and `pffft.c` at the repo root doesn't exist.
+Switched to `FetchContent_MakeAvailable(pffft)` + linking the
+`PFFFT::PFFFT` target so their CMake takes care of source assembly.
+
+**2. Header include path was wrong.** marton78/pffft places the public
+header at `include/pffft/pffft.h` (under a `pffft/` subdir for namespace
+hygiene). v0.9.6's JNI bridge had `#include "pffft.h"`. Fixed to
+`#include "pffft/pffft.h"`. The `PFFFT::PFFFT` target exports the
+right include directory.
+
+**3. Subproject uninstall conflict.** v1.1.0 (released Feb 2026) had
+an unconditional uninstall target that conflicts when PFFFT is consumed
+as a subproject. Commit a4b0359 (2026-04-22) restricted it to top-level
+projects only. Pinned `GIT_TAG` to that specific commit SHA for both
+reproducibility and to pick up the fix.
+
+**Other tightenings while we're here:**
+- Disabled `PFFFT_USE_TYPE_DOUBLE` (we only use single precision).
+- Disabled `PFFFT_BUILD_TESTS / _BENCHMARKS / _EXAMPLES` and
+  `INSTALL_PFFFT` (we're a subproject; we don't need their install rules
+  or testing infrastructure).
+- Set `BUILD_SHARED_LIBS=OFF` so PFFFT compiles as a static lib that
+  links into our single JNI .so instead of shipping a separate
+  libPFFFT.so alongside.
+- Removed `GIT_SHALLOW TRUE` — shallow clones don't reach pinned commit
+  SHAs reliably (only HEAD).
+
+**Function-name verification.** Confirmed from
+`include/pffft/pffft.h` that `pffft_new_setup`, `pffft_transform`,
+`pffft_zconvolve_accumulate`, `pffft_aligned_malloc/free`, and
+`pffft_zreorder` all use the bare `pffft_` prefix (no `pffftf_` or
+`pffftd_` variants when only `PFFFT_USE_TYPE_FLOAT=ON`). v0.9.6's JNI
+bridge already used these names — no change needed there.
+
+**Risk note.** v0.9.6 + v0.9.7 are both untested first-NDK-build tags.
+v0.9.7 fixes the three issues I caught preemptively via marton78/pffft
+docs + source inspection. There may be more issues I missed; expect at
+least one more iteration (v0.9.8+) if CI fails.
+
+## v0.9.6 — PFFFT (NEON-SIMD FFT) replaces JTransforms on audio thread (2026-05-13)
+
+Brief #15 lands: replaces the pure-JVM JTransforms FFT on the audio-
+thread hot path with PFFFT (BSD-3-Clause, single-precision, NEON-SIMD).
+~3-5× speedup on ARM at the FFT sizes we use (fftSize=2048 for UPC),
+which compounds with the brand-new use of `pffft_zconvolve_accumulate`
+as the multiply-accumulate inner loop. Net effect: substantially more
+thermal-throttle headroom on the audio thread, especially relevant at
+2× playback with screen-off-in-pocket scenarios.
+
+**First-ever NDK build for this project.** Introduces:
+
+- `app/src/main/cpp/CMakeLists.txt` — CMake project that fetches PFFFT
+  source from `marton78/pffft` (pinned to master, will pin to a commit
+  hash once the build is proven green) and compiles `pffft.c` directly
+  into the shared library. NDK ABIs: `arm64-v8a` + `armeabi-v7a` (skip
+  x86_64 / x86 — emulator-only for a sideloaded app).
+- `app/src/main/cpp/lofipod_fft.cpp` — minimal JNI bridge exposing
+  setup/destroy/transform/zconvolveAccumulate/reorder. Holds its own
+  16-byte-aligned scratch buffers (allocated via `pffft_aligned_malloc`)
+  so the JNI boundary doesn't need to worry about ART's primitive-array
+  alignment.
+- `app/src/main/java/com/lofipod/app/audio/PffftBridge.kt` — Kotlin
+  wrapper. Two instances per UpcConvolver: one for the audio thread
+  (transforms + zconvolveAccumulate), one for the kernel-synth worker
+  thread (transforms only). Native scratch isn't thread-safe, hence
+  separate bridges per thread.
+
+**UpcConvolver: Double → Float refactor.** PFFFT is single-precision.
+All internal arrays (FDL, prevInput, workspace, accumSpec, kernel
+partition spectra) move to FloatArray. Hand-rolled
+packedComplexMultiplyAccumulate is GONE — replaced by PFFFT's NEON-SIMD
+`pffft_zconvolve_accumulate`. Net code shrinks; speed grows.
+
+**FirEq: Double → Float at the UPC boundary.** Kernel synthesis stays
+Double (worker thread, off the audio path — keeps the cepstrum log/exp
+recipe at full precision where it matters). At
+`UpcConvolver.setKernelTaps()` taps convert to Float. blockIn/blockOut
+arrays inside `processBlockForChannel` switch to FloatArray; conversion
+loops bracket the `conv.processBlock()` call.
+
+**Numeric precision note.** 16-bit PCM input has 16-bit resolution;
+single-precision float has a 24-bit mantissa. The PFFFT FFT path
+preserves audio precision with ~48 dB of headroom above what's
+audible. No quality loss vs the previous Double precision path.
+
+**BSD-3-Clause compliance.** Bundled in the APK at:
+  - `app/src/main/assets/licenses/LICENSE-PFFFT.txt` — full BSD-3-Clause
+    text with copyright attributions (Julien Pommier 2013 + NCAR/UCAR
+    2004 for the FFTPACK pieces PFFFT builds on).
+  - `app/src/main/assets/licenses/LICENSE-JTRANSFORMS.txt` — JTransforms
+    BSD-2-Clause attribution (still used for kernel-synthesis FFTs on
+    the worker thread).
+Settings → About section credits both libraries with a short attribution
+paragraph pointing at `assets/licenses/`.
+
+**Known unknowns (first NDK build for this project — may need follow-up
+iterations):**
+  - CMake's FetchContent against marton78/pffft master could pull a
+    breaking change. Pin to a specific commit hash in a follow-up tag
+    once the build is verified green.
+  - PFFFT layout vs JTransforms packed-complex layout differ. Internal-
+    layout spectra (what UPC uses) are opaque blobs — we never inspect
+    bins so the layout difference is invisible to UpcConvolver, but if
+    diagnostic code or a future mode needed canonical packed-complex
+    output, [PffftBridge.reorderToCanonical] is available.
+  - Net `.so` size: PFFFT compiled is ~30-60 KB per ABI. Two ABIs ≈
+    100 KB extra in the APK. Negligible vs the existing ~10 MB.
+
+## v0.9.5 — Mixed-Phase mode (4-mode phase lineup complete) (2026-05-13)
+
+Adds the 4th phase mode: hybrid min-phase / linear-phase split at a
+~120 Hz crossover. Completes the audio rebuild roadmap's user-visible
+work; v0.10.0 will be a content/polish tag.
+
+**FirEq.Mode.MIXED** — new synthesis path inside FirEq:
+
+  1. Build complementary cosine-ramp crossover masks `H_low(f)`,
+     `H_high(f)` with transition 80 → 180 Hz centered roughly at 120 Hz.
+     The two sum to 1.0 everywhere (real-valued), so applying them to
+     the EQ magnitude target preserves the EQ shape across the spectrum
+     with no transition-band dip.
+  2. Synthesize a linear-phase kernel from `mag · H_high` (above-
+     crossover content gets the symmetric-impulse, transient-preserving
+     path).
+  3. Synthesize a min-phase kernel from `mag · H_low` (below-crossover
+     content gets the energy-front-loaded, no-pre-ringing path —
+     critical for bass transients like kicks, organ pedal, low rumble).
+  4. Time-align: the linear-phase kernel peaks at KERNEL_LENGTH/2 (its
+     natural group delay), the min-phase kernel peaks at index 0
+     (causal). Shift the min-phase contribution forward by KERNEL_LENGTH/2
+     samples so both reach the listener simultaneously through the
+     convolution.
+  5. Sum the two aligned kernels → single hybrid impulse response of
+     length KERNEL_LENGTH. UPC sees just another 4096-tap kernel; same
+     convolution cost as either pure mode.
+
+**PhaseMode.MIXED + Settings.PHASE_MODE_MIXED** — added to the existing
+enum + DataStore string. Legacy Boolean sync now treats MIXED as a FIR
+mode (sets `phase_mode_linear = true`) so downgrade paths see a usable
+value.
+
+**EqAudioProcessor** dispatches MIXED through firEq.setMode(FirEq.Mode.MIXED).
+Algorithmic latency for MIXED matches LINEAR_FIR (~70 ms total — the
+linear-phase contribution dominates the group delay).
+
+**EqScreen** grows from 3 chips to 4: "Pure IIR" / "Min FIR" /
+"Linear FIR" / "Mixed". Per-chip description text updated.
+
+**PlayerDiagnosticsTab** renders the MIXED label in the live readout:
+"Mixed-Phase (min-phase < 120 Hz, linear-phase > 120 Hz, UPC)".
+
+**Skipped (intentionally):** Brief #15 (PFFFT JNI migration) was the
+brief's planned v0.9.5. Skipped for now — invisible-to-user CPU
+optimization that adds JNI build complexity to the gradle pipeline.
+Current UPC + JTransforms envelope is comfortable for podcasts at 2×
+on modern devices. PFFFT lands as a dedicated future tag if profiling
+shows need.
+
+**Net at v0.9.5:** 4-mode phase lineup complete, UPC convolution
+shipped, latency-honest transport, downloader hardened, ADPF clamped.
+The audio subsystem's engineering arc per `_LOFIPOD_V1_BRIEF.md` is
+substantially done. v0.10.0 will be content/polish: Audiophile Notes
+rewrite, plain-language audio guide refresh, About-screen technique
+credits.
+
+## v0.9.4 — Toolchain bump for Media3 1.5.x compileSdk 35 requirement (2026-05-13)
+
+Build fix tag. v0.9.3 (and v0.9.1, v0.9.2 since they inherited the bump)
+failed CI `checkReleaseAarMetadata` because Media3 1.5.1 (introduced in
+v0.9.1) requires `compileSdk 35` to consume — and the project was on
+compileSdk 34 with AGP 8.5.2 (which can't go higher than 34). v0.9.0 was
+green because Media3 was still 1.4.1 there. v0.9.3 inherited the broken
+state; the v0.9.3 features themselves are fine.
+
+Path chosen: bump the toolchain (not revert Media3). The 1.5.x VBRI and
+audio-sink retry fixes are worth keeping; the toolchain bump is also
+overdue regardless.
+
+**Coordinated bumps:**
+
+- Gradle wrapper 8.7 → 8.10.2 (AGP 8.7 minimum is Gradle 8.9; pick 8.10.2
+  for stability)
+- AGP 8.5.2 → 8.7.3 (first AGP line that supports compileSdk 35)
+- compileSdk 34 → 35 (required by Media3 1.5.x)
+
+**Held unchanged (deliberately):**
+
+- targetSdk stays at 34. Bumping compileSdk lets us link against
+  Android 15 SDK symbols; bumping targetSdk would also opt into
+  Android 15 runtime behavior changes (notification permission tighter
+  enforcement, partial photo picker default, etc.). That's a separate
+  decision with its own risk surface — left for a later deliberate
+  bump.
+- Kotlin 2.0.20, KSP 2.0.20-1.0.25, Compose plugin 2.0.20 — all
+  compatible with AGP 8.7.x.
+- Compose BOM 2024.09.02 — compatible with compileSdk 35. Could be
+  bumped for hygiene; no force-bump signal yet.
+- R8 stays OFF.
+
+If the build now compiles cleanly, the v0.9.3 features (UPC + 3-mode
+phase lineup + Min-Phase FIR) are downstream and untouched here.
+
+## v0.9.3 — UPC convolution + 3-mode phase lineup (2026-05-13)
+
+Fourth tag of the audio rebuild roadmap. Combines the brief's planned
+v0.9.3 (DSP foundation) and v0.9.4 (FIR resurrection + new mode) into one
+release, per user direction — single-user alpha cadence makes the
+brief's "dormant infrastructure then activation" split unnecessary.
+
+**Brief #13 — UpcConvolver.kt** (new file, ~290 LOC). Uniform partitioned
+convolution engine. Splits a 4096-tap kernel into P=4 partitions of L=1024
+samples each, stored as packed-complex spectra; per input block of 1024
+samples, runs ONE forward FFT at 2L=2048, accumulates a frequency-domain
+delay-line multiply-accumulate against the partitions, runs ONE inverse
+FFT, emits the second half (overlap-save). ~3× cheaper per output sample
+than the v0.8.0 monolithic 8192-pt OLA, and the FDL stores INPUT history
+(not output) so mid-stream kernel swaps yield a clean LTI switch — fixes
+the "soft chuff per slider tick" symptom from brief §A2. Reference:
+Wefers 2015 / Gardner 1995.
+
+**FirEq.kt** (new file, ~470 LOC). Wraps UpcConvolver for both linear-
+phase and min-phase FIR modes. Two kernel synthesis paths:
+
+  - **Linear-phase:** same recipe as v0.8.0 (sample biquad cascade
+    magnitude, zero-phase IFFT, circular shift, truncate, Kaiser
+    window).
+  - **Min-phase (NEW):** real-cepstrum derivation per
+    Mian & Nainer 1982 / Oppenheim-Schafer §10.5. Same target
+    magnitude → causal energy-front-loaded impulse response. No
+    pre-ringing, sub-ms group delay across the audio band at typical
+    EQ Qs (0.7–1.4). Best for transient-heavy speech.
+
+DoubleRing primitive output ring moves here from v0.9.0's LinearPhaseEq
+(no autoboxing on the audio thread).
+
+**PhaseMode.kt** (new file). Three-value enum: PURE_IIR (default),
+MIN_FIR, LINEAR_FIR. Replaces the v0.8.0 `phaseModeLinear: Boolean`.
+Serializes as a string in DataStore (string key, future-proof for a
+v0.10.0 Mixed-Phase fourth value).
+
+**Settings — new `phase_mode` key + Boolean migration.** Reads:
+prefer the new string key; fall back to the legacy `phase_mode_linear`
+Boolean if absent (true → "LINEAR_FIR", false → "PURE_IIR"). Writes:
+keep the legacy Boolean in sync so any future downgrade still sees a
+usable value. No one-shot migration job — the read-side fallback
+handles existing installs transparently.
+
+**EqAudioProcessor — 3-mode dispatch.** `setPhaseMode(PhaseMode)` is the
+new entrypoint; `setPhaseModeLinear(Boolean)` is kept as a deprecated
+wrapper. `queueInputFir()` replaces `queueInputLinearPhase()` and routes
+to FirEq for both FIR modes. `getChainLatencyUs()` reflects the new
+mode-dependent algorithmic delays: ~6 ms (PURE_IIR), ~29 ms (MIN_FIR),
+~70 ms (LINEAR_FIR). Chain reset still triggers on mode toggles.
+
+**EqScreen — 3 chips restored.** "Pure IIR" / "Min FIR" / "Linear FIR"
+with the per-mode descriptions visible. The v0.9.0 hide-and-explain
+banner is gone.
+
+**PlaybackService rehydrate** reads `settings.phaseMode.first()` (new
+flow) and applies `setPhaseMode(savedMode)`. Pre-v0.9.0 users with a
+saved `phase_mode_linear=true` get migrated to LINEAR_FIR on first
+boot.
+
+**PlayerDiagnosticsTab** carries the full mode label
+("Pure IIR (biquad cascade)" / "Min-Phase FIR (UPC + cepstrum kernel)" /
+"Linear-Phase FIR (UPC + symmetric kernel)") in the live readout.
+
+**Deleted:** `LinearPhaseEq.kt` — superseded entirely by `UpcConvolver`
++ `FirEq`. Git history preserves the original implementation.
+
+**Not in v0.9.3** (deferred to a later tag): off-thread DSP worker with
+SPSC ring (brief #12) — pure optimization, not required for correctness;
+explicit band-change crossfade ramp (brief #10) — UPC's natural LTI
+switching already resolves the band-change click symptom; PFFFT JNI
+(brief #15); Mixed-Phase mode (brief #17, v0.10.0). The new min-phase
+FIR path replaces the brief's expected band-change crossfade benefit
+by giving users a no-pre-ringing option that's already free of zipper
+artifacts under UPC.
+
+## v0.9.2 — Latency-honest transport (2026-05-13)
+
+Third tag of the audio rebuild roadmap. Brief #7: the audio chain's
+algorithmic delay is now subtracted from the position reported to the UI,
+so the scrubber matches what the user is audibly hearing. Pro-DAW
+behavior; sets up the larger v0.9.4 cut where linear-phase returns and the
+chain-latency number grows from ~6 ms to ~52 ms when linear is engaged.
+
+**Brief #7 — `EqAudioProcessor.getChainLatencyUs()`.** Public method
+returns the chain's total algorithmic delay in microseconds:
+linear-phase FIR group delay (when active — always 0 in v0.9.x while the
+chip is hidden) + oversampler combined up/down group delay + limiter
+look-ahead. Returns 0 when the chain is disabled or in passthrough
+(those paths copy bytes through untouched). At v0.9.2 with the chain
+engaged in minimum-phase: ~6.4 ms total; v0.9.4+ with linear-phase
+restored: ~52 ms when linear is on.
+
+**`PlayerController.currentPositionMs()` now subtracts chain latency.**
+All UI consumers (scrubber polls, note-creation position, diagnostics
+display, mini-player) automatically pick up the compensated reading.
+Stall watchdog, DB persistence, checkpoints, and `jumpToPosition()`
+deliberately keep reading `controller.currentPosition` directly — their
+forward-progress / save-restore invariants are about raw frames advancing
+through the audio sink, not about audible alignment.
+
+**`PlayerController.seekTo(positionMs)` now compensates the target.**
+A tap on "1:00" in the scrubber lands AUDIBLE-1:00 instead of
+RAW-1:00 (which would be audible ~46 ms before 1:00 in linear mode,
+~6 ms in min-phase). Sub-perceptible per-seek, but compounds visibly when
+seeking repeatedly to a chapter or saved-note position.
+
+Built-in `seekBack()` / `seekForward()` (the ±15 s / ±30 s buttons that
+go through Media3's `Player.seekBack()`/`seekForward()`) are NOT
+explicitly compensated — both endpoints are raw, so the audible offset
+is the same constant on both sides and the relative seek is exact.
+
+## v0.9.1 — Hardening: Media3 upgrade + downloader integrity + ADPF floor (2026-05-13)
+
+Second tag of the audio rebuild roadmap. Three small-to-medium fixes from
+`_LOFIPOD_V1_BRIEF.md`; no user-visible feature changes, all interior plumbing.
+
+**Brief #8 — Media3 1.4.1 → 1.5.1.** Picks up the MP3 VBRI table-of-contents
+fix (#1904), which the brief flagged as a direct candidate for "downloaded
+MP3 stops short of the actual end" symptoms. Also includes audio-output
+retry improvements in DefaultAudioSink that 1.4.x lacked.
+`EqRenderersFactory` uses only public APIs (`DefaultAudioSink.Builder`,
+`DefaultAudioProcessorChain`, `DefaultAudioTrackBufferSizeProvider.Builder`)
+so the upgrade is a drop-in. R8 stays OFF — the v0.3.0 silent-audio
+regression was a Media3-internal reflection issue and the keep-rules set
+hasn't been authored yet.
+
+**Brief #9a — 64 KB boundary truncate on resume.** If a SIGKILL lands
+between `source.read()` and the next `raf.write()`, the row's
+`bytesDownloaded` (last persisted at the prior 500 ms progress tick) can
+sit ahead of the file's actual durable tail. Worse, page-cache flushes
+aren't deterministic post-kill, so the file's apparent length can drift
+relative to what was successfully fsync'd. Resume now truncates to a
+BUFFER_SIZE-aligned offset (64 KB), so re-fetch on resume costs at most
+one buffer's worth and never starts from the middle of a write boundary.
+
+**Brief #9b — Verify Content-Length post-download.** A "drained" body
+isn't always a complete body: some intermediaries close the stream cleanly
+mid-transfer, and some servers return 200 short of the advertised
+Content-Length. Verify `target.length() == totalLen` before flipping the
+row to COMPLETED; mismatch throws and the worker marks FAILED instead.
+Skipped when the server omits Content-Length (totalLen=-1) — nothing to
+compare against.
+
+**Brief #16 — Clamp `audioNs` floor in ADPF reporting.** Defensive 1 ms
+floor on `audioNs` before the speed scale + before passing to
+`PerformanceHintManager.Session`. Avoids passing 0 / near-0 targets that
+downstream ADPF / governor smoothing code can divide by. Floor is well
+below any plausible real per-buffer budget (~5 ms = 256 frames at 1×).
+
+**Not in v0.9.1** (deferred): rest of brief — v0.9.2 latency-honesty,
+v0.9.3 UPC infrastructure + off-thread DSP worker, v0.9.4 FIR rebuild +
+new min-phase FIR mode, v0.9.5 PFFFT, v0.10.0 mixed-phase mode.
+
+## v0.9.0 — Audio pest-control + linear-phase chip hidden for rebuild (2026-05-13, untagged on dev)
+
+First tag of the multi-release audio rebuild captured in `_LOFIPOD_V1_BRIEF.md`.
+Stability cut: silent bug fixes + one user-visible regression (linear-phase
+chip removed) paired with a release note explaining the v0.9.4 return. Tracks
+toward v0.10.0 (the brief calls that endpoint "v1.0.0" but v1.0.0 is reserved
+for the user-triggered public launch).
+
+**Brief #1 — Eliminate ArrayDeque<Double> autobox GC on the audio thread.**
+`LinearPhaseEq.outputQueue` was `Array<ArrayDeque<Double>>`. Every
+`addLast(value: Double)` autoboxed to `java.lang.Double` (Kotlin generic
+collections force primitive boxing). At FRAME_SIZE=1024, stereo, 44.1 kHz
+that's ~88,200 transient heap allocations/sec on the audio thread plus the
+same on pop — sustained ~1.4 MB/s of ART garbage on the worst possible thread.
+Symptom: sporadic clicks every 5–30 s on long sessions correlated with GC
+activity. Replaced with a primitive-backed `DoubleRing` (power-of-two
+DoubleArray + head/tail/mask), nested inside LinearPhaseEq. No autoboxing on
+push/pop; ~64 KB/channel for the 8192-cap ring, negligible vs the existing
+~80 KB working set.
+
+**Brief #6 — Precompute FLAT kernel; remove sync FFT from configure().**
+`configure(rate, channels)` previously called `synthesizeKernelSync(FLAT)` —
+an 8192-pt FFT + IFFT + window + FFT on the audio/format-change thread
+(~2–15 ms cold). Hoisted to a `FLAT_KERNEL_SPECTRUM` companion val
+computed once at class load. For FLAT the magnitude response is unity at every
+bin → impulse is rate-independent, so the cached spectrum is shared across
+all sample rates.
+
+**Brief #4 — Hoist chainReset(); call from both onFlush() and
+setPhaseModeLinear().** Previously `onFlush` cleared filters / biquads / DC
+blocker / limiter / oversampler / linear-phase EQ, but
+`setPhaseModeLinear(on)` only reset the linear-phase EQ — the limiter's
+look-ahead, oversampler delay lines, and biquad cross-fade state held the
+previous mode's audio and produced a brief level burst at the mode-toggle
+boundary. Extracted shared `chainReset()` private; both call paths now reset
+the full chain.
+
+**Brief #2 — Tune DefaultLoadControl for local files.** Was
+`min=180s / max=600s / prioritize-time=true / no byte ceiling`. On local
+`file://` sources the Loader read continuously up to the time threshold
+(potentially ~106 MB decoded PCM at 256 kbps stereo), pressuring ART and
+opening underrun windows during long GCs. New config: `min=30s / max=60s /
+playbackMs=2/5 / prioritize-time=false / target-buffer-bytes=8 MB`. Plenty
+for podcasts at any speed; engages the byte ceiling on local sources.
+
+**Brief #5 — fsync downloaded file before markCompleted.** The DB row flip to
+COMPLETED is the visibility barrier for handoff / completedFile()
+consumers. Without fsync, an OS crash between fclose() and SQLite commit
+could leave a COMPLETED row pointing at partial bytes. Added
+`runCatching { raf.fd.sync() }` immediately before the RAF closes. Tolerated
+silently if the FS doesn't support it (some FUSE passthroughs).
+
+**Brief #11 — Hide linear-phase chip in EqScreen, suppress rehydrate, preserve
+saved pref.** Linear-phase mode is removed from the user-facing chip set in
+v0.9.0 while the convolution path is rebuilt. The DataStore key
+`phase_mode_linear` is left untouched — v0.9.4 picks the user's preference
+back up when the chip is restored (rebuilt on UPC + crossfade alongside a
+new Min-Phase FIR mode). PlaybackService.onCreate rehydrate suppresses the
+saved value (always boots into minimum-phase regardless). EqScreen displays
+an explanatory note that surfaces the user's preserved preference when
+they had linear on previously.
+
+**Kept unchanged (deliberately):** Mid-playback streaming→downloaded handoff
+(brief #3). The handoff is part of how the app is used in practice (start
+streaming → drive into a connectivity-poor area → switch to local file
+seamlessly). The chainReset on flush (#4) + LoadControl tightening (#2)
+quietly harden the swap path; tweaks land per-issue rather than wholesale
+disable.
+
+**Not yet in v0.9.0 (queued for later tags):** UPC infrastructure (#13,
+v0.9.3), off-thread DSP worker (#12, v0.9.3), band-change crossfade (#10,
+v0.9.4), Min-Phase FIR mode (#14, v0.9.4), PFFFT migration (#15, v0.9.5),
+Mixed-Phase mode (#17, v0.10.0). Brief covers all of them; this is the
+stability cut only.
+
 ## v0.8.0 — In-Player Diagnostics tab + full-screen mode + snapshot-to-note
 
 Bigger than a patch release. Adds a fast-path for the user to inspect
