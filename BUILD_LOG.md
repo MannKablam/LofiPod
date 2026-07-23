@@ -2,6 +2,56 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.11.4-dev — Section-skip button: >| skips past sponsor/music sections (2026-07-17)
+
+For our #2 listener: the |< button's forward mirror, filling the
+transport row's old symmetry spacer. Tap = skip past the sponsor read /
+musical interlude that's playing to where the episode's own speech
+resumes; plain +30s fallback when nothing is recognized, so the button
+is always predictable. Dialed in against real canon audio per
+direction ("use Compelled to dial this in") — four Compelled episodes,
+two NTWAF, one Pour Over, one APJ downloaded and analyzed offline with
+the detector replicated in Python (scripts kept in tools/_adskip,
+gitignored).
+
+- **What was measured before building.** Energy/pause heuristics alone
+  kept failing honestly: Compelled is PRODUCED (music under testimony
+  → naive "music detector" flagged 12+ spans/hour), and its mastering
+  leaves 4-8 min stretches with zero ≥700ms gaps (pause-deserts ≠
+  ads). Cross-episode fingerprinting (5-bit spectral-delta tokens,
+  1.2s shingles) found NTWAF episodes share a 138s intro sponsor
+  block + a 29s repeated MID-ROLL — real, precisely-bounded ads — but
+  Compelled's Pour Over reads are host-read and unique per episode
+  (three episode pairs share only the show's own theme). So v1 keys
+  on the one signal that works tap-driven everywhere: TEXTURE
+  RECOVERY.
+- **Analyzer: per-second LSTER curve (DB v21!).** 20ms mono-RMS
+  frames; a second's byte = fraction of its frames below half its
+  mean (0..200; 255 = silent). Clean speech scores high (syllable/
+  phrase gaps), music and speech-over-bed score low (the bed fills
+  the gaps). ~3.6 KB/hour alongside envelope+pauses;
+  MIGRATION_20_21 adds the column and wipes analysis rows (rescan
+  is lazy, same precedent as v20's heat wipe).
+- **SectionSkip.targetAfter:** from the tap, scan forward for the
+  first 12 consecutive seconds at/above the episode's own speech
+  baseline (p60 of the smoothed curve × 0.55, floor 0.16); accept a
+  near edge only if the tap second itself was below texture (inside
+  a short section); land on the latest analyzer pause-end within ±6s
+  of the edge (forward-of-tap only, 200ms pre-roll — the |< button's
+  landing convention mirrored) else at the edge; 4-min horizon.
+  Constants documented in-object with the measurements behind them.
+- **Verified end-to-end on emulator:** fresh v21 scan of a real
+  episode produced the curve; in-section taps land at the ported
+  algorithm's exact prediction (device DB pulled and cross-checked
+  against the Python port — 1:1 agreement); clean-speech taps fall
+  back to exactly +30s.
+- **Phase-2 candidate (not built):** the fingerprint matcher for
+  repeated produced ads (NTWAF-style). Would give exact spans and
+  catch talky sponsor blocks the texture signal can't see (NTWAF's
+  138s intro read measures as normal speech). Needs a per-episode
+  token store + a same-feed pair-matching job; validated offline
+  today, waiting on field feedback to justify the infrastructure.
+
 ## v0.11.3-dev — Autoplay-confirm ate pause presses; back-buffer for rewinds; overlay toggles (2026-07-17)
 
 v0.11.2 on-device feedback: "episodes continue indefinitely after the

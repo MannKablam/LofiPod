@@ -476,7 +476,7 @@ interface LofiDownloadDao {
         EpisodeHeatEntity::class,
         EpisodeAnalysisEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -918,6 +918,25 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v20 → v21: episode_analysis grows lsterPerSec — the per-second
+         * speech/music texture curve behind the >| section-skip button
+         * (one byte per media second; see EpisodeAnalysisEntity). Rows
+         * are wiped rather than kept with an empty curve: analyses are
+         * derived decoration that rebuilds lazily on the next player
+         * visit, and a rescan repopulates pauses, envelope, and the new
+         * curve together (same precedent as the v19→v20 heat wipe).
+         */
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE episode_analysis " +
+                        "ADD COLUMN lsterPerSec BLOB NOT NULL DEFAULT x''"
+                )
+                db.execSQL("DELETE FROM episode_analysis")
+            }
+        }
+
+        /**
          * v15 → v16: add lofi_download table. The OkHttp-based downloader's
          * persistent state — replaces Media3's StandaloneDatabaseProvider +
          * DownloadIndex which we ditched in v0.6.9 after four versions of
@@ -1023,7 +1042,7 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_13_14), timed(MIGRATION_14_15),
                         timed(MIGRATION_15_16), timed(MIGRATION_16_17),
                         timed(MIGRATION_17_18), timed(MIGRATION_18_19),
-                        timed(MIGRATION_19_20)
+                        timed(MIGRATION_19_20), timed(MIGRATION_20_21)
                     )
                     .build().also { instance = it }
             }

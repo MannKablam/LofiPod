@@ -2348,6 +2348,38 @@ class PlayerController(private val context: Context) {
         }
     }
 
+    /**
+     * ">| skip past sponsor/music section": seek forward to where the
+     * audio texture returns to the episode's own speech baseline, as
+     * computed by [com.lofipod.app.audio.SectionSkip] over the analyzer's
+     * per-second LSTER curve. The caller supplies the episode's completed
+     * analysis (the screen already holds it for the scrubber). Falls back
+     * to the plain 30 s [seekForward] when no analysis exists yet, the
+     * row predates the texture column, or no recovery is found ahead —
+     * the button always does something sane and predictable.
+     *
+     * Returns true when a texture-derived target was used.
+     */
+    fun skipForwardPastSection(
+        analysis: com.lofipod.app.audio.EpisodeAnalysis?,
+    ): Boolean {
+        if (controller == null) return false
+        val target = analysis
+            ?.takeIf { it.lsterPerSec.isNotEmpty() }
+            ?.let {
+                com.lofipod.app.audio.SectionSkip.targetAfter(
+                    currentPositionMs(), it.lsterPerSec, it.pauses
+                )
+            }
+        return if (target != null) {
+            seekTo(target)
+            true
+        } else {
+            seekForward()
+            false
+        }
+    }
+
     fun seekTo(positionMs: Long) {
         // Compensate the requested UI position by the chain's algorithmic
         // delay so the AUDIBLE result lands at the position the user asked

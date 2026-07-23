@@ -8,10 +8,12 @@ import android.media.MediaFormat
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.nio.ByteOrder
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * Completed read-ahead scan of one episode's audio.
@@ -25,8 +27,16 @@ import kotlin.math.max
  * quiet recordings still render full-height. Buckets divide [durationMs]
  * evenly, so bucket i covers media time
  * `[i, i+1) * durationMs / ENVELOPE_BUCKETS`.
+ * [lsterPerSec] is one byte per media second: the second's LSTER
+ * (low short-time energy ratio — the fraction of its 20 ms mono-RMS
+ * frames below half the second's mean) scaled by
+ * [EpisodeAudioAnalyzer.LSTER_SCALE], or [EpisodeAudioAnalyzer.LSTER_SILENT]
+ * for a near-silent second. Clean speech scores high (deep gaps between
+ * syllables and phrases); music and speech over a music bed score low
+ * (the bed fills the gaps). Powers SectionSkip's "skip past
+ * sponsor/music section" texture scan.
  *
- * Deliberately a plain class, not a data class: the FloatArray field
+ * Deliberately a plain class, not a data class: the array fields
  * would give generated equals/copy reference semantics that read like
  * value semantics.
  */
@@ -34,6 +44,7 @@ class EpisodeAnalysis(
     val durationMs: Long,
     val pauses: List<PauseTapProcessor.PauseSpan>,
     val envelope: FloatArray,
+    val lsterPerSec: ByteArray,
 )
 
 /**
@@ -132,6 +143,55 @@ class EpisodeAudioAnalyzer {
             var globalPeak = 0
             var lastEndUs = 0L
 
+            // LSTER accumulation (see EpisodeAnalysis.lsterPerSec): mono
+            // sum-of-squares per 20 ms frame, frames grouped per media
+            // second. Streams into a byte builder — memory stays flat.
+            var l20Key = -1L
+            var l20SumSq = 0.0
+            var l20N = 0
+            var lSecKey = -1L
+            val lSecRms = FloatArray(64)
+            var lSecN = 0
+            val lsterOut = ByteArrayOutputStream()
+
+            fun writeCurrentSecond() {
+                if (lSecKey < 0 || lSecN == 0) return
+                var mean = 0.0
+                for (i in 0 until lSecN) mean += lSecRms[i]
+                mean /= lSecN
+                val b = if (mean < LSTER_SILENT_RMS) LSTER_SILENT else {
+                    var low = 0
+                    val half = 0.5 * mean
+                    for (i in 0 until lSecN) if (lSecRms[i] < half) low++
+                    low * LSTER_SCALE / lSecN
+                }
+                lsterOut.write(b)
+            }
+
+            fun closeL20() {
+                if (l20Key < 0 || l20N == 0) return
+                val rms = sqrt(l20SumSq / l20N).toFloat()
+                val sec = l20Key / L20_PER_SECOND
+                if (sec != lSecKey) {
+                    // Seconds must stay index-aligned with media time:
+                    // close the finished second, backfill any timestamp
+                    // gap with silence sentinels, start the new one.
+                    writeCurrentSecond()
+                    var fillFrom = if (lSecKey < 0) 0L else lSecKey + 1
+                    while (fillFrom < sec) {
+                        lsterOut.write(LSTER_SILENT)
+                        fillFrom++
+                    }
+                    lSecKey = sec
+                    lSecN = 0
+                }
+                if (lSecN < lSecRms.size) {
+                    lSecRms[lSecN++] = rms
+                }
+                l20SumSq = 0.0
+                l20N = 0
+            }
+
             val info = MediaCodec.BufferInfo()
             var inputDone = false
             var outputDone = false
@@ -182,13 +242,28 @@ class EpisodeAudioAnalyzer {
                             for (frame in 0 until frames) {
                                 // Peak abs amplitude across channels — the
                                 // same per-frame statistic the live
-                                // processors use.
+                                // processors use — plus the signed channel
+                                // sum for the LSTER mono mix.
                                 var peak = 0
+                                var sum = 0
                                 for (ch in 0 until channelCount) {
-                                    val a = abs(pcm.get().toInt())
+                                    val s = pcm.get().toInt()
+                                    val a = abs(s)
                                     if (a > peak) peak = a
+                                    sum += s
                                 }
                                 val tUs = baseUs + frame * 1_000_000L / sampleRate
+
+                                // LSTER: accumulate mono^2 into the 20 ms
+                                // frame under this timestamp.
+                                val mono = sum / (channelCount * 32768.0)
+                                val key20 = tUs / L20_US
+                                if (key20 != l20Key) {
+                                    closeL20()
+                                    l20Key = key20
+                                }
+                                l20SumSq += mono * mono
+                                l20N++
 
                                 if (peak > globalPeak) globalPeak = peak
                                 val slice = (tUs / SLICE_US).toInt()
@@ -250,10 +325,15 @@ class EpisodeAudioAnalyzer {
                 error("decode produced no audio")
             }
 
+            // Flush the trailing partial LSTER frame + second.
+            closeL20()
+            writeCurrentSecond()
+
             EpisodeAnalysis(
                 durationMs = durationMs,
                 pauses = capPauses(pauses),
                 envelope = resampleEnvelope(slicePeaks, sliceCount, globalPeak),
+                lsterPerSec = lsterOut.toByteArray(),
             )
         } finally {
             // Release order matters: stop can throw if the codec died
@@ -345,6 +425,20 @@ class EpisodeAudioAnalyzer {
          *  at the default sensitivity and bounds the row to ~30 KB of
          *  CSV in the worst case. */
         private const val MAX_PAUSES = 2000
+
+        /** LSTER frame length (20 ms) and frames per second. */
+        private const val L20_US = 20_000L
+        private const val L20_PER_SECOND = 50L
+
+        /** lsterPerSec byte semantics: value = LSTER * [LSTER_SCALE]
+         *  (0..200), or [LSTER_SILENT] for a near-silent second. Shared
+         *  with SectionSkip's reader. */
+        const val LSTER_SCALE = 200
+        const val LSTER_SILENT = 255
+
+        /** Mean 20 ms RMS (full-scale = 1.0) below which a second is
+         *  "silent" — LSTER of near-nothing is noise, not texture. */
+        private const val LSTER_SILENT_RMS = 3.0e-5
 
         private const val DEQUEUE_TIMEOUT_US = 10_000L
 

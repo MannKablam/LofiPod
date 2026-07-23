@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -979,14 +980,36 @@ fun PlayerScreen(
                                 modifier = Modifier.size(56.dp)
                             )
                         }
-                        // The symmetry slot — pure geometry, no control
-                        // lives here (nothing in the transport family wants
-                        // the position, and inventing a control to fill it
-                        // would be worse than the space). It balances the
-                        // pause-skip control so the play button's flanks
-                        // weigh the same; the comment above the Row carries
-                        // the full argument.
-                        Spacer(Modifier.size(PauseSkipTouchTargetSize))
+                        // Section-skip (v0.11.4) — the |< button's forward
+                        // mirror, filling what used to be the symmetry
+                        // spacer: tap = skip past the current sponsor read /
+                        // musical interlude to where the episode's own
+                        // speech texture resumes (SectionSkip over the
+                        // analyzer's LSTER curve), falling back to a plain
+                        // +30s when nothing is recognized. The glyph is the
+                        // pause-skip icon mirrored horizontally, so the pair
+                        // reads as a matched set.
+                        Box(
+                            modifier = Modifier
+                                .size(PauseSkipTouchTargetSize)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .combinedClickable(
+                                    onClick = {
+                                        controller.skipForwardPastSection(episodeAnalysis)
+                                    },
+                                    onLongClick = null,
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painterResource(R.drawable.skip_previous_24),
+                                contentDescription =
+                                    "Skip past sponsor or music section",
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .graphicsLayer { scaleX = -1f }
+                            )
+                        }
                     }
                 }
                 // Error chip if the player just failed (live only). The

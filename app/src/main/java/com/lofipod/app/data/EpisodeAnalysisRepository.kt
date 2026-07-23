@@ -180,6 +180,7 @@ class EpisodeAnalysisRepository(
             sensitivity = sensitivity,
             pausesCsv = result.pauses.joinToString(",") { "${it.startMs}:${it.endMs}" },
             envelope = blob,
+            lsterPerSec = result.lsterPerSec,
             updatedAt = System.currentTimeMillis(),
         )
     }
@@ -196,6 +197,9 @@ class EpisodeAnalysisRepository(
             durationMs = row.durationMs,
             pauses = decodePauses(row.pausesCsv),
             envelope = envelope,
+            // Empty on rows that predate the v21 texture column — the
+            // section skip simply falls back to a plain +30s for them.
+            lsterPerSec = row.lsterPerSec,
         )
     }
 

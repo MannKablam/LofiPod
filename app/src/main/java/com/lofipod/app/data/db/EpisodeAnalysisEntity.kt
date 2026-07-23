@@ -39,6 +39,11 @@ data class EpisodeAnalysisEntity(
     /** Exactly EpisodeAudioAnalyzer.ENVELOPE_BUCKETS bytes; each an
      *  unsigned 0..255 amplitude sample as described above. */
     val envelope: ByteArray,
+    /** One byte per media second: LSTER * LSTER_SCALE (0..200), or
+     *  LSTER_SILENT (255) for a near-silent second — the speech/music
+     *  texture curve behind the >| section skip. Size ≈ durationMs/1000
+     *  (~3.6 KB/hour). Empty on rows migrated before v0.11.4. */
+    val lsterPerSec: ByteArray,
     val updatedAt: Long,
 ) {
     // A ByteArray field makes the generated data-class equals compare the
@@ -53,6 +58,7 @@ data class EpisodeAnalysisEntity(
             sensitivity == other.sensitivity &&
             pausesCsv == other.pausesCsv &&
             envelope.contentEquals(other.envelope) &&
+            lsterPerSec.contentEquals(other.lsterPerSec) &&
             updatedAt == other.updatedAt
     }
 
@@ -62,6 +68,7 @@ data class EpisodeAnalysisEntity(
         result = 31 * result + sensitivity
         result = 31 * result + pausesCsv.hashCode()
         result = 31 * result + envelope.contentHashCode()
+        result = 31 * result + lsterPerSec.contentHashCode()
         result = 31 * result + updatedAt.hashCode()
         return result
     }
