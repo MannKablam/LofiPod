@@ -2,6 +2,57 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.11.3-dev — Autoplay-confirm ate pause presses; back-buffer for rewinds; overlay toggles (2026-07-17)
+
+v0.11.2 on-device feedback: "episodes continue indefinitely after the
+episode is over," pause icon that "doesn't reset" on player screen /
+mini-player / notification, slow resume after rewind, and a wish for
+heatmap + cut-mark visibility toggles. Reproduced and fixed on an API
+35 emulator (first time this project used one — full end-of-episode
+matrix exercised: stream + file sources, 1x + 2x, advance + no-advance,
+all of which RESOLVE correctly; the stuck-"playing" machinery itself
+could not be reproduced, but a serious control bug fell out).
+
+- **The autoplay-confirm timer consumed every play/pause press from
+  the moment it ARMED.** The timer arms at each autoplay advance, but
+  its countdown only becomes perceptible at the first beep (T=60s).
+  During T=0..60s of every autoplay-chained episode, the in-app
+  play/pause tap short-circuited to "confirm continuation" (no pause!)
+  and the service-side intercept swallowed notification/BT presses the
+  same way — and every swallowed press CANCELLED the pending
+  auto-pause. Pressing pause literally made playback run longer, on
+  every surface the user named. New
+  shouldConsumePlayPauseAsAutoplayConfirm() gate (armed AND playing
+  AND elapsed ≥ first beep) now guards BOTH paths — before the first
+  beep a pause press pauses, everywhere; after it, tap-to-confirm
+  works as designed (morph visible, beep heard). Verified on emulator:
+  remote (media-key) pause at T≈35s of an autoplay'd episode pauses.
+- **The timer outlived the episode.** Nothing cancelled it at
+  STATE_ENDED, so an autoplay'd episode ending inside the 3:10 window
+  left the countdown ticking over a dead player — morphed play button
+  (reproduced: "0:50" ring on an ended episode), beeps against
+  silence, presses still being eaten for up to ~3 minutes.
+  cancelAutoplayTimer() now runs first thing in the ENDED branch; the
+  next advance arms a fresh timer. Verified: armed episode ended →
+  plain play arrow immediately.
+- **Rewinds re-fetched the stream.** DefaultLoadControl's default
+  back buffer is ZERO — every backward seek (15s button, break
+  button, heatmap-test hop) discarded played media and re-opened the
+  source; with the v0.6.9 no-streaming-cache trade that's a fresh
+  HTTP fetch + decoder re-prime before audio returns.
+  setBackBuffer(60s) retains the last minute of samples, so short
+  rewinds seek inside the buffer and resume instantly (~2 MB at
+  256 kbps inside the existing 8 MB byte target).
+- **Overlay toggles.** Settings → Playback: "Replay heatmap on the
+  playback bar" and "Break marks on the playback bar" (both default
+  on). Display-only gates at the scrubber call site: heat keeps
+  accruing while hidden, the analyzer keeps scanning, and the
+  previous-break button keeps its targets.
+- Field note for the next device test: if the never-resetting pause
+  icon persists after this build, it's NOT the timer swallow — grab
+  Settings → diagnostics ("autoplay_stop" / playback entries) right
+  after it happens.
+
 ## v0.11.2-dev — Heatmap records ranges; cut marks decluttered (2026-07-16)
 
 First on-device feedback on the v0.11.x scrubber: "I don't think the

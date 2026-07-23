@@ -165,6 +165,12 @@ fun PlayerScreen(
     val ctx = LocalContext.current
     val app = ctx.applicationContext as LofiPodApp
     val scope = rememberCoroutineScope()
+    // Scrubber overlay visibility (Settings → Playback). Display-only
+    // gates: the heat recorder and the previous-break button's targets
+    // are untouched by hiding their visualizations.
+    val scrubberSettings = remember { com.lofipod.app.data.Settings(app) }
+    val showHeatmap by scrubberSettings.scrubberHeatmapEnabled.collectAsState(initial = true)
+    val showBreakMarks by scrubberSettings.scrubberBreakMarksEnabled.collectAsState(initial = true)
     // Pause-skip ("back to previous audible pause") sensitivity dialog,
     // opened by long-pressing the transport control. Settings collection
     // lives inside the dialog block so the screen root isn't subscribed
@@ -781,9 +787,14 @@ fun PlayerScreen(
                     StructuredScrubber(
                         positionMs = positionMs,
                         durationMs = durationMs,
-                        heatBuckets = heatBuckets,
-                        pauses = scrubberPauses,
-                        analysis = episodeAnalysis,
+                        // Overlay toggles gate the DATA, not the drawing
+                        // code: no heat buckets = bare track, no spans =
+                        // no ticks. The previous-break button reads its
+                        // targets from the raw sources above, so hiding
+                        // the marks never disarms the button.
+                        heatBuckets = if (showHeatmap) heatBuckets else null,
+                        pauses = if (showBreakMarks) scrubberPauses else emptyList(),
+                        analysis = if (showBreakMarks) episodeAnalysis else null,
                         markers = scrubberMarkers,
                         onSeek = { controller.seekTo(it) },
                         // Press-and-hold opens the expanded waveform above.

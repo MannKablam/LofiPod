@@ -37,20 +37,26 @@ object AutoplayConfirmBridge {
      * for every `Player.COMMAND_PLAY_PAUSE` arriving from a remote
      * controller (BT, vehicle, system notification, etc).
      *
-     * Returns `true` if the autoplay-confirmation timer was active and we
-     * ran the confirm — the caller then denies the play/pause command so
-     * playback continues uninterrupted. Returns `false` otherwise so the
-     * caller can let the command through to default play/pause handling.
+     * Returns `true` if the autoplay countdown was PERCEPTIBLY running
+     * (post-first-beep, playback live — same
+     * [PlayerController.shouldConsumePlayPauseAsAutoplayConfirm] gate as
+     * the in-app button) and we ran the confirm — the caller then denies
+     * the play/pause command so playback continues uninterrupted. Returns
+     * `false` otherwise so the caller lets the command through to default
+     * play/pause handling. The gate matters: before the first beep a
+     * remote listener has heard nothing — their pause press is a pause
+     * press, and consuming it here both ate the command AND cancelled the
+     * auto-pause that would have ended the run.
      *
-     * Reads the timer state directly from the bound controller's StateFlow
-     * rather than mirroring it on this bridge. That avoids a race where the
+     * Reads the gate directly off the bound controller's state rather
+     * than mirroring it on this bridge. That avoids a race where the
      * timer body has cleared its state but a collector-driven mirror
      * hasn't caught up yet, which would let an auto-pause command from
      * within the timer be intercepted as if it were a remote button press.
      */
     fun handleMediaButtonPlayPause(): Boolean {
         val ctrl = instance ?: return false
-        if (ctrl.autoplayTimer.value == null) return false
+        if (!ctrl.shouldConsumePlayPauseAsAutoplayConfirm()) return false
         ctrl.confirmAutoplayContinuation()
         return true
     }

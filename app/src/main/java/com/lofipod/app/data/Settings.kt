@@ -242,6 +242,28 @@ class Settings(private val context: Context) {
     }
 
     /**
+     * Structured-scrubber overlay visibility (v0.11.3): the replay
+     * heatmap and the break cut marks can each be hidden independently.
+     * Display-only switches — heat keeps accruing in the background and
+     * the previous-break button keeps its jump targets either way, so
+     * flipping one back on shows everything recorded meanwhile.
+     * Both default to shown.
+     */
+    val scrubberHeatmapEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SCRUBBER_HEATMAP] ?: true }
+
+    suspend fun setScrubberHeatmapEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_SCRUBBER_HEATMAP] = v }
+    }
+
+    val scrubberBreakMarksEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SCRUBBER_BREAK_MARKS] ?: true }
+
+    suspend fun setScrubberBreakMarksEnabled(v: Boolean) {
+        context.dataStore.edit { it[KEY_SCRUBBER_BREAK_MARKS] = v }
+    }
+
+    /**
      * Master "Audio enhancement" toggle from the EQ screen. Default true.
      * Distinct from the per-podcast `podcast_state.eqDisabled` override —
      * both feed into [com.lofipod.app.player.PlayerController.applyEqOverrideFor],
@@ -677,6 +699,10 @@ class Settings(private val context: Context) {
             androidx.datastore.preferences.core.intPreferencesKey("skip_silence_level")
         private val KEY_PAUSE_SKIP_SENSITIVITY =
             androidx.datastore.preferences.core.intPreferencesKey("pause_skip_sensitivity")
+        private val KEY_SCRUBBER_HEATMAP =
+            androidx.datastore.preferences.core.booleanPreferencesKey("scrubber_heatmap_enabled")
+        private val KEY_SCRUBBER_BREAK_MARKS =
+            androidx.datastore.preferences.core.booleanPreferencesKey("scrubber_break_marks_enabled")
         private val KEY_AUDIO_ENHANCEMENT_ENABLED =
             androidx.datastore.preferences.core.booleanPreferencesKey("audio_enhancement_enabled")
         private val KEY_DC_BLOCKER_ENABLED =

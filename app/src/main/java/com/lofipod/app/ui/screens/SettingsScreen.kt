@@ -71,6 +71,8 @@ fun SettingsScreen(
     val smartResume by settings.smartResumeEnabled.collectAsState(initial = true)
     val autoArchiveDays by settings.autoArchiveDays.collectAsState(initial = 3)
     val textScale by settings.textScale.collectAsState(initial = 1.0f)
+    val scrubberHeatmap by settings.scrubberHeatmapEnabled.collectAsState(initial = true)
+    val scrubberBreakMarks by settings.scrubberBreakMarksEnabled.collectAsState(initial = true)
 
     Scaffold(
         topBar = {
@@ -134,6 +136,21 @@ fun SettingsScreen(
             // menu (v0.11, per user direction): it only affects browsing
             // that list, so its switch lives where it acts. The DataStore
             // setting itself is unchanged.
+            SwitchRow(
+                checked = scrubberHeatmap,
+                title = "Replay heatmap on the playback bar",
+                subtitle = "Tint re-listened stretches cold-to-hot. Display only — " +
+                    "listening history keeps recording while hidden.",
+                onCheckedChange = { v -> scope.launch { settings.setScrubberHeatmapEnabled(v) } }
+            )
+            SwitchRow(
+                checked = scrubberBreakMarks,
+                title = "Break marks on the playback bar",
+                subtitle = "Cut-style ticks at the biggest pauses — the spots the " +
+                    "previous-break button jumps to. The button keeps working " +
+                    "while they're hidden.",
+                onCheckedChange = { v -> scope.launch { settings.setScrubberBreakMarksEnabled(v) } }
+            )
             SwitchRow(
                 checked = smartResume,
                 title = "Smart resume",

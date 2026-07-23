@@ -649,6 +649,17 @@ class PlayerController(private val context: Context) {
             pushState()
             if (playbackState == Player.STATE_ENDED) {
                 val finishedGuid = controller?.currentMediaItem?.mediaId
+                // The autoplay-confirm timer runs on WALL clock and knows
+                // nothing about media time: an autoplay'd episode that ends
+                // inside its 3:10 window used to leave the countdown ticking
+                // over a dead player — morphed play button, beeps against
+                // silence, and every play/pause surface still consuming
+                // presses as "confirms" for up to three minutes after
+                // playback stopped (reproduced on emulator: seek an
+                // autoplay'd episode near its end, let it finish). An end
+                // always closes the run; if the advance below starts the
+                // next episode, IT arms a fresh timer.
+                cancelAutoplayTimer()
                 // Queue hygiene FIRST, regardless of which advance strategy
                 // (or sleep suppression) wins below: a played-to-completion
                 // episode must never replay from the queue. The canon path
@@ -1456,13 +1467,15 @@ class PlayerController(private val context: Context) {
             _transientMessages.tryEmit("Player isn't connected yet — try again in a moment.")
             return
         }
-        // Autoplay-confirmation window: a tap while the timer is counting
-        // and the player is playing means "confirm continuation" — cancel
-        // the timer, do NOT toggle to pause. The play button is morphed
-        // into a countdown specifically to invite this tap; pausing during
-        // the timer takes a second tap (after the morph reverts), which is
-        // the intended UX from the spec.
-        if (_autoplayTimer.value != null && c.isPlaying) {
+        // Autoplay-confirmation window: a tap while the countdown is
+        // VISIBLY running (post-first-beep — the button is morphed into
+        // the countdown ring specifically to invite this tap) means
+        // "confirm continuation" — cancel the timer, do NOT toggle to
+        // pause; pausing then takes a second tap after the morph reverts.
+        // Before the first beep the button still looks like a plain pause
+        // control, so it must ACT like one — see the gate's doc for the
+        // pressing-pause-made-it-play-longer failure this fixes.
+        if (shouldConsumePlayPauseAsAutoplayConfirm()) {
             confirmAutoplayContinuation()
             return
         }
@@ -2179,10 +2192,40 @@ class PlayerController(private val context: Context) {
      *     vehicle transport press arrives while the timer is active
      *     (wired in PlaybackService — phase 4).
      */
-    fun confirmAutoplayContinuation() {
+    fun confirmAutoplayContinuation() = cancelAutoplayTimer()
+
+    /** Tear down the autoplay-confirm timer without the "user confirmed"
+     *  semantics — same mechanics, honest name for the cleanup call sites
+     *  (episode ended, explicit pause). */
+    private fun cancelAutoplayTimer() {
         autoplayTimerJob?.cancel()
         autoplayTimerJob = null
         _autoplayTimer.value = null
+    }
+
+    /**
+     * True while a play/pause press — on ANY surface — should be consumed
+     * as "confirm autoplay continuation" instead of acting as a pause:
+     * the timer is armed, playback is live, AND the countdown has become
+     * PERCEPTIBLE (the first beep has sounded; the in-app button is
+     * morphed into the countdown ring). Before that moment the listener
+     * has been given no signal that a press means anything special, so a
+     * pause press must remain a pause press.
+     *
+     * The pre-v0.11.3 check (`timer != null && isPlaying`) consumed
+     * presses from the moment the timer ARMED — the first 60 s of every
+     * autoplay-chained episode silently ate the pause tap on the player
+     * screen, the mini-player, the notification, and Bluetooth, and each
+     * eaten tap "confirmed" the timer, cancelling the very auto-pause
+     * that would have stopped the chain. Pressing pause made playback
+     * run LONGER — field-reported as "episodes continue indefinitely and
+     * the pause button doesn't work."
+     */
+    fun shouldConsumePlayPauseAsAutoplayConfirm(): Boolean {
+        val t = _autoplayTimer.value ?: return false
+        if (controller?.isPlaying != true) return false
+        return android.os.SystemClock.elapsedRealtime() - t.startedAtElapsedMs >=
+            AUTOPLAY_CONFIRM_FIRST_BEEP_MS
     }
 
     /**

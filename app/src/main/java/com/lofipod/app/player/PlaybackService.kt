@@ -196,6 +196,21 @@ class PlaybackService : MediaSessionService() {
             )
             .setPrioritizeTimeOverSizeThresholds(false)
             .setTargetBufferBytes(8 * 1024 * 1024)
+            // Retain the last minute of already-played samples so BACKWARD
+            // seeks land inside the buffer. The default (0) discards
+            // samples the moment they play, which made every rewind — the
+            // 15s button, the previous-break button, a heatmap re-listen
+            // hop — a full source re-open: on a streamed episode that's a
+            // fresh HTTP range request plus a decoder re-prime before
+            // audio resumes (the v0.6.9 no-streaming-cache trade made
+            // this the common case). 60s at 256 kbps is ~1.9 MB inside
+            // the 8 MB byte target — cheap for "rewind resumes
+            // instantly." Keyframe flag is moot for audio (every frame
+            // is a sync point).
+            .setBackBuffer(
+                /* backBufferDurationMs = */ 60_000,
+                /* retainBackBufferFromKeyframe = */ false
+            )
             .build()
 
         val player = ExoPlayer.Builder(this, EqRenderersFactory(this, sharedEq, sharedSkipSilence, sharedPauseTap))
