@@ -633,6 +633,9 @@ class PlayerController(private val context: Context) {
         }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             pushState()
+            // Fresh episode, fresh end-wedge ladder.
+            endWedgeGuid = null
+            endWedgeAttempts = 0
             // Apply per-episode EQ override on transitions. Looked up from the
             // EpisodeStateEntity row each time so a toggle flips immediately on
             // the next item, and re-asserts every time we come back to it.
@@ -648,60 +651,7 @@ class PlayerController(private val context: Context) {
             }
             pushState()
             if (playbackState == Player.STATE_ENDED) {
-                val finishedGuid = controller?.currentMediaItem?.mediaId
-                // The autoplay-confirm timer runs on WALL clock and knows
-                // nothing about media time: an autoplay'd episode that ends
-                // inside its 3:10 window used to leave the countdown ticking
-                // over a dead player — morphed play button, beeps against
-                // silence, and every play/pause surface still consuming
-                // presses as "confirms" for up to three minutes after
-                // playback stopped (reproduced on emulator: seek an
-                // autoplay'd episode near its end, let it finish). An end
-                // always closes the run; if the advance below starts the
-                // next episode, IT arms a fresh timer.
-                cancelAutoplayTimer()
-                // Queue hygiene FIRST, regardless of which advance strategy
-                // (or sleep suppression) wins below: a played-to-completion
-                // episode must never replay from the queue. The canon path
-                // and the sleep-suppression return both used to skip the
-                // removal that only lived inside advanceToNextInQueue.
-                if (finishedGuid != null) {
-                    scope.launch(Dispatchers.IO) { queueDao.remove(finishedGuid) }
-                }
-                // Sleep timer wins over every advance strategy: an
-                // end-of-episode timer, or ANY timer already mid-fade,
-                // means the listener asked playback to stop here — starting
-                // the next episode would defeat the entire feature.
-                val st = _sleepTimer.value
-                if (st != null && (st.mode == SleepTimerMode.EndOfEpisode || st.fading)) {
-                    sleepTimerJob?.cancel()
-                    fireSleepPause(flush = false)
-                    return
-                }
-                // A Minutes-mode fire can race the episode's natural end:
-                // fireSleepPause nulls the state, then this handler sees no
-                // timer and would advance right after the sleep pause.
-                if (android.os.SystemClock.elapsedRealtime() - sleepFiredAtElapsedMs < 2_000L) {
-                    return
-                }
-                // Auto-advance. If canon-order autoplay is enabled and this
-                // episode has a detected scripture ref, prefer the next
-                // sermon in canon order over the standard queue/feed-next
-                // chain.
-                scope.launch {
-                    if (finishedGuid != null && tryAdvanceToNextInCanon(finishedGuid)) {
-                        // Canon mode handled it; skip the standard advance.
-                        return@launch
-                    }
-                    advanceToNextInQueue(finishedGuid)
-                }
-                // Fire any deferred auto-download for the just-ended
-                // episode. The cache has been populated by streaming;
-                // DownloadManager will see the cached spans and complete
-                // near-instantly without re-fetching.
-                if (finishedGuid != null) {
-                    scope.launch { fireDeferredAutoDownload(finishedGuid) }
-                }
+                handleEpisodeEnded(controller?.currentMediaItem?.mediaId)
             }
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -1499,6 +1449,16 @@ class PlayerController(private val context: Context) {
                 c.seekTo(0)
                 c.play()
             }
+            // Parked at the very end WITHOUT a true STATE_ENDED — where
+            // the end-wedge ladder (arm E) leaves the player when no next
+            // episode exists on a device whose pipeline won't deliver
+            // end-of-stream. A play tap here means "replay", exactly like
+            // the ENDED branch above.
+            c.playbackState == Player.STATE_READY &&
+                c.duration > 0 && c.currentPosition >= c.duration - 2_000L -> {
+                c.seekTo(0)
+                c.play()
+            }
             c.playbackState == Player.STATE_BUFFERING -> {
                 // Player is already trying. Tapping play again won't
                 // accelerate buffering; surface a message so the user
@@ -1779,7 +1739,12 @@ class PlayerController(private val context: Context) {
                     if (bufferingStartedAtMs == 0L) {
                         bufferingStartedAtMs = now
                     } else if (now - bufferingStartedAtMs >= BUFFERING_STALL_THRESHOLD_MS) {
-                        triggerStallRecovery(c, now, "buffering_${(now - bufferingStartedAtMs) / 1000}s")
+                        // Chronic buffering AT the end of the media is the
+                        // end-wedge (arm E), not a renderer stall — the
+                        // source has nothing left to deliver.
+                        if (!endWedgeCheck(c)) {
+                            triggerStallRecovery(c, now, "buffering_${(now - bufferingStartedAtMs) / 1000}s")
+                        }
                         bufferingStartedAtMs = now
                         lastForwardProgressPosMs = c.currentPosition
                         lastForwardProgressAtMs = now
@@ -1802,7 +1767,12 @@ class PlayerController(private val context: Context) {
                 }
                 if (now - lastForwardProgressAtMs >= STALL_THRESHOLD_MS) {
                     val stalledForMs = now - lastForwardProgressAtMs
-                    triggerStallRecovery(c, now, "no_progress_${stalledForMs / 1000}s")
+                    // A position frozen AT the duration is the end-wedge
+                    // (arm E): recovering it like a stall seeks backward
+                    // and replays the final instant forever.
+                    if (!endWedgeCheck(c)) {
+                        triggerStallRecovery(c, now, "no_progress_${stalledForMs / 1000}s")
+                    }
                     // Reset baseline so we don't re-trigger immediately if
                     // the seek itself takes a moment to register a new
                     // currentPosition reading.
@@ -1811,6 +1781,79 @@ class PlayerController(private val context: Context) {
                 }
             }
         }
+    }
+
+    /** Media item the end-wedge ladder (arm E) is armed against, and how
+     *  many times it has tripped for that item. */
+    private var endWedgeGuid: String? = null
+    private var endWedgeAttempts = 0
+
+    /**
+     * Arm E — wedged end-of-stream. On some devices the pipeline fails
+     * to deliver the renderer's end-of-stream at the natural end of an
+     * episode: state stays READY with playWhenReady=true, the position
+     * pins at (or a breath short of) the duration, and STATE_ENDED never
+     * fires — so nothing downstream happens: no mark-played, no autoplay
+     * advance, no icon flip. Worse, arms A/B read the frozen position as
+     * a mid-stream stall and seek-recover backward, replaying the last
+     * instant forever — the field-reported "episodes continue
+     * indefinitely / never register as played", persisting through
+     * v0.11.3 because the emulator's decoder stack never wedges (the
+     * field device's MP3 path runs the legacy OMX software decoder that
+     * EqRenderersFactory prefers; the emulator has only c2).
+     *
+     * Called from arms A/B at their trip points. Returns true when the
+     * frozen position sits within [END_WEDGE_PROXIMITY_MS] of a known
+     * duration — an end wedge, not a stall — and the escalation ladder
+     * ran instead of a stall recovery:
+     *   trip 1: seek to the duration. The flush gives the sink a fresh
+     *     chance to deliver end-of-stream at EOF; if STATE_ENDED then
+     *     arrives, the natural path (mark played, advance, icons) runs
+     *     with no further involvement.
+     *   trip 2+: stop waiting — [forceEpisodeEnd] manufactures the end.
+     * Every trip records an `end_wedge` diagnostics entry with a player
+     * snapshot, so field devices finally SHOW the wedge state.
+     */
+    private fun endWedgeCheck(c: MediaController): Boolean {
+        val dur = c.duration.takeIf { it > 0 } ?: return false
+        val pos = c.currentPosition
+        if (pos < dur - END_WEDGE_PROXIMITY_MS) return false
+        val guid = c.currentMediaItem?.mediaId ?: return false
+        if (guid != endWedgeGuid) {
+            endWedgeGuid = guid
+            endWedgeAttempts = 0
+        }
+        endWedgeAttempts++
+        com.lofipod.app.diagnostics.AppDiagnostics.recordPlayback(
+            "end_wedge",
+            "attempt=$endWedgeAttempts pos=${pos / 1000}s dur=${dur / 1000}s " +
+                "state=${c.playbackState} loading=${c.isLoading} " +
+                "speed=${c.playbackParameters.speed}",
+        )
+        if (endWedgeAttempts == 1) {
+            // Raw seek, NOT the latency-compensating wrapper (which aims
+            // past the requested position and would overshoot the end).
+            c.seekTo(dur)
+        } else {
+            forceEpisodeEnd(guid, dur)
+        }
+        return true
+    }
+
+    /**
+     * Ladder step 2: manufacture the end STATE_ENDED never delivered.
+     * Pause (play icon returns on every surface), pin the episode-state
+     * row to completion (the played predicate needs positionMs within
+     * 5 s of durationMs, and a wedged sink can freeze short of that),
+     * then run the exact sequence the natural end runs — advance
+     * included.
+     */
+    private fun forceEpisodeEnd(guid: String, durationMs: Long) {
+        pause()
+        scope.launch(Dispatchers.IO) {
+            dao.updatePosition(guid, durationMs, durationMs, System.currentTimeMillis(), 0L)
+        }
+        handleEpisodeEnded(guid)
     }
 
     /**
@@ -2229,6 +2272,67 @@ class PlayerController(private val context: Context) {
     }
 
     /**
+     * Everything the end of an episode means, in one place: close the
+     * autoplay-confirm run, drop the finished episode from the queue,
+     * honor sleep-timer suppression, advance (canon → queue → feed-next),
+     * and fire the deferred auto-download. Called from the natural
+     * STATE_ENDED transition AND from the end-wedge watchdog arm's
+     * forced path ([forceEpisodeEnd]) — devices whose pipeline never
+     * delivers STATE_ENDED get the identical sequence.
+     */
+    private fun handleEpisodeEnded(finishedGuid: String?) {
+        // The autoplay-confirm timer runs on WALL clock and knows
+        // nothing about media time: an autoplay'd episode that ends
+        // inside its 3:10 window used to leave the countdown ticking
+        // over a dead player — morphed play button, beeps against
+        // silence, and every play/pause surface still consuming
+        // presses as "confirms" for minutes after playback stopped.
+        // An end always closes the run; if the advance below starts
+        // the next episode, IT arms a fresh timer.
+        cancelAutoplayTimer()
+        // Queue hygiene FIRST, regardless of which advance strategy
+        // (or sleep suppression) wins below: a played-to-completion
+        // episode must never replay from the queue.
+        if (finishedGuid != null) {
+            scope.launch(Dispatchers.IO) { queueDao.remove(finishedGuid) }
+        }
+        // Sleep timer wins over every advance strategy: an
+        // end-of-episode timer, or ANY timer already mid-fade,
+        // means the listener asked playback to stop here — starting
+        // the next episode would defeat the entire feature.
+        val st = _sleepTimer.value
+        if (st != null && (st.mode == SleepTimerMode.EndOfEpisode || st.fading)) {
+            sleepTimerJob?.cancel()
+            fireSleepPause(flush = false)
+            return
+        }
+        // A Minutes-mode fire can race the episode's natural end:
+        // fireSleepPause nulls the state, then this handler sees no
+        // timer and would advance right after the sleep pause.
+        if (android.os.SystemClock.elapsedRealtime() - sleepFiredAtElapsedMs < 2_000L) {
+            return
+        }
+        // Auto-advance. If canon-order autoplay is enabled and this
+        // episode has a detected scripture ref, prefer the next
+        // sermon in canon order over the standard queue/feed-next
+        // chain.
+        scope.launch {
+            if (finishedGuid != null && tryAdvanceToNextInCanon(finishedGuid)) {
+                // Canon mode handled it; skip the standard advance.
+                return@launch
+            }
+            advanceToNextInQueue(finishedGuid)
+        }
+        // Fire any deferred auto-download for the just-ended
+        // episode. The cache has been populated by streaming;
+        // DownloadManager will see the cached spans and complete
+        // near-instantly without re-fetching.
+        if (finishedGuid != null) {
+            scope.launch { fireDeferredAutoDownload(finishedGuid) }
+        }
+    }
+
+    /**
      * Jump to an arbitrary (episode, position). Records a jump_from checkpoint for the
      * current position before moving. Updates [pendingReturn] so the UI can offer a
      * one-tap return.
@@ -2364,13 +2468,14 @@ class PlayerController(private val context: Context) {
         analysis: com.lofipod.app.audio.EpisodeAnalysis?,
     ): Boolean {
         if (controller == null) return false
-        val target = analysis
-            ?.takeIf { it.lsterPerSec.isNotEmpty() }
-            ?.let {
-                com.lofipod.app.audio.SectionSkip.targetAfter(
-                    currentPositionMs(), it.lsterPerSec, it.pauses
-                )
-            }
+        // No isNotEmpty gate on the curve: the matched-span path inside
+        // targetAfter works even when the texture curve is absent (a row
+        // whose spans arrived from a sibling match after a pre-v21 scan).
+        val target = analysis?.let {
+            com.lofipod.app.audio.SectionSkip.targetAfter(
+                currentPositionMs(), it.lsterPerSec, it.pauses, it.adSpans
+            )
+        }
         return if (target != null) {
             seekTo(target)
             true
@@ -2879,6 +2984,13 @@ class PlayerController(private val context: Context) {
          *  has a ~5 s period; 6 s catches the first complete cycle
          *  without false-positive on legitimate buffering. */
         private const val STALL_THRESHOLD_MS = 6_000L
+
+        /** Arm E gate: a frozen position within this of a known duration
+         *  is a wedged END of stream, not a mid-stream stall. Wide enough
+         *  to catch a sink freezing a breath short of the end; far
+         *  narrower than any position a genuine mid-episode stall could
+         *  occupy. */
+        private const val END_WEDGE_PROXIMITY_MS = 3_000L
 
         /** How long [PlayerState.isStalled] stays true after a recovery
          *  seek before it's auto-cleared. Long enough for the user to see
