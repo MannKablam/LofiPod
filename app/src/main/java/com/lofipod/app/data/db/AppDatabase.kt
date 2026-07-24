@@ -476,7 +476,7 @@ interface LofiDownloadDao {
         EpisodeHeatEntity::class,
         EpisodeAnalysisEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -937,6 +937,31 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v21 → v22: episode_analysis grows the cross-episode ad-matcher
+         * pair — fpTokens (AudioFingerprint stream, 1 byte / 100 ms) and
+         * adSpansCsv (spans shared verbatim with sibling episodes,
+         * written asynchronously by AdSpanMatcher). Same wipe-and-lazily-
+         * rescan treatment as v21: a rescan repopulates everything
+         * including the new tokens, and rows are derived decoration.
+         * (v21 never shipped in a tag either, but the emulator and any
+         * dev sideload have run it — additive-with-wipe keeps every
+         * upgrade path working without data loss beyond the rescan.)
+         */
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE episode_analysis " +
+                        "ADD COLUMN fpTokens BLOB NOT NULL DEFAULT x''"
+                )
+                db.execSQL(
+                    "ALTER TABLE episode_analysis " +
+                        "ADD COLUMN adSpansCsv TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL("DELETE FROM episode_analysis")
+            }
+        }
+
+        /**
          * v15 → v16: add lofi_download table. The OkHttp-based downloader's
          * persistent state — replaces Media3's StandaloneDatabaseProvider +
          * DownloadIndex which we ditched in v0.6.9 after four versions of
@@ -1042,7 +1067,8 @@ abstract class AppDatabase : RoomDatabase() {
                         timed(MIGRATION_13_14), timed(MIGRATION_14_15),
                         timed(MIGRATION_15_16), timed(MIGRATION_16_17),
                         timed(MIGRATION_17_18), timed(MIGRATION_18_19),
-                        timed(MIGRATION_19_20), timed(MIGRATION_20_21)
+                        timed(MIGRATION_19_20), timed(MIGRATION_20_21),
+                        timed(MIGRATION_21_22)
                     )
                     .build().also { instance = it }
             }

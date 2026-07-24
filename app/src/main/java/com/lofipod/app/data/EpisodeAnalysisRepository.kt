@@ -61,6 +61,12 @@ import kotlin.math.roundToInt
  * analyses are persisted, a killed scan just reruns from the top next
  * time it's asked for.
  */
+/** Cap on how many same-feed siblings a fresh scan is matched against.
+ *  The freshest N analyzed episodes cover every live ad campaign;
+ *  matching a whole back-catalog would be O(N²) rows touched for spans
+ *  that old campaigns no longer serve. */
+private const val MAX_MATCH_SIBLINGS = 8
+
 class EpisodeAnalysisRepository(
     private val context: Context,
     private val dao: EpisodeAnalysisDao,
@@ -162,6 +168,18 @@ class EpisodeAnalysisRepository(
 
             val result = analyzer.analyze(sensitivity, setDataSource)
             dao.upsert(encode(guid, sensitivity, result))
+            // Shared-audio pass: compare this fresh scan against sibling
+            // episodes of the same feed and persist any verbatim-shared
+            // spans (produced ads / promos / theme) on BOTH rows. Runs
+            // after the upsert so a matcher crash can never cost the
+            // scan; failures degrade to "no ad spans".
+            try {
+                matchAgainstFeedSiblings(guid)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                System.err.println("Ad-span matching failed for $guid: ${e.message}")
+            }
         } catch (ce: CancellationException) {
             throw ce
         } catch (e: Exception) {
@@ -169,6 +187,54 @@ class EpisodeAnalysisRepository(
             System.err.println("Episode analysis failed for $guid: ${e.message}")
         }
     }
+
+    /**
+     * Run [AdSpanMatcher] between [guid]'s fresh scan and the most
+     * recent [MAX_MATCH_SIBLINGS] analyzed episodes of the same feed.
+     * Every produced span is written to BOTH episodes' rows (unioned
+     * with whatever a row already carries): matching is symmetric, and
+     * the sibling that was scanned FIRST could never have seen this
+     * episode. Feed identity comes from episode_state — episodes whose
+     * row is gone (or that never had one) simply don't participate.
+     */
+    private suspend fun matchAgainstFeedSiblings(guid: String) {
+        val mine = dao.get(guid) ?: return
+        if (mine.fpTokens.size < AdSpanMatcher.SHINGLE) return
+        val app = context.applicationContext as? com.lofipod.app.LofiPodApp ?: return
+        val stateDao = app.db.episodeStateDao()
+        val myFeed = stateDao.get(guid)?.feedUrl ?: return
+
+        var mySpans = decodeSpans(mine.adSpansCsv)
+        var matched = 0
+        for (other in dao.allGuids()) {
+            if (other == guid) continue
+            if (matched >= MAX_MATCH_SIBLINGS) break
+            if (stateDao.get(other)?.feedUrl != myFeed) continue
+            val theirs = dao.get(other) ?: continue
+            if (theirs.fpTokens.size < AdSpanMatcher.SHINGLE) continue
+            matched++
+            val result = AdSpanMatcher.match(mine.fpTokens, theirs.fpTokens)
+            if (result.inA.isEmpty() && result.inB.isEmpty()) continue
+            mySpans = AdSpanMatcher.mergeSpans(mySpans + result.inA)
+            val theirSpans = AdSpanMatcher.mergeSpans(
+                decodeSpans(theirs.adSpansCsv) + result.inB
+            )
+            val theirCsv = encodeSpans(theirSpans)
+            if (theirCsv != theirs.adSpansCsv) {
+                dao.updateAdSpans(other, theirCsv, System.currentTimeMillis())
+            }
+        }
+        val myCsv = encodeSpans(mySpans)
+        if (myCsv != mine.adSpansCsv) {
+            dao.updateAdSpans(guid, myCsv, System.currentTimeMillis())
+        }
+    }
+
+    private fun decodeSpans(csv: String): List<AdSpanMatcher.SpanMs> =
+        decodePauses(csv).map { AdSpanMatcher.SpanMs(it.startMs, it.endMs) }
+
+    private fun encodeSpans(spans: List<AdSpanMatcher.SpanMs>): String =
+        spans.joinToString(",") { "${it.startMs}:${it.endMs}" }
 
     private fun encode(guid: String, sensitivity: Int, result: EpisodeAnalysis): EpisodeAnalysisEntity {
         val blob = ByteArray(result.envelope.size) { i ->
@@ -181,6 +247,11 @@ class EpisodeAnalysisRepository(
             pausesCsv = result.pauses.joinToString(",") { "${it.startMs}:${it.endMs}" },
             envelope = blob,
             lsterPerSec = result.lsterPerSec,
+            fpTokens = result.fpTokens,
+            // A fresh scan resets the shared-span verdicts — the matcher
+            // pass that follows the upsert rebuilds them against current
+            // siblings.
+            adSpansCsv = "",
             updatedAt = System.currentTimeMillis(),
         )
     }
@@ -200,6 +271,10 @@ class EpisodeAnalysisRepository(
             // Empty on rows that predate the v21 texture column — the
             // section skip simply falls back to a plain +30s for them.
             lsterPerSec = row.lsterPerSec,
+            // fpTokens stay in the row: the UI has no use for ~36 KB/hour
+            // of matcher input, and the matcher reads entities directly.
+            fpTokens = ByteArray(0),
+            adSpans = decodePauses(row.adSpansCsv),
         )
     }
 

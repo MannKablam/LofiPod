@@ -35,6 +35,15 @@ import kotlin.math.sqrt
  * syllables and phrases); music and speech over a music bed score low
  * (the bed fills the gaps). Powers SectionSkip's "skip past
  * sponsor/music section" texture scan.
+ * [fpTokens] is the [AudioFingerprint] token stream (one byte per
+ * 100 ms) the cross-episode shared-audio matcher consumes — filled by
+ * the analyzer, stripped (empty) on the decode path the UI sees so a
+ * screen never hauls ~36 KB/hour it has no use for.
+ * [adSpans] are the matcher's verdicts: stretches of this episode that
+ * also occur verbatim in a sibling episode of the same feed (produced
+ * sponsor reads, promos, theme). Empty from the analyzer — the matcher
+ * writes them to the row asynchronously as sibling scans land — and
+ * populated on the decode path.
  *
  * Deliberately a plain class, not a data class: the array fields
  * would give generated equals/copy reference semantics that read like
@@ -45,6 +54,8 @@ class EpisodeAnalysis(
     val pauses: List<PauseTapProcessor.PauseSpan>,
     val envelope: FloatArray,
     val lsterPerSec: ByteArray,
+    val fpTokens: ByteArray = ByteArray(0),
+    val adSpans: List<PauseTapProcessor.PauseSpan> = emptyList(),
 )
 
 /**
@@ -143,6 +154,11 @@ class EpisodeAudioAnalyzer {
             var globalPeak = 0
             var lastEndUs = 0L
 
+            // Cross-episode fingerprint tokens (see AudioFingerprint) —
+            // fed the same mono mix as LSTER, reconfigured if a chained
+            // stream switches sample rates mid-file.
+            val fingerprint = AudioFingerprint()
+
             // LSTER accumulation (see EpisodeAnalysis.lsterPerSec): mono
             // sum-of-squares per 20 ms frame, frames grouped per media
             // second. Streams into a byte builder — memory stays flat.
@@ -238,6 +254,7 @@ class EpisodeAudioAnalyzer {
                             val baseUs =
                                 if (info.presentationTimeUs >= 0) info.presentationTimeUs
                                 else lastEndUs
+                            fingerprint.configure(sampleRate)
 
                             for (frame in 0 until frames) {
                                 // Peak abs amplitude across channels — the
@@ -264,6 +281,7 @@ class EpisodeAudioAnalyzer {
                                 }
                                 l20SumSq += mono * mono
                                 l20N++
+                                fingerprint.push(mono.toFloat())
 
                                 if (peak > globalPeak) globalPeak = peak
                                 val slice = (tUs / SLICE_US).toInt()
@@ -334,6 +352,7 @@ class EpisodeAudioAnalyzer {
                 pauses = capPauses(pauses),
                 envelope = resampleEnvelope(slicePeaks, sliceCount, globalPeak),
                 lsterPerSec = lsterOut.toByteArray(),
+                fpTokens = fingerprint.tokens(),
             )
         } finally {
             // Release order matters: stop can throw if the codec died

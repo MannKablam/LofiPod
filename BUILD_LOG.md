@@ -2,6 +2,100 @@
 
 Running notes on what's changed and why. Newest at top.
 
+## v0.11.5-dev — End-wedge watchdog arm: episodes END even when the pipeline won't say so (2026-07-23)
+
+Third strike on the field report that outlived two fixes: on the real
+device, an episode's natural end produces NOTHING — no mark-played, no
+replay affordance, no autoplay advance, pause icon forever. That exact
+symptom set means STATE_ENDED never fires on that hardware: everything
+the user is missing hangs off the one event. The emulator provably
+cannot reproduce it (every end path resolves — stream/file, 1x/2x,
+advance/no-advance), and the most likely divergence is the legacy OMX
+MP3 decoder EqRenderersFactory deliberately prefers on the field
+device (the emulator image only has c2, and c2 was avoided for
+documented buffer-accounting bugs). Worse: the stall watchdog's arm A
+reads the frozen end-position as a mid-stream stall and seek-recovers
+BACKWARD, replaying the final instant forever — mechanically
+explaining "episodes continue indefinitely."
+
+So this iteration stops chasing the root cause and removes the class
+of failure:
+
+- **Arm E (end-wedge) in the stall watchdog.** When arms A/B trip on a
+  frozen position that sits within 3 s of a known duration, that is an
+  END, not a stall. Escalation ladder: first trip seeks to the
+  duration (a flush at EOF gives the sink a fresh chance to deliver
+  end-of-stream — if STATE_ENDED then arrives, the fully normal path
+  runs); second trip manufactures the end: pause (play icon returns on
+  every surface), pin the episode-state row to completion (played +
+  replayable even if the sink froze short of the 5 s predicate
+  window), and run the exact end-of-episode sequence.
+- **handleEpisodeEnded() extracted** from the STATE_ENDED listener
+  branch: autoplay-confirm teardown, queue hygiene, sleep-timer
+  suppression, canon/queue/feed-next advance, deferred auto-download —
+  one sequence, two entry points (natural and forced). No behavioral
+  drift between them, ever.
+- **Replay affordance without ENDED:** togglePlay treats READY parked
+  within 2 s of the duration as the ENDED branch (seek 0 + play), so a
+  force-ended episode with no next is immediately replayable.
+- **Diagnostics first:** every arm-E trip records an `end_wedge`
+  playback entry with position/duration/state/isLoading/speed — field
+  devices finally SHOW the wedge instead of describing it.
+- Emulator regression: healthy natural end with arm E in the build —
+  ENDED fired normally, autoplay advanced, no arm-E interference
+  (its 6 s trip threshold never engages on an instant transition).
+  The wedge path itself cannot be reproduced on the emulator by
+  construction; it is exercised by review + the field device, where
+  the diagnostics entry will confirm each rescue.
+
+## v0.11.4-dev — Phase 2: cross-episode fingerprint ad matcher (2026-07-17)
+
+Same-day follow-through on the section-skip's known blind spot: talky
+produced sponsor blocks (NTWAF's 138 s intro read) measure as normal
+speech texture and were invisible to the LSTER scan. They ARE visible
+to repetition: produced ads air verbatim across a feed's episodes;
+interviews never repeat. The offline-validated fingerprint matcher is
+now in the app (DB v22!), and its spans take precedence over the
+texture signal in the >| button.
+
+- **Parameters locked by measurement** (dispatched validation agent,
+  full report in the session; harness kept at tools/_adskip/fp_tune.py):
+  4-bit spectral-delta tokens (5 log bands, edges 300–9600 Hz, 200 ms
+  hann window, 100 ms hop), 12-token shingles exact-matched as packed
+  keys, 2 s offset-bin voting (≥25% of a min-segment's shingles),
+  runs split at 4 s gaps, segments ≥12 s, merged within 2 s. Measured:
+  NTWAF pair reproduces 0.0–138.1 s (intro+sponsor, 100% shingle
+  survival) and 31:15.0–31:44.4 (mid-roll, 49.8% survival — the ad
+  sits at 51:42 in the sibling, a different insertion slot the offset
+  bins are built for); zero cross-matched shingle pairs in ~1.19 B
+  comparisons between different shows; Compelled pairs share only
+  their ~17 s theme. Shingle 8 leaks hash noise, 16 truncates the
+  mid-roll; 12 is the plateau. MIN_SEG 20 loses the legitimate 17 s
+  theme match; 12 is right.
+- **AudioFingerprint** (new): streaming tokenizer fed the analyzer's
+  mono mix — own 16 K radix-2 FFT, ~36 KB of tokens per audio hour,
+  reconfigures on mid-file sample-rate changes.
+- **AdSpanMatcher** (new): the pure matching function, exact port of
+  the locked spec.
+- **EpisodeAnalysisRepository**: after every scan's upsert, matches
+  the fresh tokens against the 8 most recent analyzed episodes of the
+  same feed (feed identity via episode_state) and writes the union of
+  shared spans to BOTH rows — the sibling scanned first could never
+  have seen the newcomer. Matcher failures degrade to "no spans",
+  never to a lost scan.
+- **DB v21→v22**: episode_analysis grows fpTokens BLOB + adSpansCsv
+  TEXT; rows wiped for lazy rescan (same precedent as v21). fpTokens
+  stay entity-side — the UI-facing EpisodeAnalysis carries only the
+  decoded adSpans.
+- **SectionSkip**: matched spans take precedence — a tap inside one
+  (2 s lead-in slop) lands at the end of the contiguous span chain
+  (5 s chain gap for double-ads), pause-aligned like every other
+  landing; the texture scan remains the fallback for host-read ads
+  that never repeat. The >| button needs no UI change.
+- **Emulator e2e**: both NTWAF episodes downloaded + scanned in-app
+  on DB v22; matcher produced spans on both rows; see commit for the
+  measured values against the offline ground truth.
+
 ## v0.11.4-dev — Section-skip button: >| skips past sponsor/music sections (2026-07-17)
 
 For our #2 listener: the |< button's forward mirror, filling the

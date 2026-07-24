@@ -73,17 +73,38 @@ object SectionSkip {
     private const val ALIGN_S = 6
     private const val PRE_ROLL_MS = 200L
 
+    /** Lead-in slop: a tap this far BEFORE a known shared span still
+     *  counts as "inside" it (the listener heard the ad start before
+     *  the detector's boundary). */
+    private const val SPAN_LEAD_IN_MS = 2_000L
+
+    /** Chained spans (double ads) with gaps up to this merge into one
+     *  skip. */
+    private const val SPAN_CHAIN_GAP_MS = 5_000L
+
     /**
-     * Landing position for a tap at [positionMs], or null when no
-     * texture recovery is found (caller should fall back to a plain
-     * skip). [lsterPerSec] and [pauses] come from the episode's
-     * completed analysis; both are media-time domained.
+     * Landing position for a tap at [positionMs], or null when nothing
+     * recognizable lies ahead (caller should fall back to a plain
+     * skip). Two signals, in precedence order:
+     *
+     *  1. MATCHED SHARED SPANS ([adSpans], from AdSpanMatcher): exact
+     *     stretches known to repeat verbatim in sibling episodes. A tap
+     *     inside one (or [SPAN_LEAD_IN_MS] before it) lands at the end
+     *     of the contiguous span chain — precise boundaries, catches
+     *     talky sponsor reads the texture signal can't see.
+     *  2. TEXTURE RECOVERY (the LSTER curve): everything else.
+     *
+     * All inputs are media-time domained.
      */
     fun targetAfter(
         positionMs: Long,
         lsterPerSec: ByteArray,
         pauses: List<PauseTapProcessor.PauseSpan>,
+        adSpans: List<PauseTapProcessor.PauseSpan> = emptyList(),
     ): Long? {
+        spanChainEnd(positionMs, adSpans)?.let { chainEnd ->
+            return alignToPause(chainEnd, positionMs, pauses)
+        }
         val n = lsterPerSec.size
         if (n < SUSTAIN_S * 2) return null
         val tap = (positionMs / 1000L).toInt().coerceIn(0, n - 1)
@@ -137,17 +158,56 @@ object SectionSkip {
         // Align to the latest pause end near the texture edge — but only
         // ever FORWARD of the tap, so alignment can't fling the listener
         // backward into the section they just asked to leave.
-        val uMs = u * 1000L
+        return alignToPause(u * 1000L, positionMs, pauses)
+    }
+
+    /**
+     * End of the contiguous matched-span chain covering [positionMs]
+     * (with lead-in slop), or null when the tap isn't inside one, or
+     * the chain end is already effectively behind the playhead.
+     */
+    private fun spanChainEnd(
+        positionMs: Long,
+        adSpans: List<PauseTapProcessor.PauseSpan>,
+    ): Long? {
+        if (adSpans.isEmpty()) return null
+        val sorted = adSpans.sortedBy { it.startMs }
+        var idx = -1
+        for (i in sorted.indices) {
+            val s = sorted[i]
+            if (positionMs >= s.startMs - SPAN_LEAD_IN_MS && positionMs < s.endMs) {
+                idx = i
+                break
+            }
+        }
+        if (idx < 0) return null
+        var end = sorted[idx].endMs
+        for (i in idx + 1 until sorted.size) {
+            if (sorted[i].startMs - end <= SPAN_CHAIN_GAP_MS) {
+                end = maxOf(end, sorted[i].endMs)
+            } else break
+        }
+        return end.takeIf { it > positionMs + 500L }
+    }
+
+    /** Land at the latest pause end within ±[ALIGN_S] of [edgeMs]
+     *  (forward-of-tap only, [PRE_ROLL_MS] before speech resumes), or
+     *  at the edge itself when no pause is nearby. */
+    private fun alignToPause(
+        edgeMs: Long,
+        positionMs: Long,
+        pauses: List<PauseTapProcessor.PauseSpan>,
+    ): Long {
         var best = -1L
         for (p in pauses) {
             val e = p.endMs
             if (e > positionMs + 1000L &&
-                e >= uMs - ALIGN_S * 1000L &&
-                e <= uMs + ALIGN_S * 1000L &&
+                e >= edgeMs - ALIGN_S * 1000L &&
+                e <= edgeMs + ALIGN_S * 1000L &&
                 e > best
             ) best = e
         }
         return if (best > 0) (best - PRE_ROLL_MS).coerceAtLeast(positionMs + 500L)
-        else uMs
+        else edgeMs
     }
 }

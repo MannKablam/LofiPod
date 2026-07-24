@@ -44,6 +44,15 @@ data class EpisodeAnalysisEntity(
      *  texture curve behind the >| section skip. Size ≈ durationMs/1000
      *  (~3.6 KB/hour). Empty on rows migrated before v0.11.4. */
     val lsterPerSec: ByteArray,
+    /** AudioFingerprint token stream, one byte per 100 ms (~36 KB/hour)
+     *  — the cross-episode shared-audio matcher's input. Empty on rows
+     *  migrated before the matcher landed. */
+    val fpTokens: ByteArray,
+    /** CSV of `startMs:endMs` spans of this episode that also occur
+     *  verbatim in a sibling episode of the same feed (produced ads,
+     *  promos, theme) — written asynchronously by AdSpanMatcher as
+     *  sibling scans land; empty until then. */
+    val adSpansCsv: String,
     val updatedAt: Long,
 ) {
     // A ByteArray field makes the generated data-class equals compare the
@@ -59,6 +68,8 @@ data class EpisodeAnalysisEntity(
             pausesCsv == other.pausesCsv &&
             envelope.contentEquals(other.envelope) &&
             lsterPerSec.contentEquals(other.lsterPerSec) &&
+            fpTokens.contentEquals(other.fpTokens) &&
+            adSpansCsv == other.adSpansCsv &&
             updatedAt == other.updatedAt
     }
 
@@ -69,6 +80,8 @@ data class EpisodeAnalysisEntity(
         result = 31 * result + pausesCsv.hashCode()
         result = 31 * result + envelope.contentHashCode()
         result = 31 * result + lsterPerSec.contentHashCode()
+        result = 31 * result + fpTokens.contentHashCode()
+        result = 31 * result + adSpansCsv.hashCode()
         result = 31 * result + updatedAt.hashCode()
         return result
     }
